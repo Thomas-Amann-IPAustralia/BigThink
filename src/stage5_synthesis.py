@@ -44,6 +44,7 @@ import numpy as np
 from src import db
 from src.config import get, load_config, resolve_path, snapshot_config
 from src.errors import insufficient_data_error
+from src.normalise import percentile_rank
 
 logger = logging.getLogger(__name__)
 
@@ -86,18 +87,43 @@ SEVEN_QUESTIONS = [
 # ---------------------------------------------------------------------------
 
 
-def composite_score(
-    topic: dict[str, Any], weights: dict[str, float]
-) -> float:
+RANK_AXES = (
+    ("emergence", "emergence_score"),
+    ("strategic_fit", "strategic_fit"),
+    ("asset_leverage", "asset_leverage"),
+)
+
+
+def composite_scores(
+    rows: Sequence[dict[str, Any]], weights: dict[str, float]
+) -> list[float]:
     """Weighted combination of emergence, strategic fit and asset leverage.
+
+    The three axes are rank-normalised across the population before weighting,
+    for the same reason the Rotolo attributes are (see stage2_emergence): a
+    weighted sum of raw values is dominated by whichever axis happens to have
+    the widest spread, so the configured weights end up describing something
+    other than what the code does. Measured on the 2026-08-29 run, asset
+    leverage spanned 0.03-0.10 against emergence's 0.33-0.79, and a configured
+    25% weight bought it 6% of the actual influence.
+
+    Rank-normalising makes the weights mean what they say, and lets a
+    compressed axis still express its ordering — which is the part of it that
+    is meaningful. It also makes the composite relative to this run's
+    population, like every other combined score here.
 
     Deliberately excludes the opportunity index — see the module docstring.
     """
-    return float(
-        weights.get("emergence", 0.0) * float(topic.get("emergence_score") or 0.0)
-        + weights.get("strategic_fit", 0.0) * float(topic.get("strategic_fit") or 0.0)
-        + weights.get("asset_leverage", 0.0) * float(topic.get("asset_leverage") or 0.0)
-    )
+    if not rows:
+        return []
+    ranked = {
+        name: percentile_rank([float(r.get(column) or 0.0) for r in rows])
+        for name, column in RANK_AXES
+    }
+    return [
+        float(sum(ranked[name][i] * float(weights.get(name, 0.0)) for name, _ in RANK_AXES))
+        for i in range(len(rows))
+    ]
 
 
 def quadrant(x: float, y: float, x_cut: float, y_cut: float, labels: Sequence[str]) -> str:
@@ -262,7 +288,7 @@ def write_shortlist(
     lines: list[str] = []
     add = lines.append
 
-    add(f"# IPAVentures horizon scan — shortlist")
+    add("# IPAVentures horizon scan — shortlist")
     add("")
     add(f"Run `{run_id}` · generated {datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC")
     add("")
@@ -427,12 +453,13 @@ def _run_inner(conn: Any, config: dict[str, Any], run_id: str) -> list[dict[str,
     index_scores = {s["topic_id"]: s for s in run_stage4(config, run_id)}
 
     weights = get(config, "synthesis", "rank_weights", default={}) or {}
-    rows: list[dict[str, Any]] = []
-    for topic in topics:
-        merged = {**topic, **fit_scores.get(topic["topic_id"], {}),
-                  **index_scores.get(topic["topic_id"], {})}
-        merged["composite_rank_score"] = composite_score(merged, weights)
-        rows.append(merged)
+    rows: list[dict[str, Any]] = [
+        {**topic, **fit_scores.get(topic["topic_id"], {}),
+         **index_scores.get(topic["topic_id"], {})}
+        for topic in topics
+    ]
+    for row, score in zip(rows, composite_scores(rows, weights)):
+        row["composite_rank_score"] = score
 
     rows.sort(key=lambda r: -r["composite_rank_score"])
     for position, row in enumerate(rows, 1):
@@ -477,6 +504,12 @@ def _write_outputs(
 ) -> None:
     out_dir = resolve_path(config, "storage", "outputs_dir") / run_id
     evidence_dir = out_dir / "evidence"
+    # Cards are named <rank>_<topic_id>.md, and both parts move between runs of
+    # the same run_id. Without clearing, a re-run leaves last run's cards beside
+    # this run's — two files claiming rank 1, and no way to tell which is live.
+    if evidence_dir.exists():
+        for stale in evidence_dir.glob("*.md"):
+            stale.unlink()
     evidence_dir.mkdir(parents=True, exist_ok=True)
 
     shortlist_size = int(get(config, "synthesis", "shortlist_size", default=15))

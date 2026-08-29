@@ -261,6 +261,13 @@ def _validate_emergence(e: dict[str, Any]) -> None:
             raise ConfigError(
                 f"emergence.topics.similarity_threshold_by_backend.{backend} must be in (0, 1)"
             )
+    ratio = float(topics.get("attachment_threshold_ratio", 0.6))
+    if not 0.0 < ratio <= 1.0:
+        raise ConfigError(
+            "emergence.topics.attachment_threshold_ratio must be in (0, 1]. Above 1.0 "
+            "would make attachment stricter than clustering, which cannot help — a "
+            "document that fails the looser test never reaches attachment."
+        )
 
     _require_weight_sum(e.get("rotolo_weights", {}), "emergence.rotolo_weights")
     expected_attrs = {"novelty", "growth", "coherence", "impact", "uncertainty"}

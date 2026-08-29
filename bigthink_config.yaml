@@ -98,8 +98,16 @@ collection:
       enabled: true
       # Fastest emergence signal for AI/CS — publication lag measured in days,
       # not the ~18 months patents carry.
-      max_results_per_query: 200
-      # arXiv asks for =>3 s between requests. Honour it.
+      #
+      # Collected one year at a time. Sorting by date and taking the first N
+      # returns a corpus with no history — on the 2026-08-29 run that gave
+      # 1,449 arXiv documents dated 2026 and none before 2022, which reads
+      # downstream as an explosion of activity rather than as a sampling
+      # artefact. Per-year quotas cost more requests and are the only way this
+      # source can support a growth curve.
+      max_results_per_query: 270      # spread across the scan window
+      max_results_per_year: 30        # explicit per-year quota; overrides the split
+      # arXiv asks for >=3 s between requests. Honour it.
       request_delay_seconds: 3.0
     crossref:
       enabled: true
@@ -155,6 +163,19 @@ emergence:
 
   # --- Topic formation ---
   topics:
+    # Which sources are allowed to FORM topics.
+    #
+    # GDELT is deliberately excluded. Its records are bare multilingual news
+    # headlines with no abstract — roughly 70 characters of text against
+    # arXiv's 1,400 — and at 40%+ of a typical corpus they dominate clustering
+    # and produce topics like "brainrot / ai art" and "aus den / australien
+    # verbannt". GDELT's role in this method is an attention proxy for the
+    # Stage 4 index, which is exactly what it is good at.
+    #
+    # Documents from excluded sources are still attached to the nearest topic
+    # afterwards, so they count toward attention and the time series without
+    # having distorted the topic that they are being counted against.
+    forming_sources: ["openalex", "crossref", "arxiv", "datagovau", "patentsview"]
     # `agglomerative` needs no heavy deps and is deterministic — good enough to
     # shape the pipeline. Switch to `bertopic` once you install requirements-ml.txt.
     method: "agglomerative"
@@ -164,9 +185,31 @@ emergence:
     # its own. Both figures below are starting points, NOT calibrated values —
     # see PROJECT_STATE.md "Open calibration decisions" before trusting them.
     similarity_threshold_by_backend:
-      hashing: 0.18
+      # hashing: 0.30 was chosen from a sweep on the 2026-08-29 corpus
+      # (4,195 topic-forming documents). Below 0.30 a single mega-cluster
+      # absorbed 52-64% of the corpus and labelled itself
+      # "patent / watermark / llm / quantum"; at 0.30 it collapsed to 10% and
+      # every topic label became interpretable. Re-run `python -m src.calibrate
+      # threshold` after any material change to the corpus or the scan frame.
+      hashing: 0.30
+      # NOT calibrated. BGE cosines run much higher than hashed TF-IDF, so this
+      # is a plausible starting point only — sweep it before trusting any fit
+      # score computed under it.
       bge: 0.62
+    # Documents from sources outside `forming_sources` are attached to the
+    # nearest topic at this fraction of the clustering threshold. Looser on
+    # purpose: attachment happens after centroids are fixed and cannot move
+    # them, so the question is only "which topic is this news article most
+    # about?", not "is this tight enough to define a topic?". At the full
+    # clustering threshold almost no news headline attaches at all, and the
+    # attention component of the Stage 4 index goes empty.
+    attachment_threshold_ratio: 0.6
     min_topic_size: 8
+    # A cluster can pass min_topic_size on documents sharing one generic word —
+    # a run of data.gov.au dataset titles produced a topic whose whole
+    # vocabulary was "index", which then ranked eighth. A theme that cannot be
+    # described in three distinct terms is not a theme.
+    min_distinct_terms: 3
     max_topics: 120
     # Terms appearing in fewer than this many documents are dropped before
     # topic formation, so single-paper coinages cannot become "topics".

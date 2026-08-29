@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 
+import numpy as np
 import pytest
 
 from src.config import load_config
@@ -113,15 +114,34 @@ def test_uncertainty_rises_with_actor_dispersion():
 
 def test_citation_percentiles_are_computed_within_each_source():
     """arXiv reports no citations. Ranked globally, every preprint would sit at
-    the bottom and the fastest-moving evidence would be systematically
-    penalised."""
+    the bottom and the fastest-moving evidence in the corpus would be
+    systematically penalised."""
     documents = (
         [{"source": "arxiv", "citation_count": 0} for _ in range(5)]
         + [{"source": "crossref", "citation_count": c} for c in (0, 10, 100)]
     )
     percentiles = citation_percentiles(documents)
-    assert percentiles["arxiv"][0] == pytest.approx(1.0)     # top of its own source
     assert percentiles["crossref"][0] < percentiles["crossref"][100]
+
+
+def test_a_source_with_no_citation_variation_scores_neutral_impact():
+    """A percentile over a constant is 1.0 for every document.
+
+    arXiv and GDELT report no citations at all, so a naive within-source
+    percentile hands maximum impact to every preprint and every news headline
+    in the corpus — which is what happened on the first real run. No signal
+    must read as neutral, not as maximum.
+    """
+    documents = (
+        [{"source": "arxiv", "citation_count": 0} for _ in range(5)]
+        + [{"source": "gdelt", "citation_count": 0} for _ in range(50)]
+        + [{"source": "crossref", "citation_count": c} for c in (0, 10, 100)]
+    )
+    percentiles = citation_percentiles(documents)
+    assert percentiles["arxiv"][0] == 0.5
+    assert percentiles["gdelt"][0] == 0.5
+    # A source that does report citations keeps its full spread.
+    assert percentiles["crossref"][0] != 0.5
 
 
 # --- classification and series -------------------------------------------
@@ -138,3 +158,43 @@ def test_topic_series_zero_fills_the_full_corpus_span():
     """Growth must be measured from the corpus start, not the topic's own."""
     docs = [{"time_slice": "2024"}, {"time_slice": "2024"}, {"time_slice": "2025"}]
     assert topic_series(docs, ["2022", "2023", "2024", "2025"]) == [0, 0, 2, 1]
+
+
+# --- attribute normalisation ---------------------------------------------
+
+
+def test_attributes_are_rank_normalised_so_weights_mean_what_they_say():
+    """The five Rotolo attributes have very different natural ranges.
+
+    Under the hashing backend, novelty spans roughly 0.72-0.88 while growth
+    spans 0.0-0.95. A weighted sum of raw values is therefore driven almost
+    entirely by the wide-ranging attributes regardless of the configured
+    weights — measured on a realistic population, novelty configured at 0.25
+    drove about 6% of the ranking spread and growth at 0.30 drove about 49%.
+
+    Rank-normalising first gives every attribute the same spread, so a weight
+    of 0.25 buys 25% of the influence.
+    """
+    from src.normalise import percentile_rank
+
+    narrow = [0.72, 0.75, 0.80, 0.85, 0.88]
+    wide = [0.00, 0.20, 0.50, 0.80, 0.95]
+
+    ranked_narrow = percentile_rank(narrow)
+    ranked_wide = percentile_rank(wide)
+
+    assert np.std(narrow) < np.std(wide) / 3          # the problem
+    assert np.std(ranked_narrow) == pytest.approx(np.std(ranked_wide))  # the fix
+    # Order is preserved — normalisation changes scale, not ranking.
+    assert ranked_narrow == sorted(ranked_narrow)
+
+
+def test_novelty_is_distance_from_the_early_corpus():
+    from src.stage2_emergence import compute_novelty
+
+    early = np.array([1.0, 0.0])
+    assert compute_novelty(np.array([1.0, 0.0]), early) == pytest.approx(0.0)  # identical
+    assert compute_novelty(np.array([0.0, 1.0]), early) == pytest.approx(1.0)  # orthogonal
+    # A missing centroid returns neutral rather than a misleading extreme.
+    assert compute_novelty(None, early) == 0.5
+    assert compute_novelty(np.zeros(2), early) == 0.5

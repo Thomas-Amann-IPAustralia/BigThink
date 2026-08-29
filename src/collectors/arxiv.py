@@ -9,6 +9,17 @@ where the signal appears first.
 Atom XML, not JSON, so this collector parses rather than deserialises.
 arXiv's terms ask for at least three seconds between requests; that is set as
 `request_delay` in config and honoured by the base class, not negotiated.
+
+SAMPLING (this is a methodological point, not an implementation detail).
+The obvious way to query arXiv is to sort by submission date descending and
+take the first N results. That produces a corpus with no history: on the
+2026-08-29 run it returned 1,449 arXiv documents dated 2026 and none before
+2022, which then read downstream as an explosion of activity in 2026 rather
+than as what it was — a sampling artefact.
+
+This collector therefore queries one year at a time, with a per-year quota, so
+the resulting corpus can support a growth curve. It costs more requests and is
+the only way the source is usable for emergence detection at all.
 """
 
 from __future__ import annotations
@@ -24,6 +35,9 @@ logger = logging.getLogger(__name__)
 API_URL = "https://export.arxiv.org/api/query"
 _NS = {"atom": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
 _PAGE_SIZE = 100
+# Floor on the per-year quota. A year that returns only a handful of papers is
+# information too — it is the low end of the growth curve.
+_MIN_PER_YEAR = 25
 
 
 @register
@@ -37,15 +51,32 @@ class ArxivCollector(Collector):
     def collect(
         self, query: str, frame: dict[str, Any], start_year: int, end_year: int
     ) -> Iterator[dict[str, Any]]:
-        max_results = int(self.settings.get("max_results_per_query", 200))
+        total_budget = int(self.settings.get("max_results_per_query", 200))
+        years = list(range(start_year, end_year + 1))
+        # Spread the budget evenly across years so the corpus carries a history
+        # rather than a snapshot of the last few months.
+        per_year = max(int(self.settings.get("max_results_per_year", 0))
+                       or (total_budget // max(len(years), 1)), _MIN_PER_YEAR)
         steepv = self.steepv_for(frame)
         emitted = 0
 
-        for start in range(0, max_results, _PAGE_SIZE):
+        for year in years:
+            for doc in self._collect_year(query, frame, steepv, year, per_year):
+                yield doc
+                emitted += 1
+                if self.cap(emitted):
+                    return
+
+    def _collect_year(
+        self, query: str, frame: dict[str, Any], steepv: str, year: int, quota: int
+    ) -> Iterator[dict[str, Any]]:
+        """Fetch up to *quota* documents submitted in *year*."""
+        dated = f"{query} AND submittedDate:[{year}0101 TO {year}1231]"
+        for start in range(0, quota, _PAGE_SIZE):
             params = {
-                "search_query": query,
+                "search_query": dated,
                 "start": start,
-                "max_results": min(_PAGE_SIZE, max_results - start),
+                "max_results": min(_PAGE_SIZE, quota - start),
                 "sortBy": "submittedDate",
                 "sortOrder": "descending",
             }
@@ -53,29 +84,21 @@ class ArxivCollector(Collector):
             try:
                 root = ET.fromstring(xml_text)
             except ET.ParseError as exc:
-                logger.warning("arXiv returned unparseable XML for %r: %s", query, exc)
+                logger.warning(
+                    "arXiv returned unparseable XML for %r (%d): %s", query, year, exc
+                )
                 return
 
             entries = root.findall("atom:entry", _NS)
             if not entries:
                 return
-            self.save_raw(str(frame.get("key", "query")), start // _PAGE_SIZE, xml_text)
+            self.save_raw(f"{frame.get('key', 'query')}_{year}", start // _PAGE_SIZE, xml_text)
 
-            page_yield = 0
             for entry in entries:
-                doc = self._to_document(entry, frame, steepv, start_year, end_year)
-                if doc is None:
-                    continue
-                yield doc
-                emitted += 1
-                page_yield += 1
-                if self.cap(emitted):
-                    return
+                doc = self._to_document(entry, frame, steepv, year, year)
+                if doc is not None:
+                    yield doc
 
-            # Results are date-descending, so once a full page falls outside the
-            # window every later page will too — stop rather than page to the end.
-            if page_yield == 0:
-                return
             if len(entries) < params["max_results"]:
                 return
 

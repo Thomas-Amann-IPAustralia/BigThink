@@ -65,6 +65,7 @@ from src.config import (
 )
 from src.embeddings import build_embedder, centroid, encode_with_cache
 from src.errors import insufficient_data_error
+from src.normalise import percentile_rank
 
 logger = logging.getLogger(__name__)
 
@@ -246,7 +247,7 @@ def compute_novelty(
     if topic_centroid is None or not np.any(topic_centroid) or not np.any(early_centroid):
         return 0.5
     similarity = float(np.dot(topic_centroid, early_centroid))
-    return float(np.clip((1.0 - similarity) / 2.0 + 0.5 * (1.0 - similarity), 0.0, 1.0))
+    return float(np.clip(1.0 - similarity, 0.0, 1.0))
 
 
 def compute_coherence(vectors: np.ndarray, topic_centroid: np.ndarray) -> float:
@@ -332,8 +333,17 @@ def citation_percentiles(documents: Sequence[dict[str, Any]]) -> dict[str, dict[
 
     result: dict[str, dict[int, float]] = {}
     for source, counts in by_source.items():
-        ordered = np.sort(np.asarray(counts, dtype=np.float64))
         unique = sorted(set(counts))
+        if len(unique) < 2:
+            # The source reports no citation variation at all — arXiv and GDELT
+            # report none by design. A percentile over a constant is 1.0 for
+            # every document, which would hand maximum impact to every preprint
+            # and every news headline in the corpus. There is no impact signal
+            # here, so say so with a neutral 0.5 rather than a confident wrong
+            # answer.
+            result[source] = {value: 0.5 for value in unique}
+            continue
+        ordered = np.sort(np.asarray(counts, dtype=np.float64))
         # Fraction of documents at or below this count.
         result[source] = {
             value: float(np.searchsorted(ordered, value, side="right") / len(ordered))
@@ -368,6 +378,42 @@ def classify_signal(
     if high_growth:
         return "strong" if high_volume else "weak"
     return "latent" if high_volume else "noise"
+
+
+def _attach_documents(
+    topics: Sequence[Any],
+    vectors: np.ndarray,
+    indices: Sequence[int],
+    threshold: float,
+) -> None:
+    """Attach held-out documents to their nearest topic, in place.
+
+    Documents from sources excluded from topic formation (news headlines, in
+    practice) still carry real signal about attention and timing. They are
+    assigned to the closest topic above the same similarity threshold used for
+    clustering, and are deliberately assigned *after* centroids are fixed, so a
+    thousand headlines cannot drag a research topic toward the news cycle.
+
+    A document matching nothing is left unattached rather than forced into the
+    nearest topic.
+    """
+    if not topics or not len(indices):
+        return
+    centroids = np.asarray([t.centroid for t in topics])
+    similarities = vectors[list(indices)] @ centroids.T     # (m, k)
+    best = np.argmax(similarities, axis=1)
+    best_sim = similarities[np.arange(len(indices)), best]
+
+    attached = 0
+    for position, doc_index in enumerate(indices):
+        if best_sim[position] >= threshold:
+            topics[int(best[position])].member_indices.append(int(doc_index))
+            attached += 1
+    logger.info(
+        "Attached %d of %d held-out documents to a topic (%d matched nothing above "
+        "the threshold and were left out).",
+        attached, len(indices), len(indices) - attached,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -418,6 +464,8 @@ def _run_inner(conn: Any, config: dict[str, Any], run_id: str) -> dict[str, Any]
     texts = [document_text(d) for d in documents]
 
     # --- embed ------------------------------------------------------------
+    # Fitted on the whole corpus (IDF should see every document), but only some
+    # sources are allowed to form topics — see below.
     embedder = build_embedder(config)
     embedder.fit(texts)
     vectors = encode_with_cache(
@@ -429,14 +477,44 @@ def _run_inner(conn: Any, config: dict[str, Any], run_id: str) -> dict[str, Any]
         len(texts), embedder.name, embedder.dimensions,
     )
 
+    # --- split the corpus by role ------------------------------------------
+    forming_sources = set(
+        get(config, "emergence", "topics", "forming_sources", default=[]) or []
+    )
+    if forming_sources:
+        forming_idx = [i for i, d in enumerate(documents) if d["source"] in forming_sources]
+        attached_idx = [i for i, d in enumerate(documents) if d["source"] not in forming_sources]
+    else:
+        forming_idx, attached_idx = list(range(len(documents))), []
+
+    if len(forming_idx) < min_topic_size * 2:
+        raise insufficient_data_error(
+            STAGE,
+            f"only {len(forming_idx)} documents come from topic-forming sources "
+            f"{sorted(forming_sources)}; need at least {min_topic_size * 2}. Either "
+            "collect from those sources or widen emergence.topics.forming_sources.",
+        )
+    if attached_idx:
+        logger.info(
+            "Forming topics from %d documents (%s); %d documents from other sources "
+            "will be attached to the nearest topic afterwards.",
+            len(forming_idx), ", ".join(sorted(forming_sources)), len(attached_idx),
+        )
+
     # --- cluster ----------------------------------------------------------
+    forming_vectors = vectors[forming_idx]
+    forming_texts = [texts[i] for i in forming_idx]
+
     method = str(get(config, "emergence", "topics", "method", default="agglomerative"))
+    threshold = topic_similarity_threshold(config)
     if method == "bertopic":
-        found = topics_mod.cluster_bertopic(texts, vectors, min_topic_size=min_topic_size)
+        found = topics_mod.cluster_bertopic(
+            forming_texts, forming_vectors, min_topic_size=min_topic_size
+        )
     else:
         found = topics_mod.cluster_agglomerative(
-            vectors,
-            threshold=topic_similarity_threshold(config),
+            forming_vectors,
+            threshold=threshold,
             min_topic_size=min_topic_size,
             max_topics=int(get(config, "emergence", "topics", "max_topics", default=120)),
         )
@@ -447,11 +525,47 @@ def _run_inner(conn: Any, config: dict[str, Any], run_id: str) -> dict[str, Any]
             "is probably too high for the corpus. See emergence.topics."
             "similarity_threshold_by_backend.",
         )
-    topics_mod.label_topics(found, texts)
+    topics_mod.label_topics(found, forming_texts)
+    found = topics_mod.drop_vocabulary_poor_topics(
+        found,
+        min_distinct_terms=int(
+            get(config, "emergence", "topics", "min_distinct_terms", default=3)
+        ),
+    )
+    if not found:
+        raise insufficient_data_error(
+            STAGE, "every cluster was discarded for having too little distinct vocabulary."
+        )
+
+    # Map cluster membership back to corpus indices, then attach the documents
+    # that were held out of clustering.
+    for topic in found:
+        topic.member_indices = [forming_idx[i] for i in topic.member_indices]
+    if attached_idx:
+        ratio = float(
+            get(config, "emergence", "topics", "attachment_threshold_ratio", default=0.6)
+        )
+        _attach_documents(found, vectors, attached_idx, threshold * ratio)
 
     # --- per-topic scoring ------------------------------------------------
-    totals = slice_totals(documents)
+    # The time series — and therefore burst detection, CAGR and the growth
+    # curve — is built from full-window sources only.
+    #
+    # GDELT is collected over a rolling 24-month window, so every one of its
+    # documents lands in the last slice or two. Counted in the denominator it
+    # made the 2026 slice hold 5,025 of 7,378 documents on the 2026-08-29 run,
+    # which made every earlier slice look sparse and turned a topic with flat
+    # counts into one "bursting" for eight consecutive years. A source whose
+    # coverage does not span the analysis window cannot define a trend in it.
+    #
+    # Those documents still count toward document_count and the Stage 4
+    # attention component, which is what they are actually evidence of.
+    series_documents = [d for d in documents if d["source"] in forming_sources] \
+        if forming_sources else list(documents)
+    all_slices = corpus_slices(series_documents) or all_slices
+    totals = slice_totals(series_documents)
     totals_series = [totals.get(s, 0) for s in all_slices]
+    series_doc_ids = {d["doc_id"] for d in series_documents}
 
     # Novelty baseline: the corpus as it stood in its first third.
     early_cut = max(1, len(all_slices) // 3)
@@ -472,7 +586,10 @@ def _run_inner(conn: Any, config: dict[str, Any], run_id: str) -> dict[str, Any]
     for topic in found:
         member_docs = [documents[i] for i in topic.member_indices]
         member_vectors = vectors[topic.member_indices]
-        series = topic_series(member_docs, all_slices)
+        # Series over full-window members only; scoring over all members.
+        series = topic_series(
+            [d for d in member_docs if d["doc_id"] in series_doc_ids], all_slices
+        )
 
         burst = detect_bursts(
             series, totals_series,
@@ -496,7 +613,6 @@ def _run_inner(conn: Any, config: dict[str, Any], run_id: str) -> dict[str, Any]
             "impact": compute_impact(member_docs, percentiles),
             "uncertainty": compute_uncertainty(member_docs),
         }
-        emergence = float(sum(attributes[k] * float(weights.get(k, 0.0)) for k in attributes))
 
         proportions = [
             (count / totals_series[i]) if totals_series[i] else 0.0
@@ -514,7 +630,7 @@ def _run_inner(conn: Any, config: dict[str, Any], run_id: str) -> dict[str, Any]
                 "first_slice": present[0] if present else None,
                 "last_slice": present[-1] if present else None,
                 **attributes,
-                "emergence_score": emergence,
+                "emergence_score": 0.0,  # filled once the population is known
                 "burst_weight": burst.max_weight,
                 "burst_slices": [all_slices[i] for i in burst.burst_indices],
                 "cagr": cagr,
@@ -540,6 +656,32 @@ def _run_inner(conn: Any, config: dict[str, Any], run_id: str) -> dict[str, Any]
                     for i, (slice_name, count) in enumerate(zip(all_slices, series))
                 ],
             }
+        )
+
+    # --- emergence score (needs the full population) ----------------------
+    # The five attributes have very different natural ranges: novelty under the
+    # hashing backend spans roughly 0.72-0.88 while growth spans 0.0-0.95. A
+    # plain weighted sum of raw values would therefore be driven almost
+    # entirely by the wide-ranging attributes no matter what the config says —
+    # measured on a realistic population, novelty configured at 0.25 accounted
+    # for about 6% of the ranking spread while growth at 0.30 accounted for
+    # about 49%. Percentile-ranking each attribute within the run puts them all
+    # on the same scale, so the configured weights mean what they claim.
+    #
+    # Consequence to state plainly: emergence_score is RELATIVE TO THIS RUN's
+    # population of topics. A run of uniformly dull topics still produces one
+    # scoring near 1.0. The raw attribute values stored beside it keep their
+    # absolute meaning; the score does not.
+    ranked_attributes = {
+        name: percentile_rank([r[name] for r in records])
+        for name in ("novelty", "growth", "coherence", "impact", "uncertainty")
+    }
+    for i, record in enumerate(records):
+        record["emergence_score"] = float(
+            sum(
+                ranked_attributes[name][i] * float(weights.get(name, 0.0))
+                for name in ranked_attributes
+            )
         )
 
     # --- signal classification (needs the full population) ----------------

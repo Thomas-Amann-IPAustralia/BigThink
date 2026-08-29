@@ -113,7 +113,7 @@ def build_html(
     parts: list[str] = []
     add = parts.append
 
-    add(f"<title>IPAVentures Horizon Scan</title>")
+    add("<title>IPAVentures Horizon Scan</title>")
     add(f"<style>{_CSS}</style>")
     add('<div class="wrap">')
     add("<h1>IPAVentures horizon scan</h1>")

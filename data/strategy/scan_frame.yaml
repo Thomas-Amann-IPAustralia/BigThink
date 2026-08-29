@@ -20,6 +20,9 @@
 #             Political/Values/Legal) — the horizon-scanning taxonomy from the
 #             UK GO-Science Futures Toolkit
 #   queries   per-source query strings; a source with no entry is skipped
+#             GDELT requires every OR'd group to be wrapped in parentheses —
+#             an unwrapped OR returns a plain-text error, not JSON, and the
+#             frame silently collects nothing from that source
 #   rationale why this is in the frame at all
 #
 # KNOWN BIAS: the frame is stronger on Technological than on Social, Values or
@@ -157,7 +160,7 @@ frames:
     queries:
       openalex: "content provenance OR digital watermarking OR content authenticity"
       arxiv: "abs:(watermarking AND (generative OR provenance))"
-      gdelt: "content provenance OR content credentials OR deepfake detection"
+      gdelt: "(content provenance OR content credentials OR deepfake detection)"
 
   # ---------------------------------------------------------------------
   # C. Public-sector operating context.
@@ -269,4 +272,4 @@ frames:
     queries:
       openalex: "post-quantum cryptography OR privacy enhancing technologies OR edge computing"
       arxiv: "abs:(post-quantum cryptography OR privacy enhancing)"
-      gdelt: "post-quantum cryptography OR cyber security standards"
+      gdelt: "(post-quantum cryptography OR cyber security standards)"

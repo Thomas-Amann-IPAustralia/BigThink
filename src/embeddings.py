@@ -30,7 +30,7 @@ import hashlib
 import logging
 import math
 import re
-from typing import Any, Iterable, Sequence
+from typing import Any, Sequence
 
 import numpy as np
 
@@ -90,8 +90,19 @@ _STOPWORDS = frozenset(
 ) | frozenset(singularise(w) for w in _STOPWORD_SOURCE.split())
 
 
+def _is_numeric_noise(token: str) -> bool:
+    """True for tokens that are essentially a number.
+
+    News headlines are full of these — "750 000", "20", "000km", "350" — and
+    they survive every other filter to become topic labels like
+    "index / 17 / 750 000". A number is never what a topic is about.
+    """
+    digits = sum(c.isdigit() for c in token)
+    return digits > 0 and digits >= len(token) - 2
+
+
 def normalise_tokens(text: str) -> list[str]:
-    """Lowercase, tokenise, singularise, drop stopwords and 1-character tokens.
+    """Lowercase, tokenise, singularise, drop stopwords, numbers and 1-char tokens.
 
     Singularisation runs before the stopword check so that a plural stopword is
     still caught.
@@ -99,7 +110,10 @@ def normalise_tokens(text: str) -> list[str]:
     if not text:
         return []
     tokens = (singularise(t) for t in _TOKEN_RE.findall(text.lower()))
-    return [t for t in tokens if len(t) > 1 and t not in _STOPWORDS]
+    return [
+        t for t in tokens
+        if len(t) > 1 and t not in _STOPWORDS and not _is_numeric_noise(t)
+    ]
 
 
 def content_hash(text: str, backend: str) -> str:
@@ -117,6 +131,11 @@ class Embedder:
 
     name: str = "base"
     dimensions: int = 0
+    #: Whether persisting vectors is worth the storage. A cached vector costs
+    #: `dimensions` doubles per document — at 2048 dimensions that is ~16 KB
+    #: each, or 120 MB for a 7,500-document corpus, growing linearly. Only
+    #: worth paying when re-encoding is the slower option.
+    cacheable: bool = False
 
     def encode(self, texts: Sequence[str]) -> np.ndarray:
         raise NotImplementedError
@@ -136,6 +155,9 @@ class HashingEmbedder(Embedder):
     """
 
     name = "hashing"
+    # Encoding is a tokenise-and-hash pass — milliseconds for a whole corpus.
+    # Caching it would cost far more in database writes than it ever saves.
+    cacheable = False
 
     def __init__(self, dimensions: int = 2048, use_bigrams: bool = True) -> None:
         self.dimensions = int(dimensions)
@@ -206,6 +228,9 @@ class BGEEmbedder(Embedder):
     """
 
     name = "bge"
+    # A transformer forward pass per document. Worth caching, and the reason
+    # the cache exists at all.
+    cacheable = True
 
     def __init__(self, model_name: str = "BAAI/bge-base-en-v1.5", batch_size: int = 32) -> None:
         try:
@@ -295,7 +320,9 @@ def encode_with_cache(
     re-encode when a weekly scan re-collects a mostly-unchanged corpus, which
     is the normal case for this pipeline.
     """
-    if conn is None or not enabled:
+    # Two conditions, not one: the caller may enable caching, but a backend
+    # that is cheap to run declares itself uncacheable and is never persisted.
+    if conn is None or not enabled or not embedder.cacheable:
         return embedder.encode(texts)
 
     from src import db  # local import keeps this module importable without duckdb

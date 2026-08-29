@@ -57,6 +57,7 @@ from src import db
 from src.config import get, load_config, resolve_path, snapshot_config
 from src.embeddings import normalise_tokens
 from src.errors import insufficient_data_error
+from src.normalise import percentile_rank
 from src.stage0_strategy import load_strategy_corpus
 
 logger = logging.getLogger(__name__)
@@ -73,32 +74,6 @@ PATENT_SOURCES = frozenset({"patentsview"})
 # ---------------------------------------------------------------------------
 # Components
 # ---------------------------------------------------------------------------
-
-
-def percentile_rank(values: Sequence[float]) -> list[float]:
-    """Rank values into [0, 1] by their position in the population.
-
-    Ties share the mean of the positions they span, so a population where most
-    topics score zero does not hand all of them a spurious 0.5.
-    """
-    array = np.asarray(values, dtype=np.float64)
-    n = len(array)
-    if n == 0:
-        return []
-    if n == 1:
-        return [0.5]
-    order = np.argsort(array, kind="stable")
-    ranks = np.empty(n, dtype=np.float64)
-    ranks[order] = np.arange(n, dtype=np.float64)
-
-    # Average ranks within tie groups.
-    sorted_values = array[order]
-    start = 0
-    for i in range(1, n + 1):
-        if i == n or sorted_values[i] != sorted_values[start]:
-            ranks[order[start:i]] = (start + i - 1) / 2.0
-            start = i
-    return [float(r / (n - 1)) for r in ranks]
 
 
 def policy_salience(

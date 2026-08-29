@@ -32,13 +32,14 @@ import argparse
 import logging
 import sys
 import time
-from pathlib import Path
 from typing import Any, Iterable
 
 import yaml
 
 from src import db
-from src.collectors import get_collector, registered_collectors  # noqa: F401 (registers)
+# Importing the package registers every collector; get_collector() then resolves
+# a source name to its class.
+from src.collectors import get_collector
 from src.config import get, load_config, resolve_path, snapshot_config
 from src.errors import BigThinkError, ConfigError, PermanentError
 

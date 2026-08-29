@@ -23,7 +23,6 @@ import logging
 import re
 import time
 from datetime import date, datetime, timezone
-from pathlib import Path
 from typing import Any, Iterator, Sequence
 
 import requests

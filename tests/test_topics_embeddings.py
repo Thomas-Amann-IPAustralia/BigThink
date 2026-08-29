@@ -90,3 +90,60 @@ def test_max_topics_is_respected():
     vecs = HashingEmbedder(2048).fit(corpus).encode(corpus)
     topics = cluster_agglomerative(vecs, threshold=0.9, min_topic_size=1, max_topics=5)
     assert len(topics) <= 5
+
+
+# --- numeric noise --------------------------------------------------------
+
+
+def test_numeric_tokens_are_dropped():
+    """News headlines are full of bare numbers, which otherwise become topic
+    labels like 'index / 17 / 750 000'. A number is never what a topic is
+    about."""
+    tokens = normalise_tokens("Fine of 750 000 euros over 000km fibre optic network in 2026")
+    assert not any(any(c.isdigit() for c in t) for t in tokens)
+    assert "fibre" in tokens and "optic" in tokens
+
+
+def test_attaching_documents_does_not_move_centroids():
+    """Held-out documents are attached after centroids are fixed.
+
+    If attachment ran before, a few thousand news headlines would drag every
+    research topic toward the news cycle — which is exactly the failure that
+    made topic-forming sources a separate config setting.
+    """
+    from src.stage2_emergence import _attach_documents
+    from src.topics import Topic
+
+    corpus = ["quantum error correction qubit"] * 6 + ["trade mark examination opposition"] * 6
+    held_out = ["quantum computing breakthrough announced"]
+    embedder = HashingEmbedder(2048).fit(corpus + held_out)
+    all_vectors = embedder.encode(corpus + held_out)
+
+    topics = cluster_agglomerative(
+        all_vectors[: len(corpus)], threshold=0.18, min_topic_size=4, max_topics=10
+    )
+    centroids_before = [t.centroid.copy() for t in topics]
+    sizes_before = [t.size for t in topics]
+
+    _attach_documents(topics, all_vectors, [len(corpus)], threshold=0.05)
+
+    assert all(
+        np.array_equal(before, topic.centroid)
+        for before, topic in zip(centroids_before, topics)
+    )
+    assert sum(t.size for t in topics) == sum(sizes_before) + 1
+
+
+def test_unattachable_documents_are_left_out():
+    from src.stage2_emergence import _attach_documents
+
+    corpus = ["quantum error correction qubit"] * 6
+    held_out = ["coral reef bleaching tropical marine"]
+    embedder = HashingEmbedder(2048).fit(corpus + held_out)
+    vectors = embedder.encode(corpus + held_out)
+    topics = cluster_agglomerative(
+        vectors[: len(corpus)], threshold=0.18, min_topic_size=4, max_topics=10
+    )
+    before = sum(t.size for t in topics)
+    _attach_documents(topics, vectors, [len(corpus)], threshold=0.18)
+    assert sum(t.size for t in topics) == before

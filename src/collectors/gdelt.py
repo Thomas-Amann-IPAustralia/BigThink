@@ -130,6 +130,15 @@ class GdeltCollector(Collector):
         if year is None or not (start_year <= year <= end_year):
             return None
 
+        # English only. GDELT covers 100+ languages, and a headline the
+        # embedder cannot model still contributes tokens — German and Spanish
+        # headlines were a visible share of the noise in early runs. Filtering
+        # here rather than in the query keeps the request simple and avoids
+        # GDELT's operator syntax, which is easy to get subtly wrong.
+        language = str(article.get("language", "")).strip().lower()
+        if language and language not in ("english", "en"):
+            return None
+
         return build_document(
             source=self.name,
             native_id=str(url),

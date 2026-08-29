@@ -119,3 +119,31 @@ def test_crossref_partial_dates_default_to_january_first():
     assert _issued_date({"date-parts": [[2026]]}) == "2026-01-01"
     assert _issued_date({"date-parts": [[2024, 3, 15]]}) == "2024-03-15"
     assert _issued_date(None) is None
+
+
+# --- scan frame validity --------------------------------------------------
+
+
+def test_gdelt_queries_wrap_ord_groups_in_parentheses():
+    """GDELT rejects an unparenthesised OR with a plain-text error, not JSON.
+
+    The collector treats a non-JSON body as a permanent failure and skips the
+    frame, so the only symptom is that source quietly collecting nothing —
+    which looks exactly like "no news matched". Caught here instead.
+    """
+    import re
+
+    from src.config import load_config
+    from src.stage1_collect import load_scan_frame
+
+    offenders = []
+    for frame in load_scan_frame(load_config()):
+        query = (frame.get("queries") or {}).get("gdelt")
+        if not query:
+            continue
+        for clause in re.split(r"\s+AND\s+", query):
+            clause = clause.strip()
+            if " OR " in clause and not (clause.startswith("(") and clause.endswith(")")):
+                offenders.append((frame["key"], query))
+                break
+    assert not offenders, f"GDELT queries need parenthesised OR groups: {offenders}"

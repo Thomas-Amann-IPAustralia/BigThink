@@ -32,10 +32,9 @@ from __future__ import annotations
 
 import logging
 import math
-import re
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from typing import Sequence
 
 import numpy as np
 
@@ -43,7 +42,15 @@ from src.embeddings import normalise_tokens
 
 logger = logging.getLogger(__name__)
 
-_MAX_LABEL_TERMS = 8
+# Two different jobs, two different lengths.
+#   Labels are read by people: four distinct terms, deduplicated.
+#   Scoring matches a topic against strategy and asset lexicons, which are
+#   10-12 multi-word entries each. With only eight terms — several of them
+#   near-duplicates like "geographical indication" / "indication" /
+#   "geographical" — almost no lexicon entry can match, and the whole
+#   asset-leverage axis collapses to near zero for every topic.
+_MAX_SCORING_TERMS = 30
+_MAX_LABEL_TERMS = 4
 
 
 @dataclass
@@ -96,33 +103,41 @@ def cluster_agglomerative(
         merge_threshold = min(threshold + 0.15, 0.95)
 
     # --- pass 1: leader ---------------------------------------------------
-    centroids: list[np.ndarray] = []
-    sums: list[np.ndarray] = []
+    # The centroid matrix is preallocated and updated in place. Rebuilding it
+    # from a list on each document (np.asarray(centroids) inside the loop) is
+    # the obvious way to write this and is quadratic in disguise: at 7,000
+    # documents and 120 centroids it rebuilds a 120x2048 array 7,000 times and
+    # turns a few seconds of work into many minutes.
+    dimensions = vectors.shape[1]
+    centroid_matrix = np.zeros((max_topics, dimensions), dtype=np.float64)
+    sums = np.zeros((max_topics, dimensions), dtype=np.float64)
+    n_clusters = 0
     assignments = np.full(n, -1, dtype=int)
 
     for i in range(n):
         vec = vectors[i]
         if not np.any(vec):  # empty text
             continue
-        if centroids:
-            sims = np.asarray(centroids) @ vec
+        if n_clusters:
+            sims = centroid_matrix[:n_clusters] @ vec
             best = int(np.argmax(sims))
             if sims[best] >= threshold:
                 assignments[i] = best
-                sums[best] = sums[best] + vec
-                centroids[best] = _normalise(sums[best])
+                sums[best] += vec
+                centroid_matrix[best] = _normalise(sums[best])
                 continue
-        if len(centroids) >= max_topics:
+        if n_clusters >= max_topics:
             continue  # cap reached; this document stays unassigned
-        centroids.append(vec.copy())
-        sums.append(vec.copy())
-        assignments[i] = len(centroids) - 1
+        centroid_matrix[n_clusters] = vec
+        sums[n_clusters] = vec
+        assignments[i] = n_clusters
+        n_clusters += 1
 
-    if not centroids:
+    if not n_clusters:
         return []
 
     # --- pass 2: reassignment --------------------------------------------
-    centroid_matrix = np.asarray(centroids)
+    centroid_matrix = centroid_matrix[:n_clusters]
     sims = vectors @ centroid_matrix.T           # (n, k)
     best_idx = np.argmax(sims, axis=1)
     best_sim = sims[np.arange(n), best_idx]
@@ -243,8 +258,36 @@ def label_topics(topics: Sequence[Topic], texts: Sequence[str]) -> None:
             idf = math.log(1.0 + n_topics / (1 + topic_frequency[term]))
             scored.append((term, tf * idf))
         scored.sort(key=lambda kv: (-kv[1], kv[0]))
-        topic.terms = [(t, round(w, 6)) for t, w in scored[:_MAX_LABEL_TERMS]]
+        topic.terms = [(t, round(w, 6)) for t, w in scored[:_MAX_SCORING_TERMS]]
         topic.label = _compose_label(topic.terms)
+
+
+def drop_vocabulary_poor_topics(
+    topics: Sequence[Topic], min_distinct_terms: int = 3
+) -> list[Topic]:
+    """Discard topics with too little distinct vocabulary to be a theme.
+
+    Must run after `label_topics`, since it reads `terms`.
+
+    A cluster can pass the size threshold on documents that share one generic
+    word — a run of data.gov.au dataset titles produced a topic whose entire
+    vocabulary was "index", which then ranked eighth on the shortlist. A theme
+    that cannot be described in three distinct terms is not a theme.
+    """
+    kept, dropped = [], []
+    for topic in topics:
+        distinct = {term for term, _ in topic.terms}
+        (kept if len(distinct) >= min_distinct_terms else dropped).append(topic)
+    if dropped:
+        logger.info(
+            "Dropped %d topic(s) with fewer than %d distinct terms: %s",
+            len(dropped), min_distinct_terms,
+            ", ".join(t.label or t.topic_id for t in dropped),
+        )
+    # Renumber so ids stay contiguous.
+    for rank, topic in enumerate(kept):
+        topic.topic_id = f"T{rank:04d}"
+    return kept
 
 
 def _phrases(text: str) -> list[str]:
@@ -268,7 +311,7 @@ def _compose_label(terms: Sequence[tuple[str, float]]) -> str:
         if any(term in existing or existing in term for existing in chosen):
             continue
         chosen.append(term)
-        if len(chosen) == 4:
+        if len(chosen) == _MAX_LABEL_TERMS:
             break
     return " / ".join(chosen)
 
@@ -321,7 +364,7 @@ def cluster_bertopic(
                 topic_id="",
                 member_indices=members,
                 centroid=_normalise(vectors[members].mean(axis=0)),
-                terms=[(w, float(s)) for w, s in (model.get_topic(cluster) or [])[:_MAX_LABEL_TERMS]],
+                terms=[(w, float(s)) for w, s in (model.get_topic(cluster) or [])[:_MAX_SCORING_TERMS]],
             )
         )
     topics.sort(key=lambda t: (-t.size, t.member_indices[0]))
