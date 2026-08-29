@@ -1,0 +1,45 @@
+name: Tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: pytest
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # The suite is offline by design — no test makes a network call, so CI
+      # never depends on a third-party API being up.
+      - name: Run tests
+        run: python -m pytest tests/ -q
+
+      # Config validation is the cheapest possible guard against a bad
+      # threshold reaching a scheduled run: the weights are convex
+      # combinations, and a set that does not sum to 1.0 silently rescales
+      # every score in the output.
+      - name: Validate shipped config and strategy files
+        run: |
+          python -c "from src.config import load_config; load_config(); print('config OK')"
+          python -m src.stage0_strategy --show > /dev/null && echo "strategy files OK"
+          python -c "
+          from src.config import load_config
+          from src.stage1_collect import load_scan_frame
+          frames = load_scan_frame(load_config())
+          print(f'scan frame OK — {len(frames)} frames')
+          "

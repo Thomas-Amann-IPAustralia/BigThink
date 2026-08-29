@@ -1,0 +1,166 @@
+# =============================================================================
+# data/strategy/asset_inventory.yaml
+#
+# What IP Australia and IPAVentures can actually bring to an opportunity —
+# the "right to play" axis of the strategic-fit x asset-leverage 2x2.
+#
+# A trend can be genuinely emerging and squarely on strategy and still be a bad
+# venture for this lab, because the agency has nothing distinctive to bring.
+# This file is what stops the ranking from being a technology-hype list.
+#
+# Sourced from the Annual Report 2024-25, the Corporate Plan 2026-27, and the
+# repositories under Thomas-Amann-IPAustralia. Extend it as capability is
+# built — every entry added changes the asset_leverage score of every topic,
+# so record additions in PROJECT_STATE.md.
+# =============================================================================
+
+assets:
+  # --- Registry and economic data ---
+  - code: "AS-RAPID"
+    label: "IP RAPID / IP Rights Overview dashboard"
+    type: "data"
+    text: >-
+      Weekly-updated registry data covering patents, trade marks, designs and
+      plant breeder's rights: applications, registrations, applicant names and
+      origin, IP right type and classifications. Published open on data.gov.au.
+      The IP Rights Overview dashboard (launched January 2025) presents a
+      simplified view and is already used by other government departments to
+      respond to emerging technologies and economic shifts.
+    lexicon: [registry data, patent filing, trade mark application, design right,
+              plant breeder's rights, applicant origin, IPC classification, filing trend,
+              open data, administrative data]
+    strength: 1.0
+
+  - code: "AS-IPGOD"
+    label: "IPGOD / IPLoRD longitudinal registry data"
+    type: "data"
+    text: >-
+      Over a century of registry data across roughly forty tables, with an
+      applicant-activity-centric longitudinal view (IPLoRD). Millions of rows —
+      analytical database territory, not spreadsheet territory.
+    lexicon: [longitudinal data, historical registry, applicant history, panel data,
+              firm level data, innovation statistics, IP portfolio, econometrics]
+    strength: 0.9
+
+  - code: "AS-PATANALYTICS"
+    label: "Patent Analytics Hub and Office of the Chief Economist"
+    type: "capability"
+    text: >-
+      In-house patent analytics capability with access to global patent
+      collections and technology classifications. Published AI patent analytics
+      reports in 2024 identifying innovation hotspots and emerging players;
+      this work feeds the Australian Critical Technology Hub. Direct internal
+      precedent for computational technology-emergence detection, and the most
+      likely internal collaborator for this pipeline.
+    lexicon: [patent analytics, patent landscape, technology classification, CPC, IPC,
+              innovation hotspot, patinformatics, white space analysis, bibliometrics,
+              emerging technology detection, critical technologies]
+    strength: 1.2
+
+  # --- Customer-facing services ---
+  - code: "AS-TMCHECKER"
+    label: "TM Checker"
+    type: "service"
+    text: >-
+      Public trade mark pre-application checking tool, with usage data
+      capturing intent-to-file behaviour ahead of formal application — a
+      leading indicator no registry-only dataset contains.
+    lexicon: [trade mark search, pre-application, brand clearance, self-service tool,
+              user intent, leading indicator, small business tool]
+    strength: 0.8
+
+  - code: "AS-IPFR"
+    label: "IP First Response"
+    type: "service"
+    text: >-
+      Pilot digital tool helping users understand an IP problem and explore
+      next steps. Named as a significant initiative in the 2026-27 Corporate
+      Plan. The Tripwire monitoring pipeline exists to keep its content current.
+    lexicon: [self-help, triage, dispute resolution, enforcement guidance, SME support,
+              guided pathway, digital advisory, content service]
+    strength: 0.9
+
+  - code: "AS-EXAMINATION"
+    label: "Examination workforce and AI/ADM trials"
+    type: "capability"
+    text: >-
+      Patent, trade mark and design examiners, with in-progress AI and
+      Automated Decision Making tooling governed by published risk appetite
+      settings and the government's responsible-AI policy. Domain expertise
+      plus a live, governed testbed for applied AI in regulatory decisions.
+    lexicon: [examination, examiner, automated decision making, responsible AI,
+              human in the loop, decision support, classification, prior art search,
+              regulatory decision, assurance]
+    strength: 1.1
+
+  # --- Engineering capability already built by IPAVentures ---
+  - code: "AS-TRIPWIRE"
+    label: "Tripwire — autonomous source-monitoring pipeline"
+    type: "engineering"
+    text: >-
+      Nine-stage monitoring pipeline over roughly 156 registered authoritative
+      sources (legislation, WIPO feeds, agency webpages), with change
+      detection, bi-encoder and cross-encoder semantic scoring, LLM assessment
+      and notification, running unattended on GitHub Actions. Directly reusable
+      as the collection and change-detection layer for any signal-driven venture.
+    lexicon: [monitoring, change detection, web scraping, semantic search, bi-encoder,
+              cross-encoder, reranking, notification, pipeline automation, source registry]
+    strength: 1.0
+
+  - code: "AS-OCTAVIUS"
+    label: "Octavius — rule extraction and code generation"
+    type: "engineering"
+    text: >-
+      Pipeline that extracts structured rules from authoritative documentation
+      (the Australian Government Style Manual) and generates executable checks
+      from them. Reusable wherever prose rules must become machine-checkable.
+    lexicon: [rule extraction, document structuring, compliance checking, code generation,
+              style guide, machine readable rules, automated validation]
+    strength: 0.7
+
+  - code: "AS-WISEAU"
+    label: "Wiseau — document parsing and extraction"
+    type: "engineering"
+    text: >-
+      Document ingestion service covering OCR, chaptering, keyword extraction
+      and URL/file parsing, exposed over an API and MCP server. Reusable as the
+      document-processing front end for any corpus-heavy venture.
+    lexicon: [document parsing, OCR, text extraction, keyword extraction, chaptering,
+              file ingestion, document AI, MCP server]
+    strength: 0.7
+
+  - code: "AS-DATAPIPE"
+    label: "Zero-budget analytical pipeline pattern"
+    type: "engineering"
+    text: >-
+      Proven operating pattern for unattended analysis at no infrastructure
+      cost: GitHub Actions on cron for compute, DuckDB for analysis, the git
+      repository for versioned results, GitHub Pages for publication. Lets the
+      lab stand up a data product without procurement.
+    lexicon: [github actions, scheduled pipeline, duckdb, serverless, zero budget,
+              reproducible analysis, versioned results, static publishing]
+    strength: 0.8
+
+  # --- Institutional position ---
+  - code: "AS-CONVENING"
+    label: "Convening power and international IP standing"
+    type: "institutional"
+    text: >-
+      Standing as steward of the Australian IP system, with domestic
+      cross-government relationships, WIPO and trading-partner engagement, and
+      a mandate to advise government. Lets IP Australia convene participants a
+      commercial actor could not.
+    lexicon: [stewardship, convening, cross-government, WIPO, international engagement,
+              standards, policy advice, trusted intermediary, public good]
+    strength: 1.0
+
+  - code: "AS-FIRSTNATIONS"
+    label: "First Nations Strategy partnerships"
+    type: "institutional"
+    text: >-
+      Established partnerships and a published strategy on Indigenous Knowledge
+      and access to the IP system — a distinctive mandate and relationship base
+      no other actor in this space holds.
+    lexicon: [First Nations, Indigenous knowledge, ICIP, traditional knowledge,
+              cultural expression, partnership, community engagement, economic empowerment]
+    strength: 0.9

@@ -1,0 +1,113 @@
+<title>IPAVentures Horizon Scan</title>
+<style>
+:root {
+  --bg: #fbfbfa; --fg: #16150f; --muted: #56544c; --line: #e2e0d8;
+  --card: #ffffff; --accent: #1c4f8f;
+  --h1: #7a5c00; --h2: #1c6b52; --h3: #7a2d6b;
+  --weak: #7a2d6b; --strong: #1c4f8f; --latent: #56544c; --noise: #8a8880;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14150f; --fg: #f2f1ea; --muted: #a3a196; --line: #2f3128;
+    --card: #1c1e17; --accent: #86b3ec;
+    --h1: #e0bc55; --h2: #6fc9a6; --h3: #d78fc4;
+    --weak: #d78fc4; --strong: #86b3ec; --latent: #a3a196; --noise: #75736b;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+.wrap { max-width: 1120px; margin: 0 auto; padding: 40px 24px 80px; }
+h1 { font-size: 30px; margin: 0 0 6px; letter-spacing: -0.02em; }
+h2 { font-size: 20px; margin: 44px 0 6px; letter-spacing: -0.01em; }
+h2 + .sub { margin-top: 0; }
+.sub { color: var(--muted); margin: 0 0 18px; font-size: 14px; }
+.meta { color: var(--muted); font-size: 13px; margin-bottom: 22px; }
+.callout {
+  background: var(--card); border: 1px solid var(--line);
+  border-left: 3px solid var(--accent); border-radius: 6px;
+  padding: 14px 18px; margin: 22px 0; font-size: 14px; color: var(--muted);
+}
+.callout strong { color: var(--fg); }
+.scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 720px; }
+th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); }
+th { font-weight: 600; font-size: 12px; text-transform: uppercase;
+     letter-spacing: 0.04em; color: var(--muted); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+tbody tr:hover { background: var(--card); }
+.tag { font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 10px;
+       border: 1px solid currentColor; white-space: nowrap; }
+.H1 { color: var(--h1); } .H2 { color: var(--h2); } .H3 { color: var(--h3); }
+.weak { color: var(--weak); } .strong { color: var(--strong); }
+.latent { color: var(--latent); } .noise { color: var(--noise); }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 8px 0 4px; }
+@media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
+.quad { background: var(--card); border: 1px solid var(--line);
+        border-radius: 6px; padding: 14px 16px; }
+.quad h3 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase;
+           letter-spacing: 0.04em; color: var(--muted); }
+.quad.act { border-color: var(--accent); }
+.quad ul { margin: 0; padding-left: 18px; }
+.quad li { margin: 3px 0; font-size: 13.5px; }
+.quad .empty { color: var(--muted); font-style: italic; font-size: 13.5px; }
+a { color: var(--accent); }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; }
+footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
+         color: var(--muted); font-size: 13px; }
+</style>
+<div class="wrap">
+<h1>IPAVentures horizon scan</h1>
+<p class="meta">Run <code>2026-08-29</code> · 7,780 documents · 14 topics · 9 time slices (2018–2026) · embedding backend <code>hashing</code> · generated 2026-08-29 07:52 UTC</p>
+<div class="callout"><strong>These are candidates, not conclusions.</strong> The ranking combines an emergence score, strategic fit and asset leverage. Those weights are a considered judgement that has not yet been validated against a known past opportunity. The opportunity index is relative and unitless — it is <strong>not</strong> a market size and cannot be converted into one. Read the evidence cards before believing any row.</div>
+<h2>Ranked shortlist</h2>
+<p class="sub">Ordered by the composite of emergence, strategic fit and asset leverage.</p>
+<div class="scroll"><table><thead><tr><th>#</th><th>Topic</th><th>Horizon</th><th>Signal</th><th class="num">Emergence</th><th class="num">Fit</th><th class="num">Leverage</th><th class="num">Index</th><th>Closest objective</th></tr></thead><tbody>
+<tr><td class="num">1</td><td><strong>delivery / service / government / digital</strong></td><td><span class="tag H2" title="Transitional">H2</span></td><td><span class="tag strong">strong</span></td><td class="num">0.53</td><td class="num">0.17</td><td class="num">0.07</td><td class="num">0.70</td><td>4.2 Innovative digital and data-driven custo</td></tr>
+<tr><td class="num">2</td><td><strong>automated decision-making / administrative law / decision-making system / decision-making public</strong></td><td><span class="tag H1" title="Established (0–3 yrs)">H1</span></td><td><span class="tag strong">strong</span></td><td class="num">0.76</td><td class="num">0.09</td><td class="num">0.06</td><td class="num">0.44</td><td>SI-3 AI and Automated Decision Making in IP </td></tr>
+<tr><td class="num">3</td><td><strong>trust / institution / public / citizen</strong></td><td><span class="tag H2" title="Transitional">H2</span></td><td><span class="tag strong">strong</span></td><td class="num">0.52</td><td class="num">0.18</td><td class="num">0.04</td><td class="num">0.68</td><td>1.1 Trust and confidence in a high-quality I</td></tr>
+<tr><td class="num">4</td><td><strong>geographical indication / trade / protection / gis</strong></td><td><span class="tag H2" title="Transitional">H2</span></td><td><span class="tag latent">latent</span></td><td class="num">0.49</td><td class="num">0.31</td><td class="num">0.05</td><td class="num">0.40</td><td>SI-1 Geographical indications registration u</td></tr>
+<tr><td class="num">5</td><td><strong>genetic / resource / access / pgrfa</strong></td><td><span class="tag H1" title="Established (0–3 yrs)">H1</span></td><td><span class="tag noise">noise</span></td><td class="num">0.62</td><td class="num">0.11</td><td class="num">0.03</td><td class="num">—</td><td>2.1 Access to and benefits from IP rights ow</td></tr>
+<tr><td class="num">6</td><td><strong>corporate / governance / accountability / ip</strong></td><td><span class="tag H1" title="Established (0–3 yrs)">H1</span></td><td><span class="tag weak">weak</span></td><td class="num">0.52</td><td class="num">0.09</td><td class="num">0.07</td><td class="num">0.62</td><td>2.2 Customer experience excellence in IP rig</td></tr>
+<tr><td class="num">7</td><td><strong>prior art / patent / search / retrieval</strong></td><td><span class="tag H2" title="Transitional">H2</span></td><td><span class="tag strong">strong</span></td><td class="num">0.54</td><td class="num">0.05</td><td class="num">0.10</td><td class="num">0.50</td><td>4.2 Innovative digital and data-driven custo</td></tr>
+<tr><td class="num">8</td><td><strong>indigenous / knowledge / post / treaty</strong></td><td><span class="tag H3" title="Paradigm shift (10–30 yrs)">H3</span></td><td><span class="tag weak">weak</span></td><td class="num">0.40</td><td class="num">0.11</td><td class="num">0.16</td><td class="num">—</td><td>2.1 Access to and benefits from IP rights ow</td></tr>
+<tr><td class="num">9</td><td><strong>retrieval / patent / image / search</strong></td><td><span class="tag H2" title="Transitional">H2</span></td><td><span class="tag noise">noise</span></td><td class="num">0.49</td><td class="num">0.08</td><td class="num">0.06</td><td class="num">0.26</td><td>4.1 Innovation and adaptiveness in stewardsh</td></tr>
+<tr><td class="num">10</td><td><strong>intellectual / property / right / enforcement</strong></td><td><span class="tag H1" title="Established (0–3 yrs)">H1</span></td><td><span class="tag strong">strong</span></td><td class="num">0.45</td><td class="num">0.10</td><td class="num">0.05</td><td class="num">0.60</td><td>4.1 Innovation and adaptiveness in stewardsh</td></tr>
+<tr><td class="num">11</td><td><strong>trade / agreement / free / wto</strong></td><td><span class="tag H1" title="Established (0–3 yrs)">H1</span></td><td><span class="tag noise">noise</span></td><td class="num">0.44</td><td class="num">0.14</td><td class="num">0.04</td><td class="num">0.41</td><td>1.3 Reputation, influence and contribution t</td></tr>
+<tr><td class="num">12</td><td><strong>patent law / artificial / intelligence / inventorship</strong></td><td><span class="tag H2" title="Transitional">H2</span></td><td><span class="tag noise">noise</span></td><td class="num">0.48</td><td class="num">0.08</td><td class="num">0.05</td><td class="num">0.62</td><td>4.2 Innovative digital and data-driven custo</td></tr>
+<tr><td class="num">13</td><td><strong>human right / indigenous / intellectual / property</strong></td><td><span class="tag H1" title="Established (0–3 yrs)">H1</span></td><td><span class="tag noise">noise</span></td><td class="num">0.44</td><td class="num">0.06</td><td class="num">0.06</td><td class="num">0.41</td><td>3.1 Capabilities for current and future need</td></tr>
+<tr><td class="num">14</td><td><strong>valuation / property / market / briefing</strong></td><td><span class="tag H1" title="Established (0–3 yrs)">H1</span></td><td><span class="tag latent">latent</span></td><td class="num">0.32</td><td class="num">0.05</td><td class="num">0.04</td><td class="num">0.51</td><td>SI-3 AI and Automated Decision Making in IP </td></tr>
+</tbody></table></div>
+<h2>Strategic fit × asset leverage</h2>
+<p class="sub">The view that separates an interesting trend from a viable venture. Split at the median of each axis.</p>
+<div class="grid">
+<div class="quad act"><h3>Act — high fit, high leverage</h3>
+<p class="empty">(none)</p>
+</div>
+<div class="quad"><h3>On strategy, no right to play</h3>
+<p class="empty">(none)</p>
+</div>
+<div class="quad"><h3>Capability looking for a problem</h3>
+<p class="empty">(none)</p>
+</div>
+<div class="quad"><h3>Watch — low fit, low leverage</h3>
+<ul><li>delivery / service / government / digital</li><li>automated decision-making / administrative law / decision-ma</li><li>trust / institution / public / citizen</li><li>geographical indication / trade / protection / gis</li><li>genetic / resource / access / pgrfa</li><li>corporate / governance / accountability / ip</li><li>prior art / patent / search / retrieval</li><li>indigenous / knowledge / post / treaty</li><li>retrieval / patent / image / search</li><li>intellectual / property / right / enforcement</li></ul>
+<p class="empty">+4 more</p>
+</div>
+</div>
+<h2>Distribution</h2>
+<div class="scroll"><table><thead><tr><th>Band</th><th class="num">Topics</th><th>Meaning</th></tr></thead><tbody>
+<tr><td><span class="tag H1">H1</span></td><td class="num">7</td><td>Established (0–3 yrs)</td></tr>
+<tr><td><span class="tag H2">H2</span></td><td class="num">6</td><td>Transitional</td></tr>
+<tr><td><span class="tag H3">H3</span></td><td class="num">1</td><td>Paradigm shift (10–30 yrs)</td></tr>
+<tr><td><span class="tag weak">weak</span></td><td class="num">2</td><td>Low volume, high growth — the horizon-scanning target</td></tr>
+<tr><td><span class="tag strong">strong</span></td><td class="num">5</td><td>High volume, high growth — already visible to everyone</td></tr>
+<tr><td><span class="tag latent">latent</span></td><td class="num">2</td><td>High volume, low growth — established, not moving</td></tr>
+<tr><td><span class="tag noise">noise</span></td><td class="num">5</td><td>Low volume, low growth</td></tr>
+</tbody></table></div>
+<h2>What happens next</h2>
+<p class="sub">The pipeline surfaces candidates; judgement does the rest.</p><ol><li><strong>Discard the artefacts.</strong> Open the evidence cards. Any topic whose documents are not a coherent theme is a clustering artefact. Expect some.</li><li><strong>Run the sense-making session</strong> over the survivors — Seven Questions each, with Doblin Ten Types to widen the framing past “new product”. Both prompts are on every card.</li><li><strong>Validate the weights.</strong> Pick an opportunity IP Australia already pursued and check whether this pipeline would have surfaced it. Until then the ranking is a hypothesis about ranking.</li></ol>
+<footer>Evidence cards and the full topic table are in <code>data/outputs/2026-08-29/</code>. Method: <code>docs/method.md</code>. Scan frame: <code>data/strategy/scan_frame.yaml</code> — the scan cannot find what the frame does not ask for.</footer>
+</div>

@@ -1,0 +1,64 @@
+# =============================================================================
+# data/strategy/critical_technologies.yaml
+#
+# The seven fields of the DISR List of Critical Technologies in the National
+# Interest. Used two ways:
+#   1. as a strategic-priority filter (Stage 3 applies critical_tech_bonus)
+#   2. as scan seeds (Stage 1 collects against these terms)
+#
+# IP Australia's own patent analytics already feed the Critical Technologies
+# Hub (Annual Report 2024-25, "Artificial intelligence patent analytics"), so
+# alignment here is not just policy signalling — it is where the agency's
+# existing analytical output already lands.
+#
+# VERIFY BEFORE RELYING ON: this list is transcribed from the reference in
+# SuggestedConceptualApproach.md, not fetched from DISR. Confirm the current
+# published list at industry.gov.au before the findings are briefed.
+# =============================================================================
+
+source: "DISR List of Critical Technologies in the National Interest"
+source_url: "https://www.industry.gov.au/publications/list-critical-technologies-national-interest"
+verified: false
+
+fields:
+  - code: "CT-AMM"
+    label: "Advanced manufacturing and materials"
+    lexicon: [advanced manufacturing, additive manufacturing, 3D printing, advanced materials,
+              nanomaterials, composite materials, smart materials, critical minerals processing,
+              metamaterials, high-performance alloys]
+
+  - code: "CT-AI"
+    label: "Artificial intelligence"
+    lexicon: [artificial intelligence, machine learning, deep learning, neural network,
+              large language model, foundation model, generative AI, natural language processing,
+              computer vision, reinforcement learning, AI safety, explainable AI]
+
+  - code: "CT-ICT"
+    label: "Advanced information and communication technologies"
+    lexicon: [advanced communications, 6G, optical communication, photonics, edge computing,
+              distributed ledger, blockchain, cyber security, post-quantum cryptography,
+              privacy enhancing technology, semiconductor design, high performance computing]
+
+  - code: "CT-QUANTUM"
+    label: "Quantum technologies"
+    lexicon: [quantum computing, quantum communication, quantum sensing, quantum cryptography,
+              qubit, quantum error correction, quantum algorithm, quantum networking,
+              quantum metrology, silicon quantum]
+
+  - code: "CT-AUTON"
+    label: "Autonomous systems, robotics, positioning, timing and sensing"
+    lexicon: [autonomous system, robotics, unmanned aerial vehicle, drone, autonomous vehicle,
+              positioning navigation and timing, PNT, GNSS, remote sensing, lidar,
+              swarm robotics, human robot interaction]
+
+  - code: "CT-BIO"
+    label: "Biotechnologies"
+    lexicon: [biotechnology, synthetic biology, genomics, gene editing, CRISPR, mRNA,
+              biomanufacturing, precision medicine, agricultural biotechnology, biosecurity,
+              plant breeding, medical device]
+
+  - code: "CT-ENERGY"
+    label: "Clean energy generation and storage"
+    lexicon: [clean energy, renewable energy, battery technology, energy storage, hydrogen,
+              electrolyser, solar photovoltaic, grid integration, carbon capture,
+              critical minerals, long duration storage]

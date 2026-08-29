@@ -1,0 +1,23 @@
+# ==============================================================
+# BigThink — core dependencies
+#
+# Deliberately small. Everything here installs in seconds on a
+# GitHub Actions runner with no compiler and no model download,
+# which is what keeps the pipeline runnable at zero cost.
+# Heavy ML dependencies are in requirements-ml.txt.
+# ==============================================================
+
+# Configuration
+pyyaml>=6.0
+
+# HTTP
+requests>=2.31
+
+# Analytical store (BasicInfraSuggestion.md)
+duckdb>=1.0
+
+# Vector maths, growth-curve fitting, burst detection
+numpy>=1.26
+
+# Testing
+pytest>=8.0

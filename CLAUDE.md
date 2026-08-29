@@ -1,0 +1,175 @@
+# CLAUDE.md — BigThink
+
+## What this repo is
+
+A computational opportunity-identification pipeline for **IPAVentures**, IP
+Australia's innovation lab. It scans published research, patents, policy and
+news, detects emerging topics, scores them against IP Australia's strategy and
+assets, and produces a ranked shortlist of candidate ventures with evidence
+behind every score.
+
+The authoritative design source is
+[`SuggestedConceptualApproach.md`](SuggestedConceptualApproach.md) — a desktop
+research report. This repo implements Stages 0–5 of its recommendations.
+
+**Read [`PROJECT_STATE.md`](PROJECT_STATE.md) first.** It is the living record
+of what is done, what is not, what is uncertain, and what to do next. This file
+tells you how the code works; that one tells you where the work is up to.
+
+## Two ways of reading this repo
+
+It is both a **research method** and a **codebase**, and the research half is
+the part that is easy to break invisibly:
+
+- A bug makes the pipeline fail loudly. **A bad threshold makes it produce a
+  confident, wrong shortlist that nobody can tell is wrong.**
+- So: anything that changes a number must be justified, tested, and recorded in
+  `PROJECT_STATE.md`'s calibration log. A weight change with no recorded reason
+  is indistinguishable from a bug six months later.
+
+## Commands
+
+All from the repo root. Python 3.11+.
+
+```bash
+# Full pipeline
+python -m src.pipeline --run-id $(date -u +%F)
+
+# Re-analyse without re-collecting — the fast loop for tuning
+python -m src.pipeline --run-id $(date -u +%F) --skip-collect
+
+# Small end-to-end run (caps records per query)
+python -m src.pipeline --run-id dev --sample
+
+# Individual stages — each reads from DuckDB, so they run independently
+python -m src.stage0_strategy --show            # print the reference set, no writes
+python -m src.stage0_strategy --run-id RUN
+python -m src.stage1_collect  --run-id RUN [--sources crossref,arxiv] [--frames ct_quantum] [--sample]
+python -m src.stage2_emergence --run-id RUN [--top 25]
+python -m src.stage3_scoring   --run-id RUN     # prints only; does not persist
+python -m src.stage4_opportunity_index --run-id RUN
+python -m src.stage5_synthesis --run-id RUN     # runs 3 and 4, then persists all
+python -m src.report           --run-id RUN     # build docs/index.html
+
+# Tests — offline by design, no network calls
+python -m pytest tests/ -q
+```
+
+## Architecture
+
+```
+Stage 0  stage0_strategy.py           Strategy → reference vectors + lexicons
+Stage 1  stage1_collect.py            APIs → DuckDB, STEEPV-tagged, deduplicated
+           collectors/                One module per source
+Stage 2  stage2_emergence.py          Topics → bursts → growth curves → Rotolo score
+           topics.py, burst.py        Clustering and Kleinberg detection
+Stage 3  stage3_scoring.py            Strategic fit × asset leverage
+Stage 4  stage4_opportunity_index.py  Relative composite index
+Stage 5  stage5_synthesis.py          Ranking, evidence cards, outputs
+         report.py                    GitHub Pages site
+```
+
+**Stages communicate only through DuckDB.** No stage passes Python objects to
+another. That is what makes a stage re-runnable alone and a months-old result
+explainable — `pipeline_runs` stores the config snapshot that produced it.
+Preserve this. Do not add cross-stage function calls that bypass the database.
+
+## Key design decisions — do not undo these without reading why
+
+| Decision | Why |
+|---|---|
+| **DuckDB, not SQLite** | Every stage aggregates. `BasicInfraSuggestion.md` specifies it. Single-writer — hence the Actions concurrency group |
+| **Pluggable embeddings, `hashing` default** | The pipeline must run and be testable with no torch and no model download. `bge` is a config switch |
+| **Per-backend similarity thresholds** | Hashed TF-IDF puts a related pair around 0.28; BGE puts it above 0.8. One threshold cannot serve both. `topic_similarity_threshold()` is the only place this is resolved |
+| **Agglomerative clustering by default, not BERTopic** | BERTopic finds better topics but shifts between runs unless carefully seeded. This pipeline's value is week-over-week comparability. Switch after weights are settled |
+| **Direct logistic fit, not logit linearisation** | Linearisation reports an early-exponential topic as *saturated* — inverting the Three Horizons band for exactly the technologies a horizon scan exists to find. Guarded by `test_early_exponential_growth_is_horizon_3` |
+| **Crossref offset paging, not cursor** | Cursor paging silently discards relevance ordering (top scores fell 31.7 → 7.4 in testing). Do not "fix" this back to a cursor |
+| **A long `Retry-After` escalates to permanent** | OpenAlex sends ~62,000 s when its daily budget is spent. Retrying inside a run cannot succeed; it burns the job timeout. The source is retired for the run |
+| **Impact percentiles computed within source** | arXiv reports no citations. Ranked globally, every preprint sits at the bottom and the fastest-moving evidence is systematically penalised |
+| **Opportunity index excluded from the ranking** | It is the weakest-founded number here. Folding it into the headline order would launder that weakness |
+| **Thin topics suppressed, not scored** | A composite on 8 documents looks identical to one on 800. That is how a horizon scan misleads people |
+| **Weight redistribution when a component has no data** | Otherwise disabling PatentsView silently shrinks every index by 15% and the ranking looks unchanged while measuring something different |
+
+## Configuration
+
+`bigthink_config.yaml` is the single source of truth, validated at the start of
+every run. **Nothing that changes a result belongs in a `.py` file.** If you
+find yourself editing a threshold in code, it belongs in the config.
+
+Validation is deliberately strict — the Rotolo weights, the opportunity-index
+components and the rank weights are all convex combinations, and a set that
+does not sum to 1.0 silently rescales every score in the output.
+
+Four YAML files under `data/strategy/` decide what the scan can find and what
+it means. They are the reviewable research artefacts; a colleague should be
+able to critique them without reading Python:
+
+- `scan_frame.yaml` — **what is searched for.** The biggest determinant of the
+  output. The scan cannot find what this file does not ask for
+- `objectives.yaml` — the 2026-27 Corporate Plan objectives and initiatives
+- `asset_inventory.yaml` — what IP Australia would bring to an opportunity
+- `critical_technologies.yaml` — DISR national-interest fields
+
+## Environment variables
+
+Neither is required; the pipeline runs on Crossref, arXiv, GDELT and
+data.gov.au with no keys at all.
+
+| Variable | Effect if unset |
+|---|---|
+| `OPENALEX_API_KEY` | OpenAlex is retired at the first frame on a shared IP (metered, daily budget). **Recommended** — it is the best research source |
+| `PATENTSVIEW_API_KEY` | PatentsView stays disabled; the `patent_activity` index component has no data and its weight is redistributed |
+| `BIGTHINK_CONTACT_EMAIL` | Falls back to `pipeline.contact_email` in the config. Used for OpenAlex/Crossref polite pools |
+
+## Conventions
+
+- **No async.** Synchronous throughout, one source at a time, predictable
+  resource use. Delays here are deliberate rate limiting, not a performance
+  problem to solve.
+- **No web frameworks, no ORM.** DuckDB and the standard library.
+- **Collectors raise, never swallow.** `RetryableError` for 429/5xx and
+  timeouts; `PermanentError` for anything a retry cannot fix. A collector that
+  returns an empty list on failure produces a silent scan.
+- **`native_id` must be stable across runs.** Deduplication depends on it.
+- **Tests never touch the network.** CI must not depend on a third-party API
+  being up. Use fixtures.
+- **Comments explain why, not what.** The non-obvious decisions above are all
+  documented at their call site; keep it that way.
+
+## When adding things
+
+- **A new scan query** → edit `data/strategy/scan_frame.yaml`. No code. But it
+  changes the corpus, so results before and after are not comparable — record
+  it in `PROJECT_STATE.md`.
+- **A new source** → see `docs/runbook-add-source.md`. Register in three
+  places: `collectors/__init__.py`, `_KNOWN_SOURCES` in `config.py`, and the
+  config. If it is research/attention/patent evidence, also add it to the
+  matching set in `stage4_opportunity_index.py`.
+- **A new score or weight** → `bigthink_config.yaml`, with validation in
+  `config.py`, a test, and an entry in the calibration log.
+
+## Documentation map
+
+| File | Purpose |
+|---|---|
+| `PROJECT_STATE.md` | **Start here.** Live state, open decisions, next actions, calibration log |
+| `docs/method.md` | What every number means and does not mean |
+| `docs/runbook-calibration.md` | Tuning weights, and the validation test that matters |
+| `docs/runbook-add-source.md` | Adding a query or a source |
+| `docs/runbook-failure-response.md` | When a run fails |
+| `SuggestedConceptualApproach.md` | The original research report this implements |
+| `BasicInfraSuggestion.md` | The zero-budget infrastructure pattern |
+
+## Things to be careful about
+
+- **Do not present the opportunity index as a market size.** It is a relative,
+  within-run ordering. This is the most important caveat in the whole method
+  and the easiest one to lose in a slide.
+- **Do not compare scores across runs** unless the config snapshot and corpus
+  are the same. Check `pipeline_runs.config_snapshot`.
+- **Do not trust the ranking yet.** No weight here has been validated against a
+  known past opportunity. Until that test is run (see
+  `docs/runbook-calibration.md`, Step 1), the ranking is a hypothesis.
+- **Do not skip the evidence cards.** Reading the primary documents behind a
+  topic is the cheapest and most reliable quality control in the method. Some
+  topics will be clustering artefacts; only reading finds them.

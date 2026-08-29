@@ -1,0 +1,169 @@
+name: Horizon scan
+
+# Full pipeline: collect signals, detect emergence, score, publish.
+#
+# STATE. The DuckDB database is not committed (binary, grows, does not diff).
+# It is carried between runs as a GitHub Release asset — the same pattern
+# Tripwire uses for its SQLite corpus. Each run restores the latest database,
+# adds to it, and publishes it back, so the corpus accumulates and growth
+# curves lengthen instead of resetting every week.
+#
+# Only the small, readable outputs are committed: the shortlist, evidence
+# cards and topics.csv.
+
+on:
+  schedule:
+    # 19:00 UTC Sunday = ~05:00-06:00 Monday in Australian eastern time, so a
+    # fresh scan is waiting at the start of the working week.
+    - cron: "0 19 * * 0"
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Run ID (defaults to today's UTC date)"
+        required: false
+        default: ""
+      skip_collect:
+        description: "Reuse the existing corpus and only re-analyse"
+        type: boolean
+        required: false
+        default: false
+      sample:
+        description: "Sample mode — cap records per query (fast smoke test)"
+        type: boolean
+        required: false
+        default: false
+      log_level:
+        description: "Logging level"
+        required: false
+        default: "INFO"
+        type: choice
+        options: [DEBUG, INFO, WARNING]
+
+# DuckDB takes an exclusive file lock: two concurrent runs do not corrupt the
+# database, they fail to open it. Serialise, and never cancel a run in flight —
+# a half-finished collection still holds documents worth keeping.
+concurrency:
+  group: bigthink-pipeline
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  scan:
+    name: Run horizon scan
+    runs-on: ubuntu-latest
+    # Collection is dominated by deliberate rate-limit delays (arXiv asks for
+    # 3 s between requests; GDELT needs 6 s and still drops connections), not
+    # by compute. Budget accordingly.
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Resolve run ID
+        id: runid
+        run: |
+          RUN_ID="${{ github.event.inputs.run_id }}"
+          [ -z "$RUN_ID" ] && RUN_ID="$(date -u +%Y-%m-%d)"
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "Run ID: $RUN_ID"
+
+      # ------------------------------------------------------------------
+      # Restore the accumulated corpus. A missing asset is normal on the
+      # first run and must not fail the job.
+      # ------------------------------------------------------------------
+      - name: Restore corpus from latest data release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p data
+          TAG=$(gh release list --repo "${{ github.repository }}" --limit 100 \
+                 --json tagName,createdAt \
+                 --jq '[.[] | select(.tagName | startswith("corpus-"))]
+                       | sort_by(.createdAt) | reverse | .[0].tagName // empty')
+          if [ -n "$TAG" ]; then
+            echo "Restoring corpus from release $TAG"
+            gh release download "$TAG" --repo "${{ github.repository }}" \
+               --pattern 'bigthink.duckdb' --dir data --clobber
+            ls -lh data/bigthink.duckdb
+          else
+            echo "No corpus release found — starting a fresh database."
+          fi
+
+      - name: Run pipeline
+        env:
+          # Optional. Without a key OpenAlex allows only a small daily budget
+          # per IP, which a shared Actions runner has usually already spent;
+          # the collector then retires that source for the run and carries on.
+          OPENALEX_API_KEY: ${{ secrets.OPENALEX_API_KEY }}
+          # Optional. PatentsView is disabled in config by default; enable it
+          # there once this key is set.
+          PATENTSVIEW_API_KEY: ${{ secrets.PATENTSVIEW_API_KEY }}
+        run: |
+          ARGS="--run-id ${{ steps.runid.outputs.run_id }} --log-level ${{ github.event.inputs.log_level || 'INFO' }}"
+          [ "${{ github.event.inputs.skip_collect }}" = "true" ] && ARGS="$ARGS --skip-collect"
+          [ "${{ github.event.inputs.sample }}" = "true" ] && ARGS="$ARGS --sample"
+          python -m src.pipeline $ARGS
+
+      - name: Build the published site
+        run: python -m src.report --run-id ${{ steps.runid.outputs.run_id }}
+
+      # ------------------------------------------------------------------
+      # Commit only the small, readable outputs.
+      # ------------------------------------------------------------------
+      - name: Commit outputs
+        if: always()
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/outputs/ docs/ || true
+          git diff --cached --quiet || \
+            git commit -m "scan: results for ${{ steps.runid.outputs.run_id }} [skip ci]"
+          git push origin "${{ github.ref_name }}" || true
+
+      # ------------------------------------------------------------------
+      # Publish the corpus for the next run.
+      # ------------------------------------------------------------------
+      - name: Publish corpus as a data release
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -f data/bigthink.duckdb ]; then
+            TAG="corpus-$(date -u +%Y%m%d-%H%M%S)"
+            gh release create "$TAG" data/bigthink.duckdb \
+              --repo "${{ github.repository }}" \
+              --title "Corpus $TAG" \
+              --notes "Accumulated corpus after run ${{ steps.runid.outputs.run_id }} (workflow run ${{ github.run_id }})."
+            # Keep the five most recent corpus releases; older ones are dead weight.
+            gh release list --repo "${{ github.repository }}" --limit 100 \
+              --json tagName,createdAt \
+              --jq '[.[] | select(.tagName | startswith("corpus-"))]
+                    | sort_by(.createdAt) | reverse | .[5:] | .[].tagName' \
+            | while read -r old; do
+                [ -n "$old" ] && gh release delete "$old" --repo "${{ github.repository }}" --yes --cleanup-tag || true
+              done
+          fi
+
+      - name: Upload run logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scan-${{ steps.runid.outputs.run_id }}-${{ github.run_id }}
+          path: |
+            data/outputs/
+          retention-days: 90
+          if-no-files-found: ignore
