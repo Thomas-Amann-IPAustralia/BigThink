@@ -1,0 +1,8 @@
+{
+  "run_id": "2026-08-29",
+  "documents": 7780,
+  "topics": 14,
+  "slices": 9,
+  "span": "2018\u20132026",
+  "backend": "hashing"
+}
