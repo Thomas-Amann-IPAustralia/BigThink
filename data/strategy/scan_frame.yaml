@@ -1,0 +1,272 @@
+# =============================================================================
+# data/strategy/scan_frame.yaml
+#
+# THE SCAN FRAME — the seed queries that define what this horizon scan is
+# capable of finding.
+#
+# Read this file before you read any result. A horizon scan cannot surface a
+# trend it never collected, so this file, not the scoring weights, is the
+# single biggest determinant of the output. It is deliberately a standalone,
+# reviewable artefact: a colleague should be able to critique the frame
+# without reading a line of Python.
+#
+# It is kept in the repo and version-controlled so that "why didn't the scan
+# see X?" always has an answer, and so adding X is a reviewable diff.
+#
+# STRUCTURE
+#   key       stable identifier, recorded on every collected document
+#   label     human-readable name
+#   steepv    STEEPV category (Social/Technological/Economic/Environmental/
+#             Political/Values/Legal) — the horizon-scanning taxonomy from the
+#             UK GO-Science Futures Toolkit
+#   queries   per-source query strings; a source with no entry is skipped
+#   rationale why this is in the frame at all
+#
+# KNOWN BIAS: the frame is stronger on Technological than on Social, Values or
+# Environmental. That mirrors where free structured data exists, not where the
+# opportunities are. Treat the non-technological entries as under-powered and
+# compensate at the human synthesis session (Stage 5). This is recorded as an
+# open issue in PROJECT_STATE.md.
+# =============================================================================
+
+version: "0.1"
+last_reviewed: "2026-08-29"
+
+frames:
+
+  # ---------------------------------------------------------------------
+  # A. The IP system itself — where IP Australia has a mandate to act.
+  # ---------------------------------------------------------------------
+  - key: "ip_admin_automation"
+    label: "AI and automation in IP administration and examination"
+    steepv: "Technological"
+    rationale: >-
+      Directly serves Strategic Objective 4.2 and significant initiative SI-3,
+      and sits on top of the agency's largest asset (examination capability
+      plus registry data). The highest-prior area for a venture.
+    queries:
+      openalex: "patent examination automation OR trademark classification machine learning"
+      arxiv: "abs:(patent AND (classification OR retrieval OR examination))"
+      crossref: "patent examination artificial intelligence"
+      gdelt: "(patent office OR trademark office) AND (artificial intelligence OR automation)"
+      patentsview: "patent classification machine learning"
+
+  - key: "ip_search_retrieval"
+    label: "Prior-art search, semantic retrieval and patent NLP"
+    steepv: "Technological"
+    rationale: >-
+      The technical core of examination. Also where the agency's Patent
+      Analytics Hub already operates, so findings have an internal owner.
+    queries:
+      openalex: "prior art search OR patent retrieval OR patent landscape analysis"
+      arxiv: "abs:(prior art OR patent retrieval OR patent landscaping)"
+      crossref: "prior art retrieval patent"
+
+  - key: "ip_policy_reform"
+    label: "IP policy, regulatory reform and compliance burden"
+    steepv: "Political"
+    rationale: >-
+      Serves significant initiative SI-2 (productivity agenda / regulatory
+      reform) and Strategic Objective 1.3 (policy influence).
+    queries:
+      openalex: "intellectual property policy reform OR regulatory burden innovation"
+      crossref: "intellectual property policy regulatory reform"
+      gdelt: "intellectual property reform AND (regulation OR productivity)"
+      datagovau: "intellectual property"
+
+  - key: "ip_enforcement_counterfeit"
+    label: "Counterfeiting, enforcement and online marketplaces"
+    steepv: "Economic"
+    rationale: >-
+      Persistent pressure on the rights system that IP First Response already
+      touches; a candidate area where a service venture could sit.
+    queries:
+      openalex: "counterfeit detection OR trademark infringement online marketplace"
+      gdelt: "counterfeit goods AND (marketplace OR enforcement OR brand)"
+      crossref: "counterfeiting enforcement intellectual property"
+
+  - key: "ip_sme_access"
+    label: "SME and start-up access to the IP system"
+    steepv: "Economic"
+    rationale: >-
+      Serves Strategic Objectives 1.2 and 2.1 and significant initiative SI-4
+      (IP First Response). The lab's most likely customer segment.
+    queries:
+      openalex: "small and medium enterprise intellectual property OR startup patenting"
+      crossref: "SME intellectual property access"
+      gdelt: "small business AND (trademark OR patent OR intellectual property)"
+
+  - key: "ip_finance_valuation"
+    label: "IP as a financial asset: valuation, collateral, insurance"
+    steepv: "Economic"
+    rationale: >-
+      An adjacency where registry data has obvious value and IP Australia holds
+      the authoritative record — a plausible white space for a public-good
+      data product.
+    queries:
+      openalex: "intellectual property valuation OR patent collateral OR IP backed finance"
+      crossref: "intellectual property valuation finance"
+      gdelt: "intellectual property AND (valuation OR collateral OR securitisation)"
+
+  # ---------------------------------------------------------------------
+  # B. Contested frontiers — where IP law is under active pressure.
+  # ---------------------------------------------------------------------
+  - key: "ai_authorship_inventorship"
+    label: "AI authorship, inventorship and training-data rights"
+    steepv: "Legal"
+    rationale: >-
+      The live doctrinal fault line for every IP office. High policy salience,
+      high uncertainty — exactly the Horizon 2/3 material a lab should be
+      watching rather than reacting to.
+    queries:
+      openalex: "AI inventorship OR generative AI copyright OR training data licensing"
+      arxiv: "abs:(copyright AND (generative OR training data))"
+      crossref: "artificial intelligence inventorship copyright"
+      gdelt: "(AI OR artificial intelligence) AND (copyright OR inventor OR authorship)"
+
+  - key: "indigenous_knowledge"
+    label: "Indigenous Knowledge, ICIP and traditional cultural expression"
+    steepv: "Values"
+    rationale: >-
+      Serves significant initiative SI-5. A distinctive mandate where IP
+      Australia holds relationships no commercial actor has, and where the
+      WIPO instruments are actively moving.
+    queries:
+      openalex: "Indigenous knowledge intellectual property OR traditional cultural expression"
+      crossref: "Indigenous cultural and intellectual property"
+      gdelt: "Indigenous knowledge AND (intellectual property OR cultural heritage)"
+
+  - key: "geographical_indications"
+    label: "Geographical indications and provenance"
+    steepv: "Legal"
+    rationale: >-
+      Serves significant initiative SI-1 (A-EU FTA). A near-certain workload
+      increase; worth knowing whether it is also a venture.
+    queries:
+      openalex: "geographical indication OR provenance certification agricultural product"
+      crossref: "geographical indications trade agreement"
+      gdelt: "geographical indications AND (wine OR food OR trade agreement)"
+
+  - key: "digital_identity_provenance"
+    label: "Content provenance, digital identity and authenticity"
+    steepv: "Technological"
+    rationale: >-
+      Provenance infrastructure (watermarking, content credentials) is
+      converging with brand protection and authorship — an adjacency where a
+      registry operator has a natural role.
+    queries:
+      openalex: "content provenance OR digital watermarking OR content authenticity"
+      arxiv: "abs:(watermarking AND (generative OR provenance))"
+      gdelt: "content provenance OR content credentials OR deepfake detection"
+
+  # ---------------------------------------------------------------------
+  # C. Public-sector operating context.
+  # ---------------------------------------------------------------------
+  - key: "gov_service_delivery"
+    label: "Digital government service delivery and regulatory technology"
+    steepv: "Political"
+    rationale: >-
+      Serves Strategic Objectives 2.2 and 4.2. Where a service innovation in
+      one agency becomes an expectation across all of them.
+    queries:
+      openalex: "digital government service delivery OR regulatory technology govtech"
+      crossref: "digital government service delivery"
+      gdelt: "digital government services AND (Australia OR public sector)"
+      datagovau: "digital government"
+
+  - key: "ai_governance_assurance"
+    label: "AI governance, assurance and automated decision making in government"
+    steepv: "Political"
+    rationale: >-
+      Serves significant initiative SI-3 directly, and constrains every AI
+      venture the lab might launch. The wind-tunnel repo already holds the
+      corpus for this.
+    queries:
+      openalex: "AI governance public sector OR automated decision making administrative law"
+      arxiv: "abs:(AI governance OR algorithmic accountability)"
+      crossref: "automated decision making government accountability"
+      gdelt: "automated decision making AND (government OR regulation)"
+      datagovau: "artificial intelligence"
+
+  - key: "trust_institutions"
+    label: "Public trust in institutions and evidence"
+    steepv: "Social"
+    rationale: >-
+      Underpins Strategic Objective 1.1. Slow-moving, but a shift here changes
+      what the agency must do to remain credible.
+    queries:
+      openalex: "public trust in government OR institutional trust evidence"
+      crossref: "public trust institutions"
+      gdelt: "public trust AND (government OR institutions OR regulator)"
+
+  # ---------------------------------------------------------------------
+  # D. DISR critical technology fields.
+  # Broad by design: these establish the technology backdrop against which
+  # IP-specific signals are read, and directly support the critical_tech_bonus.
+  # ---------------------------------------------------------------------
+  - key: "ct_ai"
+    label: "Critical technology: artificial intelligence"
+    steepv: "Technological"
+    critical_tech: "CT-AI"
+    rationale: "DISR critical technology field; IP Australia already supplies patent analytics on it."
+    queries:
+      openalex: "foundation model OR large language model OR generative artificial intelligence"
+      arxiv: "cat:cs.AI AND abs:(foundation model OR agent)"
+      gdelt: "artificial intelligence AND Australia"
+
+  - key: "ct_quantum"
+    label: "Critical technology: quantum technologies"
+    steepv: "Technological"
+    critical_tech: "CT-QUANTUM"
+    rationale: "DISR critical technology field; IP Australia has published patent analytics on quantum."
+    queries:
+      openalex: "quantum computing OR quantum sensing OR quantum communication"
+      arxiv: "cat:quant-ph AND abs:(computing OR sensing OR error correction)"
+      gdelt: "quantum computing AND (Australia OR investment OR patent)"
+
+  - key: "ct_biotech"
+    label: "Critical technology: biotechnologies"
+    steepv: "Technological"
+    critical_tech: "CT-BIO"
+    rationale: "DISR critical technology field; strong plant breeder's rights and patent linkage."
+    queries:
+      openalex: "synthetic biology OR gene editing OR biomanufacturing"
+      crossref: "synthetic biology intellectual property"
+      gdelt: "biotechnology AND (patent OR regulation OR Australia)"
+
+  - key: "ct_energy"
+    label: "Critical technology: clean energy generation and storage"
+    steepv: "Environmental"
+    critical_tech: "CT-ENERGY"
+    rationale: "DISR critical technology field; the largest green-patent filing cluster."
+    queries:
+      openalex: "energy storage battery OR green hydrogen OR grid integration renewable"
+      gdelt: "clean energy technology AND (Australia OR patent OR investment)"
+
+  - key: "ct_autonomous"
+    label: "Critical technology: autonomous systems, robotics, PNT and sensing"
+    steepv: "Technological"
+    critical_tech: "CT-AUTON"
+    rationale: "DISR critical technology field."
+    queries:
+      openalex: "autonomous systems robotics OR positioning navigation timing OR remote sensing"
+      arxiv: "cat:cs.RO AND abs:(autonomous OR navigation)"
+
+  - key: "ct_advanced_manufacturing"
+    label: "Critical technology: advanced manufacturing and materials"
+    steepv: "Technological"
+    critical_tech: "CT-AMM"
+    rationale: "DISR critical technology field; strong design-right and patent linkage."
+    queries:
+      openalex: "additive manufacturing OR advanced materials OR critical minerals processing"
+      gdelt: "advanced manufacturing AND Australia"
+
+  - key: "ct_advanced_ict"
+    label: "Critical technology: advanced ICT, cyber and post-quantum cryptography"
+    steepv: "Technological"
+    critical_tech: "CT-ICT"
+    rationale: "DISR critical technology field; post-quantum migration is a near-term forcing function."
+    queries:
+      openalex: "post-quantum cryptography OR privacy enhancing technologies OR edge computing"
+      arxiv: "abs:(post-quantum cryptography OR privacy enhancing)"
+      gdelt: "post-quantum cryptography OR cyber security standards"

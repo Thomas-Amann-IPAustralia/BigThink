@@ -1,0 +1,251 @@
+# =============================================================================
+# bigthink_config.yaml
+#
+# Single source of truth for every tunable parameter in the IPAVentures
+# opportunity-identification pipeline. Nothing that changes a result should
+# live in code — if you find yourself editing a threshold in a .py file, it
+# belongs here instead.
+#
+# Pattern borrowed from Tripwire (tripwire_config.yaml): one validated YAML
+# file, checked at the start of every run, version-controlled so any past run
+# can be reproduced from the commit that produced it.
+# =============================================================================
+
+pipeline:
+  # Free-text label recorded against every run so results are traceable.
+  run_label: "ipaventures-horizon-scan"
+  max_retries: 3
+  retry_base_delay_seconds: 2.0
+  # Sent as the User-Agent and OpenAlex/Crossref `mailto` for the polite pool.
+  # Polite-pool access is materially faster and is a condition of fair use.
+  contact_email: "thomasamann23@gmail.com"
+  user_agent: "IPAVentures-BigThink/0.1 (horizon scanning; +https://github.com/Thomas-Amann-IPAustralia/BigThink)"
+  # When true, collectors stop after `sample_limit` records per query. Use for
+  # development so a full scan is never accidentally triggered on a laptop.
+  sample_mode: false
+  sample_limit: 50
+
+storage:
+  duckdb_path: "data/bigthink.duckdb"
+  raw_dir: "data/raw"
+  strategy_dir: "data/strategy"
+  outputs_dir: "data/outputs"
+  # Raw payloads are large and reproducible; they are gitignored by default.
+  # Set to true only if you have Cloudflare R2 (or similar) configured.
+  keep_raw_payloads: true
+
+embeddings:
+  # Two backends, same interface (see src/embeddings.py):
+  #   hashing  — dependency-free character n-gram hashing + TF-IDF. Runs
+  #              anywhere, no model download. Used for CI, tests, and any
+  #              environment without torch.
+  #   bge      — BAAI/bge-base-en-v1.5 sentence-transformers, the same model
+  #              Tripwire uses at Stage 5. Better quality; ~400 MB download.
+  # Start on `hashing` to get the pipeline shaped, switch to `bge` before you
+  # trust the strategic-fit numbers.
+  backend: "hashing"
+  bge_model: "BAAI/bge-base-en-v1.5"
+  hashing_dimensions: 2048
+  # Cache computed vectors in DuckDB so re-runs do not re-embed a stable corpus.
+  cache_vectors: true
+
+# -----------------------------------------------------------------------------
+# Stage 0 — Strategy encoding
+# -----------------------------------------------------------------------------
+strategy:
+  # Documents parsed into the strategic reference set. Paths are repo-relative.
+  documents:
+    - path: "StrategicCorporatePlan26-27.md"
+      label: "IP Australia Strategic Corporate Plan 2026-27"
+      weight: 1.0
+    - path: "IPA-Annual-Report-2025.md"
+      label: "IP Australia Annual Report 2024-25"
+      weight: 0.6
+  # Hand-curated from the Corporate Plan's "Strategic objectives" section.
+  # Refresh yearly when the plan is republished.
+  objectives_file: "data/strategy/objectives.yaml"
+  # DISR List of Critical Technologies in the National Interest — the seven
+  # fields. Used both as a strategic-priority filter and a scan seed.
+  critical_technologies_file: "data/strategy/critical_technologies.yaml"
+
+# -----------------------------------------------------------------------------
+# Stage 1 — Signal collection
+# -----------------------------------------------------------------------------
+collection:
+  # Scan window. Emergence detection needs enough history to fit a growth
+  # curve; 8 years is the shortest window that gives a stable CAGR.
+  start_year: 2018
+  end_year: 2026
+  # Seed queries live in a separate file so the scan frame is reviewable as a
+  # standalone artefact — it is the single biggest determinant of what the
+  # scan can possibly find, and reviewers should be able to read it alone.
+  scan_frame_file: "data/strategy/scan_frame.yaml"
+
+  sources:
+    openalex:
+      enabled: true
+      # No key required. `mailto` (from pipeline.contact_email) buys the
+      # polite pool. Free API keys give ~$1/day of credits if you need more.
+      per_page: 200
+      max_pages_per_query: 5
+      min_year: 2018
+      # Drop results scoring below this fraction of the query's own top score.
+      # Absolute score cut-offs cannot work — scores are not comparable across
+      # queries — so the floor is relative. Raise toward 0.6 for a tighter,
+      # smaller corpus; lower toward 0.2 to widen the net and accept more noise.
+      min_relative_score: 0.4
+    arxiv:
+      enabled: true
+      # Fastest emergence signal for AI/CS — publication lag measured in days,
+      # not the ~18 months patents carry.
+      max_results_per_query: 200
+      # arXiv asks for =>3 s between requests. Honour it.
+      request_delay_seconds: 3.0
+    crossref:
+      enabled: true
+      rows_per_query: 100
+      # Offset paging, not cursor — cursor paging discards Crossref's relevance
+      # ordering entirely. See the note in src/collectors/crossref.py.
+      max_pages_per_query: 2
+      min_relative_score: 0.4
+    gdelt:
+      enabled: true
+      # Attention/salience proxy. GDELT rejects windows longer than ~1 year on
+      # the DOC API, so long spans are chunked automatically.
+      max_records_per_query: 250
+      timespan_months: 24
+    datagovau:
+      enabled: true
+      # CKAN at https://data.gov.au/data/api/3 — policy + IP Australia's own
+      # published datasets (IP RAPID, IPGOD).
+      rows_per_query: 50
+    patentsview:
+      # Requires a free API key from https://patentsview.org (env: PATENTSVIEW_API_KEY).
+      # Disabled by default so a run without the key is clean rather than noisy.
+      enabled: false
+      rows_per_query: 1000
+      max_pages_per_query: 5
+
+  # STEEPV tagging. Every collected document is assigned one primary category.
+  # Source-level defaults; overridden per-document when the scan frame entry
+  # declares its own category.
+  steepv_default_by_source:
+    openalex: "Technological"
+    arxiv: "Technological"
+    crossref: "Technological"
+    gdelt: "Social"
+    datagovau: "Political"
+    patentsview: "Technological"
+
+# -----------------------------------------------------------------------------
+# Stage 2 — Trend and emergence detection
+# -----------------------------------------------------------------------------
+emergence:
+  # Time slicing for burst detection and growth curves.
+  time_slice: "year"          # year | quarter
+  min_docs_per_topic: 20      # burst literature standard; below this, bursts are noise
+  min_slices_for_growth: 4    # need at least 4 points to fit a curve
+
+  # --- Kleinberg (2003) two-state burst automaton ---
+  # Defaults follow the parameters most commonly reported in the scientometrics
+  # literature. s scales the burst-state rate; gamma is the state-transition cost.
+  burst:
+    s: 2.0
+    gamma: 1.0
+
+  # --- Topic formation ---
+  topics:
+    # `agglomerative` needs no heavy deps and is deterministic — good enough to
+    # shape the pipeline. Switch to `bertopic` once you install requirements-ml.txt.
+    method: "agglomerative"
+    # Cosine values are NOT comparable across embedding backends. Hashed TF-IDF
+    # puts two closely-related abstracts around 0.25-0.35; BGE puts the same
+    # pair above 0.8. One threshold cannot serve both, so each backend carries
+    # its own. Both figures below are starting points, NOT calibrated values —
+    # see PROJECT_STATE.md "Open calibration decisions" before trusting them.
+    similarity_threshold_by_backend:
+      hashing: 0.18
+      bge: 0.62
+    min_topic_size: 8
+    max_topics: 120
+    # Terms appearing in fewer than this many documents are dropped before
+    # topic formation, so single-paper coinages cannot become "topics".
+    min_term_document_frequency: 5
+
+  # --- Rotolo, Hicks & Martin (2015) five attributes of emergence ---
+  # Each maps to one computable indicator. Weights sum to 1.0; they are a
+  # judgement call, not a finding — see docs/method.md before changing them,
+  # and record any change in PROJECT_STATE.md.
+  rotolo_weights:
+    novelty: 0.25        # mean embedding distance to the prior-period corpus centroid
+    growth: 0.30         # slice-over-slice CAGR, blended with Kleinberg burst weight
+    coherence: 0.15      # intra-topic cosine density
+    impact: 0.20         # citation / attention percentile
+    uncertainty: 0.10    # dispersion of actors and source types (normalised entropy)
+
+  # --- Three Horizons banding ---
+  # A topic is assigned a horizon from its logistic-curve maturity, not its age.
+  # These cut-points are on the fitted curve's inflection position.
+  three_horizons:
+    h1_max_maturity: 0.75   # >= this => H1: established, 0-3 yrs, sustain current system
+    h2_max_maturity: 0.35   # >= this => H2: transitional/emerging
+    # below h2_max_maturity => H3: 10-30 yr paradigm shift
+
+  # --- Weak-signal 2x2 (Park & Kim / WISDOM) ---
+  # Topics are placed on average-proportion (x) vs growth-rate (y).
+  weak_signal:
+    proportion_percentile_split: 50
+    growth_percentile_split: 50
+
+# -----------------------------------------------------------------------------
+# Stage 3 — Strategic fit and asset leverage
+# -----------------------------------------------------------------------------
+scoring:
+  strategic_fit:
+    # Cosine similarity of the topic centroid to Stage 0 reference vectors,
+    # blended with a lexical overlap term so a topic that names an objective
+    # explicitly is not penalised by embedding drift.
+    embedding_weight: 0.7
+    lexicon_weight: 0.3
+    # Bonus applied when a topic maps to a DISR critical-technology field.
+    critical_tech_bonus: 0.10
+  asset_leverage:
+    # Overlap between a topic and IP Australia's own data/capability inventory.
+    inventory_file: "data/strategy/asset_inventory.yaml"
+    embedding_weight: 0.6
+    lexicon_weight: 0.4
+
+# -----------------------------------------------------------------------------
+# Stage 4 — Opportunity-size index
+# -----------------------------------------------------------------------------
+# THIS IS A RELATIVE INDEX, NOT A MARKET SIZE. It is deliberately unitless.
+# Do not present any output of this stage as a dollar figure. See the caveats
+# in SuggestedConceptualApproach.md and docs/method.md.
+opportunity_index:
+  components:
+    research_growth: 0.30     # publication CAGR percentile
+    attention: 0.25           # GDELT volume percentile
+    attention_tone: 0.10      # GDELT tone (positive salience)
+    policy_salience: 0.20     # mentions across policy/strategy corpus
+    patent_activity: 0.15     # patent filing growth (0 when PatentsView disabled;
+                              # weight is redistributed proportionally at runtime)
+  # Refuse to emit an index for topics thinner than this — a composite built on
+  # two documents looks identical to one built on two hundred, which is exactly
+  # how a horizon scan misleads people.
+  min_documents: 15
+
+# -----------------------------------------------------------------------------
+# Stage 5 — Synthesis and ranking
+# -----------------------------------------------------------------------------
+synthesis:
+  shortlist_size: 15
+  # Final ranking weights across the three axes that survive the caveats.
+  rank_weights:
+    emergence: 0.40
+    strategic_fit: 0.35
+    asset_leverage: 0.25
+  # Evidence cards carry the top-N source documents per topic so every score is
+  # traceable to primary text. This is the audit trail; do not set it to 0.
+  evidence_documents_per_topic: 8
+  # Doblin Ten Types is applied as a human diagnostic at synthesis, not scored.
+  doblin_prompt_in_cards: true

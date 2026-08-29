@@ -1,0 +1,220 @@
+# =============================================================================
+# data/strategy/objectives.yaml
+#
+# IP Australia's strategic objectives and significant initiatives, transcribed
+# from the 2026-27 Strategic Corporate Plan ("Strategic objectives", pp. 5-8,
+# and "Significant initiatives", p. 8).
+#
+# This file is the target that every detected trend is scored against. It is
+# hand-curated rather than auto-extracted on purpose: the objectives are the
+# one input where a parsing error would corrupt every downstream score, and
+# there are only fourteen of them.
+#
+# REFRESH: when the next Corporate Plan is published. Update `source_document`
+# and note the change in PROJECT_STATE.md, because fit scores are not
+# comparable across plan versions.
+# =============================================================================
+
+source_document: "StrategicCorporatePlan26-27.md"
+plan_year: "2026-27"
+
+purpose: >-
+  Enabling Australians to benefit from great ideas by providing a world-leading
+  IP system.
+
+outcome: >-
+  Increased innovation, investment and trade in Australia, and by Australians
+  overseas, through the administration of the registrable intellectual property
+  rights system, promoting public awareness and industry engagement, and
+  advising government.
+
+objectives:
+  - code: "1.1"
+    pillar: "Impact"
+    label: "Trust and confidence in a high-quality IP rights system"
+    text: >-
+      Increase trust and confidence by maintaining a high-quality,
+      customer-centric, efficient IP rights system. We strive to maintain a
+      world-leading, high-quality IP system that instils trust and confidence.
+      We continually improve our processes to reduce costs and regulatory
+      burden for our customers to make it easy for them to use our services.
+    lexicon: [trust, confidence, quality, examination quality, efficiency, regulatory burden,
+              compliance cost, process improvement, timeliness, integrity, assurance]
+    weight: 1.0
+
+  - code: "1.2"
+    pillar: "Impact"
+    label: "Awareness of the IP system"
+    text: >-
+      Increase awareness of the IP system. We produce high-quality, accessible
+      and dynamic public education and engagement resources and initiatives to
+      make it easy for individuals and small business owners to access and
+      understand how IP rights can benefit them.
+    lexicon: [awareness, education, public education, outreach, engagement, literacy,
+              small business, SME, accessible information, guidance]
+    weight: 1.0
+
+  - code: "1.3"
+    pillar: "Impact"
+    label: "Reputation, influence and contribution to the IP ecosystem"
+    text: >-
+      Increase our reputation, influence and contribution to the IP eco-system.
+      We are a steward of the Australian IP system, known for our strong
+      domestic and international relationships, and our focus on data-driven
+      decision making. We continue to collaborate across government to provide
+      advice, support growth, and ensure fit-for-purpose trade agreements. We
+      influence international IP frameworks and global trading partners.
+    lexicon: [stewardship, reputation, influence, international engagement, trade agreement,
+              treaty, harmonisation, WIPO, evidence-based policy, data-driven decision making,
+              cross-government collaboration]
+    weight: 1.0
+
+  - code: "2.1"
+    pillar: "Customer"
+    label: "Access to and benefits from IP rights ownership"
+    text: >-
+      Increase access to and benefits from IP rights ownership. We make it easy
+      to access IP rights through high-quality digital services and the
+      registration of qualified and ethical IP attorneys. Our robust IP rights
+      system supports owners to trade with confidence in domestic and
+      international markets.
+    lexicon: [access, affordability, IP attorney, attorney registration, rights ownership,
+              commercialisation, licensing, export, market entry, IP finance]
+    weight: 1.0
+
+  - code: "2.2"
+    pillar: "Customer"
+    label: "Customer experience excellence in IP rights services"
+    text: >-
+      Increase customer experience excellence in the delivery of IP rights
+      services. We help our customers understand how to submit compelling
+      applications and provide transparent and considered responses on
+      examination outcomes. We provide innovative, seamless and convenient
+      services through channels that are modern, accessible, secure and meet
+      the diverse needs of our customers.
+    lexicon: [customer experience, user experience, service design, self-service,
+              application quality, transparency, accessibility, digital channel,
+              omnichannel, customer support]
+    weight: 1.0
+
+  - code: "3.1"
+    pillar: "Capability"
+    label: "Capabilities for current and future needs of the IP system"
+    text: >-
+      Create and continually improve capabilities that meet the current and
+      future needs of the IP rights system. We understand the capabilities
+      required to maintain a high-quality IP system and to meet evolving
+      customers' and stakeholders' needs through genuine engagement and
+      consultation. We create value by investing in and leveraging the
+      capabilities of our people, culture, technology, data, processes and
+      policies.
+    lexicon: [capability, workforce capability, technology capability, data capability,
+              future skills, consultation, stakeholder engagement, process capability,
+              organisational capability]
+    weight: 1.0
+
+  - code: "3.2"
+    pillar: "Capability"
+    label: "Customer-centric, empowered, inclusive and risk-engaging culture"
+    text: >-
+      Build a workplace culture that is customer centric, empowered, inclusive
+      and risk-engaging. Our organisational culture and staff experience
+      empowers us to reduce threats and seize opportunities by providing the
+      right tools and support, promoting a sense of belonging, and encouraging
+      us to engage with risk.
+    lexicon: [workplace culture, staff experience, inclusion, belonging, empowerment,
+              risk appetite, risk engagement, wellbeing, ways of working]
+    weight: 0.6
+
+  - code: "4.1"
+    pillar: "Innovation"
+    label: "Innovation and adaptiveness in stewardship of the IP rights system"
+    text: >-
+      Increase innovation and adaptiveness in our stewardship of the IP rights
+      system. We promote and celebrate innovation, and we are willing to try,
+      fail fast and apply the learnings. We integrate innovative practices
+      through our leadership, training and everyday work and look for
+      opportunities to innovate through small and large changes.
+    lexicon: [innovation, experimentation, adaptiveness, fail fast, prototype, pilot,
+              innovation lab, anticipatory innovation, foresight, horizon scanning,
+              continuous improvement]
+    # Weighted up: this is the objective IPAVentures itself exists to serve, so
+    # a trend that speaks to it is disproportionately relevant to this scan.
+    weight: 1.3
+
+  - code: "4.2"
+    pillar: "Innovation"
+    label: "Innovative digital and data-driven customer and staff services"
+    text: >-
+      Create innovative contemporary digital and data driven customer services
+      and staff experiences. We provide excellent customer and staff
+      experiences through contemporary digital solutions and by using emerging
+      technologies that automate and elevate our services. We use data insights
+      to drive continuous improvement in decision-making and service delivery.
+    lexicon: [digital service, emerging technology, automation, artificial intelligence,
+              machine learning, automated decision making, data insight, analytics,
+              digital transformation, platform, API, generative AI]
+    weight: 1.3
+
+initiatives:
+  - code: "SI-1"
+    label: "Geographical indications registration under the A-EU FTA"
+    text: >-
+      Progress arrangements to support the implementation of a system for
+      registering geographical indications under the Australia-EU Free Trade
+      Agreement to strengthen protection of regional products and unlock
+      opportunities for Australian producers.
+    lexicon: [geographical indication, GI, Australia-EU Free Trade Agreement, regional product,
+              origin labelling, agricultural producer, certification]
+    weight: 1.0
+
+  - code: "SI-2"
+    label: "Regulatory reform supporting the productivity agenda"
+    text: >-
+      Support the government's productivity agenda for regulatory reform, to
+      ease unnecessary compliance burdens on business and free up their time
+      for productive and innovative activities.
+    lexicon: [productivity, regulatory reform, deregulation, compliance burden, red tape,
+              business productivity, regulatory technology, regtech]
+    weight: 1.0
+
+  - code: "SI-3"
+    label: "AI and Automated Decision Making in IP administration"
+    text: >-
+      Continue to innovate with AI and Automated Decision Making (ADM) tools
+      consistent with our risk appetite settings and in accordance with
+      government policy for the responsible use of AI.
+    lexicon: [artificial intelligence, automated decision making, ADM, responsible AI,
+              AI assurance, AI governance, model risk, human in the loop, AI in government,
+              large language model, machine learning classification]
+    weight: 1.3
+
+  - code: "SI-4"
+    label: "SME education and outreach, including the IP First Response pilot"
+    text: >-
+      Continue to explore education and outreach initiatives to support small
+      and medium enterprises, including through the IP First Response pilot.
+    lexicon: [small and medium enterprise, SME, IP First Response, outreach, advisory service,
+              dispute resolution, self-help, triage, first response]
+    weight: 1.0
+
+  - code: "SI-5"
+    label: "First Nations Strategy"
+    text: >-
+      Advance the First Nations Strategy to enhance partnerships, improve
+      access to the IP system, and support the economic empowerment of First
+      Nations peoples.
+    lexicon: [First Nations, Indigenous knowledge, Indigenous cultural and intellectual property,
+              ICIP, traditional knowledge, traditional cultural expression, genetic resources,
+              economic empowerment, cultural protocol]
+    weight: 1.1
+
+  - code: "SI-6"
+    label: "Capability Framework and innovative learning mindset"
+    text: >-
+      Embed our Capability Framework, encouraging and supporting our staff to
+      adopt an innovative learning mindset — embracing experimentation,
+      managing risk, and adapting to change and technology.
+    lexicon: [capability framework, learning mindset, upskilling, experimentation,
+              change management, technology adoption, workforce development]
+    weight: 0.6

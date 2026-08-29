@@ -1,0 +1,30 @@
+# ==============================================================
+# BigThink — optional ML dependencies
+#
+# Needed only for:
+#   embeddings.backend: "bge"            (semantic embeddings)
+#   emergence.topics.method: "bertopic"  (better topic formation)
+#
+# Install PyTorch from the CPU-only index FIRST, as Tripwire's
+# README documents — the default wheel pulls CUDA and will not
+# fit in a GitHub Actions runner:
+#
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   pip install -r requirements-ml.txt
+#
+# Expect ~2 GB installed and a ~400 MB model download on first
+# run (cache ~/.cache/huggingface between runs via actions/cache).
+# ==============================================================
+
+# Bi-encoder embeddings — BAAI/bge-base-en-v1.5, the same model Tripwire
+# uses at its Stage 5, so vectors are comparable across the two systems.
+sentence-transformers>=3.0
+
+# Topic modelling
+bertopic>=0.16
+umap-learn>=0.5
+hdbscan>=0.8
+scikit-learn>=1.4
+
+# Keyphrase extraction, if you prefer YAKE to the built-in c-TF-IDF labeller
+yake>=0.4.8
