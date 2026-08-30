@@ -192,11 +192,24 @@ def _validate_pipeline(p: dict[str, Any]) -> None:
         )
 
 
+_VALID_R2_JURISDICTIONS = frozenset({"", "default", "eu", "fedramp"})
+
+
 def _validate_storage(s: dict[str, Any]) -> None:
     r2 = s.get("r2", {}) or {}
     if bool(r2.get("enabled")) and not str(r2.get("bucket", "") or "").strip():
         raise ConfigError(
             "storage.r2.bucket must be set when storage.r2.enabled is true."
+        )
+    # A typo here does not fail loudly — it produces a valid-looking endpoint
+    # in a jurisdiction the token has no resources in, and every call comes
+    # back AccessDenied as though the permissions were wrong.
+    jurisdiction = str(r2.get("jurisdiction", "") or "").strip().lower()
+    if jurisdiction not in _VALID_R2_JURISDICTIONS:
+        raise ConfigError(
+            f"storage.r2.jurisdiction must be one of "
+            f"{sorted(j for j in _VALID_R2_JURISDICTIONS if j)}, got {jurisdiction!r}. "
+            "Leave it empty for a bucket created without a jurisdiction."
         )
 
 

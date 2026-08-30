@@ -408,3 +408,40 @@ def test_read_granted_case_does_not_claim_a_stale_token(monkeypatch, r2_env):
     detail = check_r2("bigthink-corpus").detail
     assert "read=granted" in detail
     assert "different token's access key" not in detail
+
+
+# ---------------------------------------------------------------------------
+# The check must talk to the same endpoint the pipeline does
+# ---------------------------------------------------------------------------
+
+
+def test_check_r2_uses_the_jurisdiction_endpoint(monkeypatch, r2_env):
+    # A check that builds its own endpoint can pass against one storage.py
+    # never uses, which is worse than no check at all.
+    import boto3
+
+    monkeypatch.setenv("R2_ACCOUNT_ID", "acct")
+    captured = {}
+
+    def fake_client(service, **kwargs):
+        captured.update(kwargs)
+        return _FakeR2()
+
+    monkeypatch.setattr(boto3, "client", fake_client)
+    check_r2("bigthink-corpus", jurisdiction_name="eu")
+    assert captured["endpoint_url"] == "https://acct.eu.r2.cloudflarestorage.com"
+
+
+def test_check_r2_names_the_jurisdiction_in_its_result(monkeypatch, r2_env):
+    _install(monkeypatch, _FakeR2())
+    assert "eu jurisdiction" in check_r2("bigthink-corpus", jurisdiction_name="eu").name
+
+
+def test_check_r2_without_a_jurisdiction_uses_the_default_endpoint(monkeypatch, r2_env):
+    import boto3
+
+    monkeypatch.setenv("R2_ACCOUNT_ID", "acct")
+    captured = {}
+    monkeypatch.setattr(boto3, "client", lambda service, **kw: (captured.update(kw), _FakeR2())[1])
+    check_r2("bigthink-corpus")
+    assert captured["endpoint_url"] == "https://acct.r2.cloudflarestorage.com"

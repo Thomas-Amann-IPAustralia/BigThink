@@ -259,7 +259,12 @@ def _visible_buckets(client, wanted: str) -> str:
     )
 
 
-def check_r2(bucket: str, cleanup: bool = True, timeout: int = 30) -> Result:
+def check_r2(
+    bucket: str,
+    cleanup: bool = True,
+    timeout: int = 30,
+    jurisdiction_name: str = "",
+) -> Result:
     """Round-trip a small object through the real bucket.
 
     A read-only check would pass against a token that cannot write, and the
@@ -279,7 +284,10 @@ def check_r2(bucket: str, cleanup: bool = True, timeout: int = 30) -> Result:
     but not fatal either; only pull_raw needs listing, and nothing in this
     pipeline deletes.
     """
-    result = Result(f"Cloudflare R2 (bucket {bucket!r})")
+    where = f"bucket {bucket!r}"
+    if jurisdiction_name:
+        where += f", {jurisdiction_name} jurisdiction"
+    result = Result(f"Cloudflare R2 ({where})")
     missing = [name for name in _R2_VARS if not os.environ.get(name, "").strip()]
     if missing:
         return result.skip(f"{', '.join(missing)} not set — R2 sync unavailable.")
@@ -291,9 +299,13 @@ def check_r2(bucket: str, cleanup: bool = True, timeout: int = 30) -> Result:
         return result.failed("boto3 is not installed (pip install -r requirements.txt).")
 
     account_id = os.environ["R2_ACCOUNT_ID"].strip()
+    # Built by storage.py rather than rebuilt here: a check that constructs
+    # its own endpoint can pass against one the pipeline never uses.
+    from src.storage import endpoint_url
+
     client = boto3.client(
         "s3",
-        endpoint_url=f"https://{account_id}.r2.cloudflarestorage.com",
+        endpoint_url=endpoint_url(account_id, jurisdiction_name),
         aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"].strip(),
         aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"].strip(),
         region_name="auto",
@@ -385,22 +397,28 @@ def check_r2(bucket: str, cleanup: bool = True, timeout: int = 30) -> Result:
 # ---------------------------------------------------------------------------
 
 
-def _load_settings(config_path: str | None) -> tuple[str, str]:
-    """Return (contact_email, bucket) from the config, falling back to the
-    documented defaults so this check still runs if the config cannot load —
-    a broken config should not be able to mask a broken credential."""
+def _load_settings(config_path: str | None) -> tuple[str, str, str]:
+    """Return (contact_email, bucket, jurisdiction) from the config, falling
+    back to the documented defaults so this check still runs if the config
+    cannot load — a broken config should not be able to mask a broken
+    credential."""
     try:
         from src.config import get, load_config
+        from src.storage import jurisdiction
 
         config: dict[str, Any] = load_config(config_path)
         email = os.environ.get("BIGTHINK_CONTACT_EMAIL") or str(
             get(config, "pipeline", "contact_email", default="") or ""
         )
         bucket = str(get(config, "storage", "r2", "bucket", default="bigthink-corpus") or "")
-        return email, bucket
+        return email, bucket, jurisdiction(config)
     except Exception as exc:  # noqa: BLE001 - config validation raises ConfigError
         logger.warning("Could not load config (%s); using defaults.", exc)
-        return os.environ.get("BIGTHINK_CONTACT_EMAIL", ""), "bigthink-corpus"
+        return (
+            os.environ.get("BIGTHINK_CONTACT_EMAIL", ""),
+            "bigthink-corpus",
+            os.environ.get("R2_JURISDICTION", "").strip().lower(),
+        )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -420,6 +438,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Override the bucket name from storage.r2.bucket.",
     )
     parser.add_argument(
+        "--jurisdiction",
+        default=None,
+        help=(
+            "Override storage.r2.jurisdiction (e.g. 'eu'). Pass '' to force the "
+            "default, unrestricted endpoint."
+        ),
+    )
+    parser.add_argument(
         "--require",
         action="store_true",
         help="Treat an unset credential as a failure rather than a skip.",
@@ -432,8 +458,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     logging.basicConfig(level="INFO", format="%(levelname)-7s %(name)s: %(message)s")
 
-    contact_email, bucket = _load_settings(args.config)
+    contact_email, bucket, jurisdiction_name = _load_settings(args.config)
     bucket = args.bucket or bucket
+    if args.jurisdiction is not None:
+        jurisdiction_name = args.jurisdiction.strip().lower()
 
     print("Credential presence (values are never printed)")
     print("-" * 70)
@@ -445,7 +473,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.only in (None, "openalex"):
         results.append(check_openalex(contact_email))
     if args.only in (None, "r2"):
-        results.append(check_r2(bucket, cleanup=not args.keep_test_object))
+        results.append(
+            check_r2(
+                bucket,
+                cleanup=not args.keep_test_object,
+                jurisdiction_name=jurisdiction_name,
+            )
+        )
 
     print("Live checks")
     print("-" * 70)
