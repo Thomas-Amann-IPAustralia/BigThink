@@ -34,14 +34,14 @@ works, not as a finding.
 | Stage | State | Notes |
 |---|---|---|
 | 0 — Strategy encoding | **Working** | 34 references: 9 objectives, 6 initiatives, 7 DISR fields, 12 assets |
-| 1 — Signal collection | **Working, one source down** | 4 of 6 sources live. OpenAlex needs a key; PatentsView disabled by default |
+| 1 — Signal collection | **Working, five of six sources** | OpenAlex key verified 2026-08-30, so it goes live at the next collection run — but has contributed nothing to the corpus so far. PatentsView still disabled (issue 6) |
 | 2 — Emergence detection | **Working** | Kleinberg bursts, logistic growth curves, Rotolo five-attribute score, Three Horizons |
 | 3 — Fit and leverage | **Working, weak** | Strategic fit is usable; asset leverage is compressed — see Open issue 2 |
 | 4 — Opportunity index | **Working, partial** | `patent_activity` has no data without PatentsView; weight redistributes automatically |
 | 5 — Synthesis | **Working** | Shortlist, 2×2 views, evidence cards, CSV, published HTML |
 | Notebook export | **Working, not yet reviewed by anyone** | `src/notebook.py`; written automatically after Stage 5. Re-derives emergence, horizon, index and composite rank from stored inputs |
-| Automation | **Half exercised** | `tests.yml` first ran 2026-08-30 on PR #2 and passed. `scan.yml` has still never run — see below |
-| Tests | **116 passing** | Offline by design; every defect found so far has one |
+| Automation | **Half exercised** | `tests.yml` first ran 2026-08-30 on PR #2 and passed. `verify-access.yml` added 2026-08-30 — **both credentials pass**. `scan.yml` has still never run — see below |
+| Tests | **195 passing** | Offline by design; every defect found so far has one |
 
 **First real run — `2026-08-29`:** 7,780 documents across 2018–2026 from
 Crossref (2,431), GDELT (3,183), arXiv (2,018), data.gov.au (148). Roughly
@@ -114,7 +114,7 @@ This is the highest-value single change available.
 more entries, and more of the phrasing the literature actually uses, would
 help under either backend.
 
-### 3. OpenAlex is metered and currently contributes nothing
+### 3. ~~OpenAlex is metered and currently contributes nothing~~ — RESOLVED 2026-08-30
 
 Verified 2026-08-29: OpenAlex is no longer simply "free, no key". Requests are
 metered in dollars against a small daily allowance per IP, reset at midnight
@@ -129,9 +129,16 @@ UTC, and a shared or cloud IP has usually spent it:
 `mailto` does not fix this. It was retired at the first frame of the real run
 and contributed zero of the 7,378 documents.
 
-**Fix:** free key at <https://openalex.org>, set `OPENALEX_API_KEY` locally and
-as a repository secret. This is the best research source available and is worth
-doing first thing.
+**Fixed.** `OPENALEX_API_KEY` is set as a repository secret and verified
+against the live API on 2026-08-30 by `verify-access.yml`: an authenticated
+query returned 29,771,915 works for 2026. The key is 22 characters.
+
+Note this does **not** retroactively improve any existing run. The 7,378-document
+corpus was collected without OpenAlex and still contains zero of its records;
+the source only starts contributing at the next collection run. Because that
+changes the corpus, results before and after are not comparable — the first run
+with OpenAlex live is effectively a new baseline, not a continuation of the
+growth curves.
 
 ### 4. The scan frame is strongest exactly where the data is easiest
 
@@ -200,6 +207,58 @@ is simply not recoverable and is omitted from its Stage 3 table.
 from that run's CSV is missing the asset axis's most interpretable output —
 including the notebook, which is the artefact meant to explain it. Low effort
 to fix: add both to `_SCORE_COLUMNS` in `db.py` and to the dict Stage 5 writes.
+
+### 10. ~~The R2 key pair has no rights on `bigthink-corpus`~~ — RESOLVED 2026-08-30
+
+Verified working 2026-08-30 by `verify-access.yml`:
+
+```
+[PASS] Cloudflare R2 (bucket 'bigthink-corpus', eu jurisdiction)
+       HeadBucket=ok, PutObject=ok, GetObject=ok, ListObjectsV2=ok,
+       DeleteObject=ok (42 bytes round-tripped)
+```
+
+**The cause was the endpoint, not the permissions.** The bucket was created in
+the **EU jurisdiction**, which puts it on `<account>.eu.r2.cloudflarestorage.com`
+and makes it invisible from the default endpoint `storage.py` hardcoded. Every
+request went to a jurisdiction the token has no resources in, and R2 answers
+that with `AccessDenied` on everything — including `ListBuckets` — which is
+indistinguishable from a permissions problem by inspection.
+
+The jurisdiction is visible in an API token's resource key:
+`com.cloudflare.edge.r2.bucket.<account>_eu_<bucket>`. An unrestricted bucket
+reads `_default_`. That string is the fastest way to confirm which endpoint a
+bucket needs, and is now the first thing to check if this recurs.
+
+**Two false diagnoses on the way, both worth remembering**, because both were
+confident and both were wrong in the same direction — reading a transport-level
+failure as an authorisation one:
+
+1. *"The token is scoped to a bucket not named `bigthink-corpus`."* Inferred
+   from `ListBuckets` being denied. But `ListBuckets` is denied for **every**
+   bucket-scoped token, so it was never evidence about the name.
+2. *"The key pair is stale or the policy was never saved."* Inferred from
+   `PutObject` being refused while the Cloudflare UI showed Edit granted. The
+   contradiction was real; the explanation was not.
+
+**A third cause sat underneath**: `R2_ACCOUNT_ID` held the wrong 32 characters
+(the Access Key ID is also 32 hex — an easy swap). This produced a refused TLS
+handshake rather than an S3 error, because Cloudflare rejects the handshake
+outright for an account ID it does not recognise. Confirmed by testing a real
+account against a fabricated one on both endpoints.
+
+**What the checker learned**, so none of this costs the same time twice:
+`storage.r2.jurisdiction` with strict validation; `verify_access.py` importing
+`storage.endpoint_url` so a check cannot pass against an endpoint the pipeline
+never uses; per-operation probing rather than failing at the first refusal; a
+`GetObject` on a deliberately-absent key to separate a denied read from a
+denied write; account-ID shape validation; and connection-level failures
+short-circuiting to their own verdict instead of being narrated as permissions.
+
+**`storage.r2.enabled` is now `true`.** `scan.yml` mirrors the corpus to R2
+after each run. The `corpus-*` GitHub Release asset remains the source of truth
+CI restores from — R2 is a convenience pull point for local Stage 3-5 tuning,
+not a replacement.
 
 ---
 
@@ -355,9 +414,12 @@ Day 5.** A ranked list nobody has interrogated is not research.
 
 For whoever — or whichever Claude instance — picks this up next:
 
-1. `python -m pytest tests/ -q` — expect 95 passing. If not, start there.
+1. `python -m pytest tests/ -q` — expect 195 passing. If not, start there.
 2. Read `docs/method.md` if you have not; it is what the numbers mean.
-3. Get the OpenAlex key (issue 3). Cheapest high-value action available.
+3. `python -m src.verify_access` — confirms the OpenAlex and R2 credentials
+   still work before a run depends on them. Locally it needs the variables
+   exported; in CI the **Verify credentials** workflow is the only thing that
+   can read the repository secrets.
 4. `python -m src.pipeline --run-id $(date -u +%F)` for a fresh full run.
 5. Open `data/outputs/<run_id>/shortlist.md` and read the top five evidence
    cards **before** looking at any score.
@@ -389,13 +451,13 @@ For whoever — or whichever Claude instance — picks this up next:
 
 | What | State |
 |---|---|
-| `OPENALEX_API_KEY` | **Not set.** Blocks the best research source (issue 3) |
+| `OPENALEX_API_KEY` | **Set and verified working 2026-08-30** — an authenticated query returned 29,771,915 works. Verified in CI by `verify-access.yml`, the only place the repository secrets can be read. Issue 3 is resolved as of the next collection run |
 | `PATENTSVIEW_API_KEY` | **Not set.** No patent signal (issue 6) |
 | Crossref, arXiv, GDELT, data.gov.au | Working, no keys needed |
 | GitHub Actions | `tests.yml` on push/PR — **first ran 2026-08-30, green.** `scan.yml` weekly Sun 19:00 UTC — **still never run.** Its first run is the one to watch: it is the only one that restores the corpus release, calls live APIs, and publishes a new corpus asset, so it is where an untested workflow would actually cost something |
 | GitHub Pages | `docs/` is built by `src.report`; Pages needs enabling in repository settings |
 | Local corpus | `data/bigthink.duckdb`, gitignored, ~10 MB at 7,780 documents |
-| Cloudflare R2 | `src/storage.py` added 2026-08-30. `storage.r2.enabled: false` in config — off until the bucket, API token and the three `R2_*` GitHub secrets are created (README.md § Cloudflare R2 has the steps). Once on, `scan.yml` mirrors the corpus to R2 after each run as a convenience pull point for local Stage 3-5 tuning; the `corpus-*` GitHub Release asset stays the source of truth CI restores from |
+| Cloudflare R2 | **Working, verified 2026-08-30.** `storage.r2.enabled: true`, bucket `bigthink-corpus` in the **eu** jurisdiction (`storage.r2.jurisdiction: eu` — it is not reachable from the default endpoint; see issue 10). `scan.yml` mirrors the corpus after each run; the `corpus-*` Release asset stays the source of truth CI restores from |
 
 ---
 

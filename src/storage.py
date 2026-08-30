@@ -47,6 +47,14 @@ logger = logging.getLogger(__name__)
 _ENV_ACCOUNT_ID = "R2_ACCOUNT_ID"
 _ENV_ACCESS_KEY = "R2_ACCESS_KEY_ID"
 _ENV_SECRET_KEY = "R2_SECRET_ACCESS_KEY"
+_ENV_JURISDICTION = "R2_JURISDICTION"
+
+# R2 buckets can be pinned to a jurisdiction at creation time, which puts them
+# on a different S3 endpoint. A bucket created under one is invisible from the
+# default endpoint: every call comes back AccessDenied — including ListBuckets,
+# because the token's resources are all in the other jurisdiction — which reads
+# exactly like a permissions problem and is not one.
+_JURISDICTIONS = ("", "default", "eu", "fedramp")
 
 
 # ---------------------------------------------------------------------------
@@ -77,6 +85,34 @@ def _credentials() -> dict[str, str]:
     }
 
 
+def jurisdiction(config: dict[str, Any]) -> str:
+    """The bucket's R2 jurisdiction, env var winning over config.
+
+    The env var exists so a laptop pointed at a differently-located bucket
+    does not need a config edit that would then be committed.
+    """
+    from_env = os.environ.get(_ENV_JURISDICTION, "").strip()
+    if from_env:
+        return from_env.lower()
+    return str(get(config, "storage", "r2", "jurisdiction", default="") or "").strip().lower()
+
+
+def endpoint_url(account_id: str, jurisdiction_name: str = "") -> str:
+    """The S3 endpoint for an account, in a jurisdiction if the bucket has one.
+
+    Cloudflare names these `<account>.<jurisdiction>.r2.cloudflarestorage.com`;
+    the unrestricted default has no segment. The jurisdiction of a bucket shows
+    up in an API token's resource key as
+    `com.cloudflare.edge.r2.bucket.<account>_<jurisdiction>_<bucket>`, where an
+    unrestricted bucket reads `_default_`. That string is the quickest way to
+    confirm which endpoint a bucket needs.
+    """
+    name = (jurisdiction_name or "").strip().lower()
+    if name in ("", "default"):
+        return f"https://{account_id}.r2.cloudflarestorage.com"
+    return f"https://{account_id}.{name}.r2.cloudflarestorage.com"
+
+
 def get_client(config: dict[str, Any]):
     """Build a boto3 S3 client pointed at the account's R2 endpoint.
 
@@ -89,7 +125,7 @@ def get_client(config: dict[str, Any]):
     creds = _credentials()
     return boto3.client(
         "s3",
-        endpoint_url=f"https://{creds['account_id']}.r2.cloudflarestorage.com",
+        endpoint_url=endpoint_url(creds["account_id"], jurisdiction(config)),
         aws_access_key_id=creds["access_key"],
         aws_secret_access_key=creds["secret_key"],
         region_name="auto",

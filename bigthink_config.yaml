@@ -42,8 +42,15 @@ storage:
   # Credentials (R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY) come
   # from environment variables, never from this file. See README.md.
   r2:
-    enabled: false
+    enabled: true
     bucket: "bigthink-corpus"
+    # Set to the jurisdiction the bucket was created in, or leave empty.
+    # A jurisdiction-restricted bucket lives on its own S3 endpoint
+    # (<account>.<jurisdiction>.r2.cloudflarestorage.com) and is invisible
+    # from the default one — every call returns AccessDenied, which looks
+    # exactly like a permissions problem. An API token's resource key names
+    # it: com.cloudflare.edge.r2.bucket.<account>_<jurisdiction>_<bucket>.
+    jurisdiction: "eu"
     corpus_key: "bigthink.duckdb"
     raw_prefix: "raw"
 

@@ -96,3 +96,27 @@ def test_missing_threshold_for_active_backend_raises():
     del config["emergence"]["topics"]["similarity_threshold_by_backend"]["hashing"]
     with pytest.raises(ConfigError, match="No emergence.topics"):
         topic_similarity_threshold(config)
+
+
+def test_r2_jurisdiction_accepts_the_known_values():
+    from src.config import _validate_storage
+
+    for value in ("", "default", "eu", "fedramp", "EU"):
+        _validate_storage({"r2": {"enabled": True, "bucket": "b", "jurisdiction": value}})
+
+
+def test_r2_jurisdiction_rejects_a_typo():
+    # A bad value here does not fail loudly at runtime — it builds a valid
+    # endpoint in a jurisdiction the token has no resources in, and every
+    # call comes back AccessDenied as though the permissions were wrong.
+    from src.config import _validate_storage
+    from src.errors import ConfigError
+
+    with pytest.raises(ConfigError, match="jurisdiction"):
+        _validate_storage({"r2": {"enabled": True, "bucket": "b", "jurisdiction": "europe"}})
+
+
+def test_r2_jurisdiction_is_optional():
+    from src.config import _validate_storage
+
+    _validate_storage({"r2": {"enabled": True, "bucket": "b"}})

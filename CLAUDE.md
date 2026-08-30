@@ -54,7 +54,18 @@ python -m src.notebook         --run-id RUN     # peer-review .ipynb for that ru
 
 # Tests — offline by design, no network calls
 python -m pytest tests/ -q
+
+# Are the optional credentials actually live? Hits OpenAlex and R2 for real.
+python -m src.verify_access
 ```
+
+Both optional integrations fail *soft* — OpenAlex retires itself when its
+budget is spent, and the R2 mirror step swallows its own errors — which is
+right for a scheduled scan and useless for confirming a setup, because a
+missing key and a working one produce the same quiet log line.
+`src/verify_access.py` is the loud counterpart. In CI, the **Verify
+credentials** workflow is the only thing that can read the repository
+secrets.
 
 ## Architecture
 
@@ -137,6 +148,7 @@ data.gov.au with no keys at all.
 | `OPENALEX_API_KEY` | OpenAlex is retired at the first frame on a shared IP (metered, daily budget). **Recommended** — it is the best research source |
 | `PATENTSVIEW_API_KEY` | PatentsView stays disabled; the `patent_activity` index component has no data and its weight is redistributed |
 | `BIGTHINK_CONTACT_EMAIL` | Falls back to `pipeline.contact_email` in the config. Used for OpenAlex/Crossref polite pools |
+| `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Required together only when `storage.r2.enabled` is true, where a missing one raises rather than skipping — a run that believes it is persisting a corpus and is not would be worse than one that never tried |
 
 ## Conventions
 
