@@ -200,6 +200,17 @@ def check_r2(bucket: str, cleanup: bool = True, timeout: int = 30) -> Result:
     check writes, reads back, compares bytes, and deletes — the full path
     push_corpus/pull_corpus take, at a few hundred bytes instead of a few
     hundred megabytes.
+
+    Each operation is probed independently and reported by name, because
+    R2 token scopes do not map cleanly onto "it works" or "it doesn't":
+    an Object Read & Write token scoped to one bucket routinely refuses
+    bucket-level calls while permitting every object-level one. Only two
+    operations decide the verdict — PutObject and GetObject, the two
+    storage.py actually performs. HeadBucket is advisory: storage.py never
+    calls it, so failing the whole check on it would report a working
+    corpus mirror as broken. ListObjectsV2 and DeleteObject are reported
+    but not fatal either; only pull_raw needs listing, and nothing in this
+    pipeline deletes.
     """
     result = Result(f"Cloudflare R2 (bucket {bucket!r})")
     missing = [name for name in _R2_VARS if not os.environ.get(name, "").strip()]
@@ -225,35 +236,58 @@ def check_r2(bucket: str, cleanup: bool = True, timeout: int = 30) -> Result:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     key = f"_verify/access-check-{stamp}.txt"
     body = f"BigThink R2 access check {stamp}\n".encode("utf-8")
-    steps: list[str] = []
 
-    try:
-        client.head_bucket(Bucket=bucket)
-        steps.append("head_bucket")
+    outcomes: list[str] = []
+    detail: dict[str, str] = {}
 
-        client.put_object(Bucket=bucket, Key=key, Body=body)
-        steps.append("write")
+    def probe(label: str, fn) -> Any:
+        """Run one operation, record whether it worked, and keep going."""
+        try:
+            value = fn()
+        except Exception as exc:  # noqa: BLE001 - botocore raises its own types
+            outcomes.append(f"{label}=DENIED")
+            detail[label] = _diagnose_r2(exc, bucket)
+            return None
+        outcomes.append(f"{label}=ok")
+        return value if value is not None else True
 
-        fetched = client.get_object(Bucket=bucket, Key=key)["Body"].read()
-        steps.append("read")
-        if fetched != body:
-            return result.failed(f"Read-back mismatch: wrote {len(body)} bytes, got {len(fetched)}.")
+    probe("HeadBucket", lambda: client.head_bucket(Bucket=bucket))
+    wrote = probe("PutObject", lambda: client.put_object(Bucket=bucket, Key=key, Body=body))
+    fetched = probe(
+        "GetObject",
+        lambda: client.get_object(Bucket=bucket, Key=key)["Body"].read(),
+    ) if wrote else None
+    listing = probe("ListObjectsV2", lambda: client.list_objects_v2(Bucket=bucket, MaxKeys=20))
+    if wrote and cleanup:
+        probe("DeleteObject", lambda: client.delete_object(Bucket=bucket, Key=key))
 
-        listing = client.list_objects_v2(Bucket=bucket, MaxKeys=20)
-        steps.append("list")
+    summary = ", ".join(outcomes)
+    reasons = "".join(f"\n           {label}: {msg}" for label, msg in detail.items())
+
+    # PutObject and GetObject are the verdict: they are exactly what
+    # push_corpus and pull_corpus do.
+    if not wrote or fetched is None:
+        return result.failed(f"{summary}{reasons}")
+    if fetched != body:
+        return result.failed(
+            f"read-back mismatch: wrote {len(body)} bytes, got {len(fetched)}. {summary}"
+        )
+
+    existing: list[str] = []
+    if isinstance(listing, dict):
         existing = [obj["Key"] for obj in listing.get("Contents", []) if obj["Key"] != key]
+    contents = ", ".join(existing[:5]) if existing else "(no other objects)"
 
-        if cleanup:
-            client.delete_object(Bucket=bucket, Key=key)
-            steps.append("delete")
-    except Exception as exc:  # noqa: BLE001 - botocore raises its own error types
-        done = ", ".join(steps) or "none"
-        return result.failed(f"failed after [{done}] — {_diagnose_r2(exc, bucket)}")
-
-    contents = ", ".join(existing[:5]) if existing else "(bucket is otherwise empty)"
+    note = ""
+    if detail:
+        note = (
+            f" Non-fatal: {', '.join(detail)} denied — storage.py does not call "
+            f"{'HeadBucket' if 'HeadBucket' in detail else 'them'}, so the corpus "
+            "mirror still works."
+        ) + reasons
     return result.passed(
-        f"{' → '.join(steps)} all succeeded ({len(body)} bytes round-tripped). "
-        f"Existing objects: {contents}"
+        f"corpus read/write path works — {summary} ({len(body)} bytes round-tripped). "
+        f"Bucket contains: {contents}.{note}"
     )
 
 

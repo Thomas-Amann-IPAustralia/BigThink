@@ -155,3 +155,120 @@ def test_main_output_lists_both_checks(capsys):
     verify_access.main([])
     out = capsys.readouterr().out
     assert "OpenAlex" in out and "Cloudflare R2" in out
+
+
+# ---------------------------------------------------------------------------
+# Which R2 operations decide the verdict
+#
+# storage.py performs PutObject and GetObject and nothing else, so those two
+# alone are fatal. An R2 token scoped to a single bucket commonly refuses
+# HeadBucket while permitting every object call; failing on that would report
+# a working corpus mirror as broken.
+# ---------------------------------------------------------------------------
+
+
+class _FakeR2:
+    """Minimal S3 surface where any named operation can be made to deny."""
+
+    def __init__(self, deny: set[str] | None = None) -> None:
+        self.deny = deny or set()
+        self.objects: dict[str, bytes] = {}
+        self.calls: list[str] = []
+
+    def _guard(self, op: str) -> None:
+        self.calls.append(op)
+        if op in self.deny:
+            raise _FakeClientError("403")
+
+    def head_bucket(self, Bucket):  # noqa: N803 - boto3's parameter casing
+        self._guard("HeadBucket")
+
+    def put_object(self, Bucket, Key, Body):  # noqa: N803
+        self._guard("PutObject")
+        self.objects[Key] = Body
+
+    def get_object(self, Bucket, Key):  # noqa: N803
+        self._guard("GetObject")
+        return {"Body": _FakeBody(self.objects[Key])}
+
+    def list_objects_v2(self, Bucket, MaxKeys=None, Prefix=""):  # noqa: N803
+        self._guard("ListObjectsV2")
+        return {"Contents": [{"Key": k} for k in self.objects]}
+
+    def delete_object(self, Bucket, Key):  # noqa: N803
+        self._guard("DeleteObject")
+        self.objects.pop(Key, None)
+
+
+class _FakeBody:
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+
+    def read(self) -> bytes:
+        return self._data
+
+
+@pytest.fixture()
+def r2_env(monkeypatch):
+    for name in ("R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"):
+        monkeypatch.setenv(name, "value")
+
+
+def _install(monkeypatch, fake):
+    import boto3
+
+    monkeypatch.setattr(boto3, "client", lambda *a, **k: fake)
+    return fake
+
+
+def test_r2_passes_when_every_operation_is_permitted(monkeypatch, r2_env):
+    fake = _install(monkeypatch, _FakeR2())
+    result = check_r2("bigthink-corpus")
+    assert result.symbol == "PASS"
+    assert "PutObject=ok" in result.detail and "GetObject=ok" in result.detail
+
+
+def test_r2_still_passes_when_head_bucket_is_denied(monkeypatch, r2_env):
+    # The case a bucket-scoped R2 token actually produces.
+    fake = _install(monkeypatch, _FakeR2(deny={"HeadBucket"}))
+    result = check_r2("bigthink-corpus")
+    assert result.symbol == "PASS"
+    assert "HeadBucket=DENIED" in result.detail
+    assert "Non-fatal" in result.detail
+
+
+def test_r2_still_passes_when_listing_and_delete_are_denied(monkeypatch, r2_env):
+    fake = _install(monkeypatch, _FakeR2(deny={"ListObjectsV2", "DeleteObject"}))
+    assert check_r2("bigthink-corpus").symbol == "PASS"
+
+
+def test_r2_fails_when_write_is_denied(monkeypatch, r2_env):
+    # push_corpus is a PutObject; a token that cannot write cannot mirror.
+    fake = _install(monkeypatch, _FakeR2(deny={"PutObject"}))
+    result = check_r2("bigthink-corpus")
+    assert result.symbol == "FAIL"
+    assert "PutObject=DENIED" in result.detail
+
+
+def test_r2_fails_when_read_is_denied(monkeypatch, r2_env):
+    fake = _install(monkeypatch, _FakeR2(deny={"GetObject"}))
+    assert check_r2("bigthink-corpus").symbol == "FAIL"
+
+
+def test_r2_does_not_attempt_a_read_it_could_not_have_written(monkeypatch, r2_env):
+    fake = _install(monkeypatch, _FakeR2(deny={"PutObject"}))
+    check_r2("bigthink-corpus")
+    assert "GetObject" not in fake.calls
+
+
+def test_r2_cleans_up_its_test_object(monkeypatch, r2_env):
+    fake = _install(monkeypatch, _FakeR2())
+    check_r2("bigthink-corpus")
+    assert fake.objects == {}
+
+
+def test_r2_keeps_test_object_when_cleanup_disabled(monkeypatch, r2_env):
+    fake = _install(monkeypatch, _FakeR2())
+    check_r2("bigthink-corpus", cleanup=False)
+    assert len(fake.objects) == 1
+    assert "DeleteObject" not in fake.calls
