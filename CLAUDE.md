@@ -50,6 +50,7 @@ python -m src.stage3_scoring   --run-id RUN     # prints only; does not persist
 python -m src.stage4_opportunity_index --run-id RUN
 python -m src.stage5_synthesis --run-id RUN     # runs 3 and 4, then persists all
 python -m src.report           --run-id RUN     # build docs/index.html
+python -m src.notebook         --run-id RUN     # peer-review .ipynb for that run
 
 # Tests — offline by design, no network calls
 python -m pytest tests/ -q
@@ -67,7 +68,21 @@ Stage 3  stage3_scoring.py            Strategic fit × asset leverage
 Stage 4  stage4_opportunity_index.py  Relative composite index
 Stage 5  stage5_synthesis.py          Ranking, evidence cards, outputs
          report.py                    GitHub Pages site
+         notebook.py                  Peer-review .ipynb (reads a run back out)
 ```
+
+`notebook.py` is the odd one out and deliberately so: it is the only module
+that reads a *finished* run and writes nothing to DuckDB. It re-derives four
+stored numbers from their stored inputs — emergence score, horizon band,
+opportunity index, composite rank — so a reviewer can check the arithmetic
+instead of trusting it. Two rules keep it honest, and both are load-bearing:
+
+- **It verifies against `pipeline_runs.config_snapshot`, never against
+  `bigthink_config.yaml`.** Otherwise editing a weight makes every past
+  notebook silently re-verify against arithmetic that never happened.
+- **It calls the production functions** (`composite_scores`, `assign_horizon`,
+  `percentile_rank`) rather than reimplementing them, so a check cannot drift
+  away from the code it checks.
 
 **Stages communicate only through DuckDB.** No stage passes Python objects to
 another. That is what makes a stage re-runnable alone and a months-old result
@@ -89,6 +104,8 @@ Preserve this. Do not add cross-stage function calls that bypass the database.
 | **Opportunity index excluded from the ranking** | It is the weakest-founded number here. Folding it into the headline order would launder that weakness |
 | **Thin topics suppressed, not scored** | A composite on 8 documents looks identical to one on 800. That is how a horizon scan misleads people |
 | **Weight redistribution when a component has no data** | Otherwise disabling PatentsView silently shrinks every index by 15% and the ranking looks unchanged while measuring something different |
+| **The notebook explains a run, it does not re-run one** | Stages 2–5 are deterministic given the corpus, so re-deriving them proves something. Stage 1 hits live metered APIs, so a cell claiming to reproduce the corpus would be false the moment a source changed its budget |
+| **The notebook is executed at generation time, in-process** | It must read correctly without being run and stay runnable. An `.ipynb` is only JSON; `nbformat`/`nbclient` would add dependencies and buy nothing |
 
 ## Configuration
 
@@ -147,6 +164,9 @@ data.gov.au with no keys at all.
   matching set in `stage4_opportunity_index.py`.
 - **A new score or weight** → `bigthink_config.yaml`, with validation in
   `config.py`, a test, and an entry in the calibration log.
+- **A new stored number worth reviewing** → also re-derive it in
+  `notebook.py`. A number nobody can check is a number nobody should believe,
+  and the check must recompute it from stored inputs rather than read it twice.
 
 ## Documentation map
 

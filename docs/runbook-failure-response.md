@@ -105,6 +105,37 @@ Diff two snapshots. If they match, the corpus changed — compare document count
 per source between the runs. If they differ, a threshold moved, and the change
 should be in `PROJECT_STATE.md`'s calibration log.
 
+The notebook does this diff for you against the current config, near the top:
+open `data/outputs/<run_id>/horizon-scan-<run_id>.ipynb` and read the
+"Has the repository moved since this run?" cell.
+
+---
+
+## The notebook reports FAIL, or a cell has a traceback in it
+
+A `FAIL` line means a number in the database cannot be reproduced from the
+inputs stored beside it. That is a real finding, not a display problem — treat
+it as a bug in the stage that wrote the number, or as evidence the row was
+written by a different version of the code than the snapshot claims.
+
+The one expected near-miss is `opportunity_index`, which is checked at `1e-3`
+rather than machine precision: Stage 4 stores its components and weights
+rounded to 4 dp while computing the index from the unrounded values. A
+deviation around `1e-4` there is the rounding, not an error. A deviation
+anywhere else should be zero.
+
+An embedded traceback means that cell raised during generation. The export does
+not abort on one — a notebook that shows where it broke is more useful than no
+notebook — so the run itself is unaffected and the rest of the document is
+still valid. Reproduce it with:
+
+```bash
+python -m src.notebook --run-id 2026-08-29 --log-level DEBUG
+```
+
+If the whole export failed, the pipeline logs it at ERROR and carries on; the
+scan's own outputs are already written.
+
 ---
 
 ## Recovering a corpus
@@ -133,6 +164,7 @@ python -m src.stage1_collect  --run-id 2026-08-29 --sources crossref
 python -m src.stage2_emergence --run-id 2026-08-29
 python -m src.stage5_synthesis --run-id 2026-08-29         # also runs 3 and 4
 python -m src.report          --run-id 2026-08-29
+python -m src.notebook        --run-id 2026-08-29          # read-only; safe anytime
 ```
 
 Re-running Stage 3/4/5 never touches Stage 2 output, so scoring can be re-done

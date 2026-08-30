@@ -57,6 +57,10 @@ python -m src.pipeline --run-id dev --sample
 
 # Read the results
 open data/outputs/dev/shortlist.md
+
+# Or read how they were arrived at — the same run, walked stage by stage,
+# with every number re-derived from its stored inputs
+jupyter lab data/outputs/dev/horizon-scan-dev.ipynb
 ```
 
 A full run:
@@ -198,10 +202,12 @@ src/
   stage4_opportunity_index.py  Stage 4
   stage5_synthesis.py          Stage 5 (invokes 3 and 4)
   report.py                    GitHub Pages site
+  notebook.py                  Peer-review notebook for a finished run
 data/
   strategy/                    The four YAML inputs above (committed)
   raw/                         Raw API payloads (gitignored)
-  outputs/<run_id>/            Shortlist, evidence cards, topics.csv (committed)
+  outputs/<run_id>/            Shortlist, evidence cards, topics.csv,
+                               horizon-scan-<run_id>.ipynb (committed)
   bigthink.duckdb              Everything the pipeline knows (gitignored)
 docs/
   method.md                    What every number means

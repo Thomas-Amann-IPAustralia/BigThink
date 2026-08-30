@@ -224,7 +224,11 @@ def build_html(
 
     add(
         "<footer>Evidence cards and the full topic table are in "
-        f"<code>data/outputs/{_e(run_id)}/</code>. Method: <code>docs/method.md</code>. "
+        f"<code>data/outputs/{_e(run_id)}/</code>, alongside "
+        f"<code>horizon-scan-{_e(run_id)}.ipynb</code> — a notebook that walks this "
+        "run stage by stage and re-derives every number above from its stored "
+        "inputs. That is the one to open if you want to argue with the method "
+        "rather than the shortlist. Method: <code>docs/method.md</code>. "
         "Scan frame: <code>data/strategy/scan_frame.yaml</code> — the scan cannot find "
         "what the frame does not ask for.</footer>"
     )

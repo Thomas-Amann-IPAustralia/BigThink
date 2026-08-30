@@ -46,6 +46,8 @@ def test_snapshot_omits_internal_keys():
         (lambda c: c["synthesis"].update(evidence_documents_per_topic=0), "audit trail"),
         (lambda c: c["opportunity_index"]["components"].update(attention=0.9), "sum to 1.0"),
         (lambda c: c["embeddings"].update(backend="word2vec"), "embeddings.backend"),
+        (lambda c: c["notebook"].update(topics_detailed=0), "notebook.topics_detailed"),
+        (lambda c: c["notebook"].update(include_verification="yes"), "must be true or false"),
     ],
 )
 def test_validation_rejects_bad_values(raw, mutate, expected):
@@ -53,6 +55,14 @@ def test_validation_rejects_bad_values(raw, mutate, expected):
     mutate(config)
     with pytest.raises(ConfigError, match=expected):
         _validate(config)
+
+
+def test_config_without_a_notebook_section_still_validates(raw):
+    """The notebook export computes no score, so a config predating it must
+    still load and still run the pipeline."""
+    config = copy.deepcopy(raw)
+    del config["notebook"]
+    _validate(config)
 
 
 def test_all_sources_disabled_is_rejected(raw):

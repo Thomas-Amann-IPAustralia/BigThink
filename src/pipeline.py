@@ -23,7 +23,7 @@ import sys
 import time
 from datetime import datetime, timezone
 
-from src.config import load_config
+from src.config import get, load_config
 from src.errors import BigThinkError
 
 logger = logging.getLogger(__name__)
@@ -82,6 +82,24 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
         logger.info("%s finished in %.0fs", name, time.monotonic() - stage_start)
+
+    # The notebook export is deliberately outside the stage loop. It computes
+    # nothing and persists nothing — it reads the finished run back out of
+    # DuckDB and explains it — so a failure here means the scan is fine and the
+    # write-up is not. Killing a three-hour collection over a report artefact
+    # would be the wrong trade. It is logged at ERROR rather than swallowed.
+    if get(config, "notebook", "enabled", default=True):
+        from src import notebook
+
+        try:
+            path = notebook.run(config, run_id)
+            logger.info("Notebook export: %s", path)
+        except (Exception, SystemExit) as exc:  # noqa: BLE001 - reported, not hidden
+            logger.error(
+                "Notebook export failed (%s: %s). The run itself is unaffected; "
+                "re-run it alone with: python -m src.notebook --run-id %s",
+                type(exc).__name__, exc, run_id,
+            )
 
     logger.info(
         "Pipeline complete in %.0fs — outputs in data/outputs/%s/",

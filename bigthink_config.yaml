@@ -305,3 +305,26 @@ synthesis:
   evidence_documents_per_topic: 8
   # Doblin Ten Types is applied as a human diagnostic at synthesis, not scored.
   doblin_prompt_in_cards: true
+
+# -----------------------------------------------------------------------------
+# Notebook export — the peer-review artefact
+# -----------------------------------------------------------------------------
+# `python -m src.notebook --run-id RUN` writes a Jupyter notebook that walks one
+# frozen run stage by stage and re-derives its numbers from stored inputs. It is
+# the artefact to hand a reviewer who should be able to argue with the method
+# rather than take the shortlist on trust.
+#
+# Nothing here changes a score. The notebook only reads DuckDB, and it verifies
+# against the config snapshot stored with the run rather than against this file.
+notebook:
+  enabled: true
+  # Topics given a full evidence section (terms, trajectory, source documents).
+  # Reading primary documents is the only quality control that finds clustering
+  # artefacts, so this should stay large enough to be worth doing.
+  topics_detailed: 8
+  # Documents shown per topic. Defaults to synthesis.evidence_documents_per_topic.
+  evidence_documents_per_topic: 5
+  # The cells that recompute emergence, horizon band, opportunity index and the
+  # composite rank from their stored inputs. Turning this off removes the only
+  # part of the notebook a reviewer cannot get from the HTML report — leave it on.
+  include_verification: true
