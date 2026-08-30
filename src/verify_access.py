@@ -170,10 +170,7 @@ def _diagnose_r2(exc: Exception, bucket: str) -> str:
     to be worth naming: almost every failure here is one of four setup
     mistakes, and the raw error names none of them.
     """
-    response = getattr(exc, "response", None)
-    code = ""
-    if isinstance(response, dict):
-        code = str(response.get("Error", {}).get("Code", ""))
+    code = _error_code(exc)
     hints = {
         "InvalidAccessKeyId": "R2_ACCESS_KEY_ID is not a valid key for this account.",
         "SignatureDoesNotMatch": "R2_SECRET_ACCESS_KEY does not match the access key ID.",
@@ -190,6 +187,36 @@ def _diagnose_r2(exc: Exception, bucket: str) -> str:
     }
     hint = hints.get(code, "")
     return f"{code or type(exc).__name__}: {exc}" + (f"\n           → {hint}" if hint else "")
+
+
+def _error_code(exc: Exception) -> str:
+    response = getattr(exc, "response", None)
+    if not isinstance(response, dict):
+        return ""
+    return str(response.get("Error", {}).get("Code", ""))
+
+
+def _read_permission(client, bucket: str) -> str:
+    """Ask whether the token may read, without needing an object to exist.
+
+    GetObject on a key that is certainly absent separates the two grants a
+    Cloudflare R2 token exposes as separate checkboxes. NoSuchKey means the
+    request was authorised and merely found nothing — read is permitted.
+    AccessDenied means it was refused before that point — read is not.
+    Without this, a token that can write but not read looks identical to one
+    that can do neither, and they need different fixes.
+    """
+    probe_key = "_verify/does-not-exist-permission-probe"
+    try:
+        client.get_object(Bucket=bucket, Key=probe_key)
+    except Exception as exc:  # noqa: BLE001 - botocore raises its own types
+        code = _error_code(exc)
+        if code in ("NoSuchKey", "404", "NoSuchKeyError"):
+            return "granted"
+        if code in ("AccessDenied", "403"):
+            return "denied"
+        return "unknown"
+    return "granted"
 
 
 def _visible_buckets(client, wanted: str) -> str:
@@ -304,7 +331,19 @@ def check_r2(bucket: str, cleanup: bool = True, timeout: int = 30) -> Result:
     # PutObject and GetObject are the verdict: they are exactly what
     # push_corpus and pull_corpus do.
     if not wrote or fetched is None:
-        return result.failed(f"{summary}{reasons}{_visible_buckets(client, bucket)}")
+        grants = ""
+        if not wrote:
+            # Which checkbox is missing, in the terms the Cloudflare UI uses.
+            read_state = _read_permission(client, bucket)
+            grants = (
+                "\n           Token grants on this bucket: "
+                f"read={read_state}, write=denied. Both are needed — push_corpus "
+                "writes (PutObject) and pull_corpus reads (GetObject), so a token "
+                "with only one of them leaves the mirror half-working."
+            )
+        return result.failed(
+            f"{summary}{reasons}{grants}{_visible_buckets(client, bucket)}"
+        )
     if fetched != body:
         return result.failed(
             f"read-back mismatch: wrote {len(body)} bytes, got {len(fetched)}. {summary}"

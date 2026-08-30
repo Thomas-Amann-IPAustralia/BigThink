@@ -174,6 +174,7 @@ class _FakeR2:
         self.deny = deny or set()
         self.objects: dict[str, bytes] = {}
         self.calls: list[str] = []
+        self.read_keys: list[str] = []
 
     def _guard(self, op: str) -> None:
         self.calls.append(op)
@@ -189,6 +190,9 @@ class _FakeR2:
 
     def get_object(self, Bucket, Key):  # noqa: N803
         self._guard("GetObject")
+        self.read_keys.append(Key)
+        if Key not in self.objects:
+            raise _FakeClientError("NoSuchKey")
         return {"Body": _FakeBody(self.objects[Key])}
 
     def list_objects_v2(self, Bucket, MaxKeys=None, Prefix=""):  # noqa: N803
@@ -255,10 +259,16 @@ def test_r2_fails_when_read_is_denied(monkeypatch, r2_env):
     assert check_r2("bigthink-corpus").symbol == "FAIL"
 
 
-def test_r2_does_not_attempt_a_read_it_could_not_have_written(monkeypatch, r2_env):
-    fake = _install(monkeypatch, _FakeR2(deny={"PutObject"}))
-    check_r2("bigthink-corpus")
-    assert "GetObject" not in fake.calls
+def test_r2_does_not_read_back_an_object_it_could_not_write(monkeypatch, r2_env):
+    # It does still call GetObject — but against a deliberately-absent probe
+    # key, to find out whether read is permitted. What it must never do is
+    # claim a round-trip by reading back a write that did not happen.
+    fake = _FakeR2WithBuckets(["bigthink-corpus"], deny={"PutObject"})
+    _install(monkeypatch, fake)
+    result = check_r2("bigthink-corpus")
+    assert result.symbol == "FAIL"
+    assert fake.objects == {}
+    assert all("access-check" not in k for k in fake.read_keys)
 
 
 def test_r2_cleans_up_its_test_object(monkeypatch, r2_env):
@@ -323,3 +333,54 @@ def test_bucket_listing_is_not_consulted_when_the_check_passes(monkeypatch, r2_e
     fake = _FakeR2WithBuckets(["bigthink-corpus"], deny_list_buckets=True)
     _install(monkeypatch, fake)
     assert check_r2("bigthink-corpus").symbol == "PASS"
+
+
+# ---------------------------------------------------------------------------
+# Read and write are separate grants and need separate answers
+#
+# A Cloudflare R2 token exposes Read and Edit as independent checkboxes, and
+# the pipeline needs both: push_corpus writes, pull_corpus reads. Reporting
+# only "denied" would send someone to fix the wrong checkbox.
+# ---------------------------------------------------------------------------
+
+
+def test_write_denied_but_read_granted_is_reported_as_such(monkeypatch, r2_env):
+    # The Edit-only token: GetObject on a missing key returns NoSuchKey, which
+    # means the request was authorised and simply found nothing.
+    fake = _FakeR2WithBuckets(["bigthink-corpus"], deny={"PutObject"})
+    _install(monkeypatch, fake)
+    detail = check_r2("bigthink-corpus").detail
+    assert "read=granted, write=denied" in detail
+
+
+def test_write_and_read_both_denied_is_reported_as_such(monkeypatch, r2_env):
+    fake = _FakeR2WithBuckets(["bigthink-corpus"], deny={"PutObject", "GetObject"})
+    _install(monkeypatch, fake)
+    detail = check_r2("bigthink-corpus").detail
+    assert "read=denied, write=denied" in detail
+
+
+def test_read_probe_names_both_operations_as_needed(monkeypatch, r2_env):
+    fake = _FakeR2WithBuckets(["bigthink-corpus"], deny={"PutObject"})
+    _install(monkeypatch, fake)
+    detail = check_r2("bigthink-corpus").detail
+    assert "push_corpus" in detail and "pull_corpus" in detail
+
+
+def test_read_permission_probe_is_skipped_when_the_write_succeeded(monkeypatch, r2_env):
+    # Nothing to diagnose on the happy path, and no extra call to spend.
+    fake = _FakeR2WithBuckets(["bigthink-corpus"])
+    _install(monkeypatch, fake)
+    result = check_r2("bigthink-corpus")
+    assert result.symbol == "PASS"
+    assert "Token grants" not in result.detail
+
+
+def test_read_permission_returns_unknown_for_an_unexpected_error(monkeypatch, r2_env):
+    from src.verify_access import _read_permission
+
+    class _Boom:
+        def get_object(self, Bucket, Key):  # noqa: N803
+            raise _FakeClientError("InternalError")
+
+    assert _read_permission(_Boom(), "bigthink-corpus") == "unknown"
