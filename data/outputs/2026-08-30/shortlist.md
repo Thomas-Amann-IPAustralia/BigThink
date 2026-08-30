@@ -1,8 +1,8 @@
 # IPAVentures horizon scan — shortlist
 
-Run `2026-08-30` · generated 2026-08-30 13:18 UTC
+Run `2026-08-30` · generated 2026-08-30 23:05 UTC
 
-7,219 documents · 15 topics · 9 time slices (2018–2026) · embedding backend `hashing`
+7,501 documents · 15 topics · 9 time slices (2018–2026) · embedding backend `hashing`
 
 > **How to read this.** These are *candidates*, not conclusions. The ranking combines an emergence score, strategic fit and asset leverage; the weights behind it are a considered judgement that has not yet been validated against a known past opportunity. The opportunity index is relative and is not a market size. Read the evidence cards before you believe any row.
 
@@ -10,21 +10,21 @@ Run `2026-08-30` · generated 2026-08-30 13:18 UTC
 
 | # | Topic | H | Signal | Emrg | Fit | Lev | Index | Closest objective |
 |---:|---|:-:|---|---:|---:|---:|---:|---|
-| 1 | **artificial / intelligence / patent / examina** | H2 | strong | 0.58 | 0.19 | 0.10 | 0.61 | SI-3 AI and Automated Decision Mak |
-| 2 | **arc additive / wire arc / additive manufactu** | H1 | weak | 0.84 | 0.07 | 0.07 | 0.62 | 4.2 Innovative digital and data-dr |
-| 3 | **automated decision-making / administrative /** | H1 | strong | 0.67 | 0.11 | 0.05 | 0.41 | SI-3 AI and Automated Decision Mak |
-| 4 | **prior art / patent / search / retrieval** | H2 | strong | 0.56 | 0.05 | 0.10 | 0.51 | 4.1 Innovation and adaptiveness in |
-| 5 | **genetic / resource / access / pgrfa** | H1 | noise | 0.50 | 0.11 | 0.04 | — | 2.1 Access to and benefits from IP |
-| 6 | **delivery / service / government / local** | H1 | strong | 0.42 | 0.12 | 0.06 | 0.69 | 4.2 Innovative digital and data-dr |
-| 7 | **corporate / governance / ip asset / reportin** | H1 | noise | 0.46 | 0.08 | 0.06 | 0.57 | 2.1 Access to and benefits from IP |
-| 8 | **human right / indigenous / intellectual / pr** | H1 | noise | 0.47 | 0.07 | 0.06 | 0.51 | SI-3 AI and Automated Decision Mak |
-| 9 | **geographical / indication / trade / product** | H2 | latent | 0.40 | 0.32 | 0.05 | 0.46 | SI-1 Geographical indications regi |
-| 10 | **intellectual / property / right / enforcemen** | H1 | strong | 0.42 | 0.09 | 0.07 | 0.53 | 2.1 Access to and benefits from IP |
-| 11 | **trust / institution / public / citizen** | H2 | latent | 0.44 | 0.17 | 0.03 | 0.43 | 1.1 Trust and confidence in a high |
-| 12 | **valuation / property / market / intellectual** | H1 | weak | 0.56 | 0.04 | 0.06 | 0.45 | SI-3 AI and Automated Decision Mak |
-| 13 | **patent law / evolving standard / standard pr** | H3 | noise | 0.49 | 0.04 | 0.06 | — | 3.1 Capabilities for current and f |
-| 14 | **trade / agreement / wto / viii** | H1 | noise | 0.37 | 0.14 | 0.04 | 0.62 | 1.3 Reputation, influence and cont |
-| 15 | **image / patent / learning / watermark** | H2 | strong | 0.32 | 0.07 | 0.07 | 0.39 | 1.3 Reputation, influence and cont |
+| 1 | **artificial / intelligence / patent / examina** | H2 | strong | 0.63 | 0.17 | 0.09 | 0.60 | 4.2 Innovative digital and data-dr |
+| 2 | **arc additive / wire arc / additive manufactu** | H1 | weak | 0.84 | 0.07 | 0.07 | 0.60 | 4.2 Innovative digital and data-dr |
+| 3 | **automated decision-making / administrative /** | H1 | strong | 0.66 | 0.11 | 0.05 | 0.39 | SI-3 AI and Automated Decision Mak |
+| 4 | **prior art / patent / search / retrieval** | H2 | strong | 0.55 | 0.04 | 0.10 | 0.46 | 2.1 Access to and benefits from IP |
+| 5 | **trust / institution / public / government** | H2 | latent | 0.42 | 0.18 | 0.06 | 0.50 | 1.1 Trust and confidence in a high |
+| 6 | **corporate / governance / ip asset / accounta** | H1 | noise | 0.46 | 0.08 | 0.06 | 0.55 | 2.1 Access to and benefits from IP |
+| 7 | **delivery / service / government / local** | H1 | strong | 0.44 | 0.13 | 0.06 | 0.72 | 4.2 Innovative digital and data-dr |
+| 8 | **genetic / resource / access / pgrfa** | H1 | noise | 0.54 | 0.11 | 0.03 | — | 2.1 Access to and benefits from IP |
+| 9 | **human right / indigenous / intellectual / pr** | H1 | noise | 0.49 | 0.07 | 0.06 | 0.51 | SI-3 AI and Automated Decision Mak |
+| 10 | **intellectual / property / right / enforcemen** | H1 | strong | 0.41 | 0.08 | 0.08 | 0.56 | 4.1 Innovation and adaptiveness in |
+| 11 | **indication / geographical / trade / protecti** | H2 | latent | 0.37 | 0.32 | 0.05 | 0.47 | SI-1 Geographical indications regi |
+| 12 | **trade / agreement / wto / viii** | H1 | noise | 0.38 | 0.14 | 0.04 | 0.54 | 1.3 Reputation, influence and cont |
+| 13 | **valuation / property / intellectual / market** | H1 | weak | 0.55 | 0.04 | 0.02 | 0.47 | 2.1 Access to and benefits from IP |
+| 14 | **image / patent / watermark / learning** | H2 | strong | 0.32 | 0.06 | 0.07 | 0.39 | 4.2 Innovative digital and data-dr |
+| 15 | **patent law / evolving standard / standard pr** | H3 | noise | 0.42 | 0.03 | 0.06 | 0.46 | SI-1 Geographical indications regi |
 
 Evidence cards: `data/outputs/2026-08-30/evidence/`
 
@@ -32,23 +32,23 @@ Evidence cards: `data/outputs/2026-08-30/evidence/`
 
 *Which emerging trends are on strategy?*
 
-Split at the median of each axis (strategic fit 0.09, emergence 0.47).
+Split at the median of each axis (strategic fit 0.08, emergence 0.46).
 
 | | low strategic fit | high strategic fit |
 |---|---|---|
-| **high emergence** | arc additive / wire arc / additive man<br>prior art / patent / search / retrieva<br>human right / indigenous / intellectua<br>valuation / property / market / intell<br>patent law / evolving standard / stand | artificial / intelligence / patent / e<br>automated decision-making / administra<br>genetic / resource / access / pgrfa |
-| **low emergence** | corporate / governance / ip asset / re<br>image / patent / learning / watermark | delivery / service / government / loca<br>geographical / indication / trade / pr<br>intellectual / property / right / enfo<br>trust / institution / public / citizen<br>trade / agreement / wto / viii |
+| **high emergence** | arc additive / wire arc / additive man<br>prior art / patent / search / retrieva<br>corporate / governance / ip asset / ac<br>human right / indigenous / intellectua<br>valuation / property / intellectual /  | artificial / intelligence / patent / e<br>automated decision-making / administra<br>genetic / resource / access / pgrfa |
+| **low emergence** | image / patent / watermark / learning<br>patent law / evolving standard / stand | trust / institution / public / governm<br>delivery / service / government / loca<br>intellectual / property / right / enfo<br>indication / geographical / trade / pr<br>trade / agreement / wto / viii |
 
 ## View 2 — strategic fit × asset leverage
 
 *Of those, which could IP Australia credibly act on?* This is the view that separates an interesting trend from a viable venture.
 
-Split at the median of each axis (strategic fit 0.09, asset leverage 0.06).
+Split at the median of each axis (strategic fit 0.08, asset leverage 0.06).
 
 | | low strategic fit | high strategic fit |
 |---|---|---|
-| **high asset leverage** | arc additive / wire arc / additive man<br>prior art / patent / search / retrieva<br>corporate / governance / ip asset / re<br>human right / indigenous / intellectua<br>image / patent / learning / watermark | artificial / intelligence / patent / e<br>delivery / service / government / loca<br>intellectual / property / right / enfo |
-| **low asset leverage** | valuation / property / market / intell<br>patent law / evolving standard / stand | automated decision-making / administra<br>genetic / resource / access / pgrfa<br>geographical / indication / trade / pr<br>trust / institution / public / citizen<br>trade / agreement / wto / viii |
+| **high asset leverage** | arc additive / wire arc / additive man<br>prior art / patent / search / retrieva<br>corporate / governance / ip asset / ac<br>human right / indigenous / intellectua<br>image / patent / watermark / learning | artificial / intelligence / patent / e<br>trust / institution / public / governm<br>intellectual / property / right / enfo |
+| **low asset leverage** | valuation / property / intellectual / <br>patent law / evolving standard / stand | automated decision-making / administra<br>delivery / service / government / loca<br>genetic / resource / access / pgrfa<br>indication / geographical / trade / pr<br>trade / agreement / wto / viii |
 
 ## Distribution
 
