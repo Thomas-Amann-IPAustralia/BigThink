@@ -104,6 +104,80 @@ data.gov.au. Two sources are better with them:
 
 ---
 
+## Cloudflare R2 (optional — durable corpus and raw-payload storage)
+
+`storage.r2.enabled` in `bigthink_config.yaml` is `false` by default; the
+pipeline runs fully without it, same as the API keys above. Turn it on when
+you want to (a) pull the already-collected corpus onto a laptop and iterate
+on Stages 3-5 without re-running collection, or (b) keep raw API payloads
+across GitHub Actions runs instead of losing them when the job ends. See
+`BasicInfraSuggestion.md` for why R2 rather than something else — free to
+10 GB, and unlike most object storage it does not charge for reads, which
+matters because Actions re-reads it every run.
+
+**1. Create the bucket** (once, in the Cloudflare dashboard)
+- Cloudflare dashboard → **R2 Object Storage** → **Create bucket**. Name it
+  anything (e.g. `bigthink-corpus`) — it does not need to be public.
+- Note the **Account ID**, shown on the R2 overview page.
+
+**2. Create an API token scoped to that bucket**
+- R2 → **Manage API Tokens** → **Create API Token**.
+- Permissions: **Object Read & Write**, scoped to the bucket you just made
+  (not "Apply to all buckets" — least privilege).
+- Save the **Access Key ID** and **Secret Access Key** it shows you once —
+  Cloudflare does not show the secret again.
+
+**3. Add the credentials as GitHub Actions secrets** (repo → Settings →
+Secrets and variables → Actions → New repository secret)
+
+| Secret | Value |
+|---|---|
+| `R2_ACCOUNT_ID` | Account ID from step 1 |
+| `R2_ACCESS_KEY_ID` | Access Key ID from step 2 |
+| `R2_SECRET_ACCESS_KEY` | Secret Access Key from step 2 |
+
+**4. Turn it on in config** — edit `bigthink_config.yaml`:
+
+```yaml
+storage:
+  r2:
+    enabled: true
+    bucket: "bigthink-corpus"   # must match the bucket name from step 1
+```
+
+This is the one line that changes behaviour, so it goes in config, not code,
+same as everything else in this file. Commit it.
+
+**5. Use it locally** — export the same three variables in your shell
+(`export R2_ACCOUNT_ID=...`, etc. — never commit them), then:
+
+```bash
+# Pull the corpus the scheduled scan has already built, instead of collecting
+# it yourself — this is the fast path into Stage 3-5 tuning.
+python -m src.storage pull-corpus
+
+# Now iterate without touching the network:
+python -m src.pipeline --run-id dev --skip-collect
+
+# Push your local corpus back up if you want it as the shared copy
+python -m src.storage push-corpus
+
+# Raw payloads for a given run, if storage.keep_raw_payloads is on
+python -m src.storage push-raw --run-id 2026-08-29
+python -m src.storage pull-raw --run-id 2026-08-29
+```
+
+**What `scan.yml` does with this.** The corpus's source of truth stays the
+`corpus-*` GitHub Release asset it already restores from and publishes to —
+that mechanism needs no setup and this does not replace it. When R2 is
+configured, the workflow additionally mirrors the corpus to R2 after
+publishing (step "Mirror corpus to Cloudflare R2") so there is one fixed
+object to pull from locally instead of hunting through release tags. If R2
+is not configured, that step logs a line and does nothing — it cannot fail
+the run.
+
+---
+
 ## Repository layout
 
 ```
@@ -112,6 +186,7 @@ src/
   config.py                    Config loading and validation
   errors.py  retry.py          Error hierarchy and exponential backoff
   db.py                        DuckDB schema and I/O
+  storage.py                   Cloudflare R2 sync (optional; see below)
   embeddings.py                Pluggable embeddings: hashing (default) | BGE
   topics.py                    Topic formation and c-TF-IDF labelling
   burst.py                     Kleinberg two-state burst detection

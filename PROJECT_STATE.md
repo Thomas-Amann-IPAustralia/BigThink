@@ -257,6 +257,7 @@ Design choices worth not relitigating. Fuller reasoning is in `CLAUDE.md`.
 | Opportunity index excluded from the ranking | It is the weakest-founded number here; folding it into the headline order would launder that weakness |
 | Thin topics suppressed, not scored | A composite built on 8 documents looks identical to one built on 800 |
 | Corpus persisted as a Release asset, not committed | Binary, grows, does not diff. Same pattern Tripwire uses for its SQLite corpus |
+| R2 added as a mirror, not a replacement for the Release asset | The Release restore/publish cycle in `scan.yml` already works; swapping its only state mechanism for one requiring a not-yet-created bucket right before its first scheduled run was the wrong time to take that risk. R2 is additive and optional (`storage.r2.enabled: false` by default) |
 
 ---
 
@@ -367,6 +368,7 @@ For whoever — or whichever Claude instance — picks this up next:
 | GitHub Actions | `scan.yml` weekly Sun 19:00 UTC; `tests.yml` on push. **Neither has run yet** — the first scheduled run should be watched |
 | GitHub Pages | `docs/` is built by `src.report`; Pages needs enabling in repository settings |
 | Local corpus | `data/bigthink.duckdb`, gitignored, ~10 MB at 7,780 documents |
+| Cloudflare R2 | `src/storage.py` added 2026-08-30. `storage.r2.enabled: false` in config — off until the bucket, API token and the three `R2_*` GitHub secrets are created (README.md § Cloudflare R2 has the steps). Once on, `scan.yml` mirrors the corpus to R2 after each run as a convenience pull point for local Stage 3-5 tuning; the `corpus-*` GitHub Release asset stays the source of truth CI restores from |
 
 ---
 
