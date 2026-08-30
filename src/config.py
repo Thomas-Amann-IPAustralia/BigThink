@@ -163,6 +163,7 @@ def _validate(cfg: dict[str, Any]) -> None:
             raise ConfigError(f"Config is missing required section: '{section}'")
 
     _validate_pipeline(cfg["pipeline"])
+    _validate_storage(cfg["storage"])
     _validate_embeddings(cfg["embeddings"])
     _validate_collection(cfg["collection"])
     _validate_emergence(cfg["emergence"])
@@ -183,6 +184,14 @@ def _validate_pipeline(p: dict[str, Any]) -> None:
         raise ConfigError(
             "pipeline.contact_email must be a valid address — OpenAlex and "
             "Crossref polite-pool access depends on it."
+        )
+
+
+def _validate_storage(s: dict[str, Any]) -> None:
+    r2 = s.get("r2", {}) or {}
+    if bool(r2.get("enabled")) and not str(r2.get("bucket", "") or "").strip():
+        raise ConfigError(
+            "storage.r2.bucket must be set when storage.r2.enabled is true."
         )
 
 

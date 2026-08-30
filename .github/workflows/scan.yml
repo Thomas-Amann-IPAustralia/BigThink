@@ -6,10 +6,17 @@ name: Horizon scan
 # It is carried between runs as a GitHub Release asset — the same pattern
 # Tripwire uses for its SQLite corpus. Each run restores the latest database,
 # adds to it, and publishes it back, so the corpus accumulates and growth
-# curves lengthen instead of resetting every week.
+# curves lengthen instead of resetting every week. That Release asset stays
+# the source of truth CI restores from.
 #
 # Only the small, readable outputs are committed: the shortlist, evidence
 # cards and topics.csv.
+#
+# If storage.r2.enabled is true (bigthink_config.yaml) and the R2_* secrets
+# below are set, the corpus is additionally mirrored to Cloudflare R2
+# (BasicInfraSuggestion.md) after publish — a fixed URL to pull the latest
+# corpus onto a laptop for Stage 3-5 tuning without re-running collection.
+# Best-effort: a missing/unconfigured bucket does not fail the run.
 
 on:
   schedule:
@@ -156,6 +163,21 @@ jobs:
             | while read -r old; do
                 [ -n "$old" ] && gh release delete "$old" --repo "${{ github.repository }}" --yes --cleanup-tag || true
               done
+          fi
+
+      # ------------------------------------------------------------------
+      # Best-effort mirror to Cloudflare R2. No-ops if storage.r2.enabled is
+      # false in config (the default) or if the R2 secrets are not set.
+      # ------------------------------------------------------------------
+      - name: Mirror corpus to Cloudflare R2
+        if: always()
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          if [ -f data/bigthink.duckdb ]; then
+            python -m src.storage push-corpus || echo "R2 mirror skipped or failed — Release asset above remains the source of truth."
           fi
 
       - name: Upload run logs

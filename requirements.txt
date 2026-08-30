@@ -16,6 +16,10 @@ requests>=2.31
 # Analytical store (BasicInfraSuggestion.md)
 duckdb>=1.0
 
+# Cloudflare R2 client (S3-compatible; BasicInfraSuggestion.md). Pure Python,
+# installs in seconds. Only touched when storage.r2.enabled is true.
+boto3>=1.34
+
 # Vector maths, growth-curve fitting, burst detection
 numpy>=1.26
 

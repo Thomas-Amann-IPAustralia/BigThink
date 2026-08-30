@@ -34,6 +34,19 @@ storage:
   # Set to true only if you have Cloudflare R2 (or similar) configured.
   keep_raw_payloads: true
 
+  # Cloudflare R2 (BasicInfraSuggestion.md) — durable store for the DuckDB
+  # corpus and raw payloads across ephemeral GitHub Actions runners, and the
+  # way to pull an already-collected corpus onto a laptop for Stage 3-5
+  # tuning without re-running collection. Off by default: the pipeline must
+  # run with zero external storage configured, same as the API keys below.
+  # Credentials (R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY) come
+  # from environment variables, never from this file. See README.md.
+  r2:
+    enabled: false
+    bucket: "bigthink-corpus"
+    corpus_key: "bigthink.duckdb"
+    raw_prefix: "raw"
+
 embeddings:
   # Two backends, same interface (see src/embeddings.py):
   #   hashing  — dependency-free character n-gram hashing + TF-IDF. Runs
