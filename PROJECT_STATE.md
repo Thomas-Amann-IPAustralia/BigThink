@@ -41,7 +41,7 @@ works, not as a finding.
 | 5 — Synthesis | **Working** | Shortlist, 2×2 views, evidence cards, CSV, published HTML |
 | Notebook export | **Working, not yet reviewed by anyone** | `src/notebook.py`; written automatically after Stage 5. Re-derives emergence, horizon, index and composite rank from stored inputs |
 | Automation | **Half exercised** | `tests.yml` first ran 2026-08-30 on PR #2 and passed. `verify-access.yml` added 2026-08-30 — OpenAlex passes, R2 fails (issue 10). `scan.yml` has still never run — see below |
-| Tests | **159 passing** | Offline by design; every defect found so far has one |
+| Tests | **166 passing** | Offline by design; every defect found so far has one |
 
 **First real run — `2026-08-29`:** 7,780 documents across 2018–2026 from
 Crossref (2,431), GDELT (3,183), arXiv (2,018), data.gov.au (148). Roughly
@@ -208,47 +208,55 @@ from that run's CSV is missing the asset axis's most interpretable output —
 including the notebook, which is the artefact meant to explain it. Low effort
 to fix: add both to `_SCORE_COLUMNS` in `db.py` and to the dict Stage 5 writes.
 
-### 10. The R2 token cannot reach the `bigthink-corpus` bucket
+### 10. The R2 key pair has no rights on `bigthink-corpus`
 
-Verified 2026-08-30 by `verify-access.yml`. All three `R2_*` secrets are set,
-with the right shapes — account ID 32 characters, access key ID 32, secret 64 —
-and they **authenticate successfully**. Every operation against the bucket is
-then refused:
+Verified 2026-08-30 by `verify-access.yml`, twice, ten minutes apart. All
+three `R2_*` secrets are set with the right shapes — account ID 32 characters,
+access key ID 32, secret 64 — and they **authenticate successfully**. Every
+operation on the bucket is then refused:
 
 ```
-HeadBucket=DENIED, PutObject=DENIED, ListObjectsV2=DENIED
-  HeadBucket:     403 Forbidden
-  PutObject:      AccessDenied
-  ListObjectsV2:  AccessDenied
-  ListBuckets:    AccessDenied
+HeadBucket=DENIED, PutObject=DENIED, ListObjectsV2=DENIED, ListBuckets=DENIED
+Token grants on this bucket: read=denied, write=denied
 ```
 
-**What that combination rules out.** The errors are `AccessDenied`, not
-`InvalidAccessKeyId` or `SignatureDoesNotMatch`, so the key pair is genuine and
-the account ID resolves to the account those keys belong to — the credentials
-are right. It is not a read-only token either: `ListObjectsV2` is a read, and it
-is refused too. And it is not the well-known R2 quirk where a bucket-scoped
-token permits object calls while refusing bucket-level ones, because the object
-calls are refused as well.
+**What that rules out.** The errors are `AccessDenied`, not
+`InvalidAccessKeyId` or `SignatureDoesNotMatch`, so the key pair is genuine
+and `R2_ACCOUNT_ID` resolves to the account those keys belong to. It is not
+the R2 quirk where a bucket-scoped token refuses bucket-level calls but
+permits object ones — the object calls are refused too. And it is not a
+read-only or write-only token: a `GetObject` against a deliberately-absent key
+returns `AccessDenied` rather than `NoSuchKey`, so read is refused before the
+lookup happens.
 
-What is left is scope. `ListBuckets` being denied means the token is scoped to
-specific buckets rather than the whole account, and the denials mean the bucket
-it is scoped to is not one named exactly `bigthink-corpus` in this account.
+**The contradiction that locates it.** The Cloudflare UI shows a token named
+"R2 Account Token" scoped to R2 Buckets → `bigthink-corpus`, with *Workers R2
+Storage Bucket Item* → **Edit** granted. If that were the token in use and the
+policy were saved, `PutObject` would succeed. It does not. So the key pair in
+the GitHub secrets is not that token's — either the policy edit was never
+saved, or the secrets carry an access key from a different token.
 
-**Fix** (any one of these, in Cloudflare → R2 → Manage API Tokens):
-- the bucket is named something other than `bigthink-corpus` — set
-  `storage.r2.bucket` in `bigthink_config.yaml` to the real name; or
-- the token was scoped to a different bucket, or created before the bucket
-  existed — re-issue it with **Object Read & Write** scoped to this bucket; or
-- the bucket lives in a different Cloudflare account than `R2_ACCOUNT_ID`.
+Note the earlier reading of this, that the token was scoped to a bucket not
+named `bigthink-corpus`, was wrong. It came from `ListBuckets` being denied,
+which is normal for any bucket-scoped token and says nothing about the name.
+The check no longer draws that inference.
 
-Re-run the **Verify credentials** workflow after changing anything. Until it
-passes, `storage.r2.enabled` stays `false`: a run that believes it is
+**Fix.**
+1. Tick **Read** as well as Edit. Both are needed and only Edit is set:
+   `push_corpus` writes (`PutObject`), `pull_corpus` reads (`GetObject`), and
+   `pull_raw` lists (`ListObjectsV2`). The R2-specific token page calls the
+   pair "Object Read & Write".
+2. Save the token, then compare the Access Key ID Cloudflare shows against the
+   `R2_ACCESS_KEY_ID` secret. If they differ, re-copy both values — editing a
+   token keeps its key pair, but creating a new one issues a fresh pair.
+3. Re-run **Actions → Verify credentials**.
+
+Until it passes, `storage.r2.enabled` stays `false`: a run that believes it is
 persisting a corpus and is not would be worse than one that never tried.
 
-**Consequence: none, currently.** R2 was always additive. `scan.yml` carries the
-corpus between runs as a `corpus-*` GitHub Release asset, and that remains the
-source of truth. R2 buys a fixed URL for pulling the corpus to a laptop for
+**Consequence: none, currently.** R2 was always additive. `scan.yml` carries
+the corpus between runs as a `corpus-*` GitHub Release asset, and that remains
+the source of truth. R2 buys a fixed URL for pulling the corpus to a laptop for
 Stage 3-5 tuning; nothing is lost while it is off.
 
 ---
@@ -405,7 +413,7 @@ Day 5.** A ranked list nobody has interrogated is not research.
 
 For whoever — or whichever Claude instance — picks this up next:
 
-1. `python -m pytest tests/ -q` — expect 159 passing. If not, start there.
+1. `python -m pytest tests/ -q` — expect 166 passing. If not, start there.
 2. Read `docs/method.md` if you have not; it is what the numbers mean.
 3. `python -m src.verify_access` — confirms the OpenAlex and R2 credentials
    still work before a run depends on them. Locally it needs the variables

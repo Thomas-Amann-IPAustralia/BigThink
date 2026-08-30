@@ -234,9 +234,12 @@ def _visible_buckets(client, wanted: str) -> str:
         buckets = [b["Name"] for b in client.list_buckets().get("Buckets", [])]
     except Exception as exc:  # noqa: BLE001 - botocore raises its own types
         return (
-            "\n           ListBuckets is also denied, so the token is scoped to "
-            f"specific buckets that do not include {wanted!r} "
-            f"({type(exc).__name__})."
+            "\n           ListBuckets is also denied. That is normal for a "
+            "bucket-scoped token and cannot confirm the bucket name from here, so "
+            "check the scope in the Cloudflare UI. If it already shows this token "
+            f"scoped to {wanted!r} with the right permissions, then the key pair "
+            "in use is not this token's — an unsaved policy edit, or an access key "
+            "from a different token."
         )
     if not buckets:
         return (
@@ -341,6 +344,16 @@ def check_r2(bucket: str, cleanup: bool = True, timeout: int = 30) -> Result:
                 "writes (PutObject) and pull_corpus reads (GetObject), so a token "
                 "with only one of them leaves the mirror half-working."
             )
+            if read_state == "denied":
+                # Nothing at all is permitted. If the token you are looking at
+                # does grant these, you are not looking at the token in use.
+                grants += (
+                    "\n           Neither is permitted, so this key pair has no "
+                    "rights on this bucket at all. If the Cloudflare UI shows "
+                    "otherwise, the policy edit was not saved or the secrets hold "
+                    "a different token's access key — compare the Access Key ID "
+                    "shown in Cloudflare against R2_ACCESS_KEY_ID."
+                )
         return result.failed(
             f"{summary}{reasons}{grants}{_visible_buckets(client, bucket)}"
         )

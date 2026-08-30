@@ -315,10 +315,15 @@ def test_denied_and_bucket_absent_points_at_the_name(monkeypatch, r2_env):
     assert "No bucket named" in detail and "'something-else'" in detail
 
 
-def test_denied_list_buckets_is_itself_reported_as_a_narrow_scope(monkeypatch, r2_env):
+def test_denied_list_buckets_does_not_claim_the_bucket_is_out_of_scope(monkeypatch, r2_env):
+    # ListBuckets is denied for every bucket-scoped token, so it cannot be
+    # read as evidence about the bucket name. Saying otherwise sent a real
+    # investigation to the wrong place.
     fake = _FakeR2WithBuckets([], deny={"PutObject"}, deny_list_buckets=True)
     _install(monkeypatch, fake)
-    assert "scoped to specific buckets" in check_r2("bigthink-corpus").detail
+    detail = check_r2("bigthink-corpus").detail
+    assert "normal for a bucket-scoped token" in detail
+    assert "do not include" not in detail
 
 
 def test_empty_account_points_at_the_account_id(monkeypatch, r2_env):
@@ -384,3 +389,22 @@ def test_read_permission_returns_unknown_for_an_unexpected_error(monkeypatch, r2
             raise _FakeClientError("InternalError")
 
     assert _read_permission(_Boom(), "bigthink-corpus") == "unknown"
+
+
+def test_both_denied_points_at_a_stale_or_unsaved_token(monkeypatch, r2_env):
+    # The observed case: the Cloudflare UI shows Edit granted on the right
+    # bucket, and the key pair in use can do nothing. Those cannot both
+    # describe the same token.
+    fake = _FakeR2WithBuckets([], deny={"PutObject", "GetObject"}, deny_list_buckets=True)
+    _install(monkeypatch, fake)
+    detail = check_r2("bigthink-corpus").detail
+    assert "R2_ACCESS_KEY_ID" in detail
+    assert "not saved" in detail or "was not saved" in detail
+
+
+def test_read_granted_case_does_not_claim_a_stale_token(monkeypatch, r2_env):
+    fake = _FakeR2WithBuckets(["bigthink-corpus"], deny={"PutObject"})
+    _install(monkeypatch, fake)
+    detail = check_r2("bigthink-corpus").detail
+    assert "read=granted" in detail
+    assert "different token's access key" not in detail
