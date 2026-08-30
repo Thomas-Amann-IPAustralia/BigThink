@@ -42,7 +42,7 @@ storage:
   # Credentials (R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY) come
   # from environment variables, never from this file. See README.md.
   r2:
-    enabled: false
+    enabled: true
     bucket: "bigthink-corpus"
     # Set to the jurisdiction the bucket was created in, or leave empty.
     # A jurisdiction-restricted bucket lives on its own S3 endpoint

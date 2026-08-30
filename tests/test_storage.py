@@ -68,7 +68,9 @@ def r2_config():
 
 @pytest.fixture()
 def disabled_config():
-    return copy.deepcopy(load_config())
+    config = copy.deepcopy(load_config())
+    config["storage"]["r2"]["enabled"] = False
+    return config
 
 
 # ---------------------------------------------------------------------------
@@ -76,8 +78,12 @@ def disabled_config():
 # ---------------------------------------------------------------------------
 
 
-def test_disabled_by_default():
-    assert storage.is_enabled(load_config()) is False
+def test_shipped_config_enables_r2():
+    # Enabled 2026-08-30, once verify-access.yml confirmed a full
+    # write/read/delete round-trip against the real bucket. Before that it
+    # shipped disabled, because a run that believes it is persisting a corpus
+    # and is not would be worse than one that never tried.
+    assert storage.is_enabled(load_config()) is True
 
 
 def test_push_corpus_noop_when_disabled(disabled_config, tmp_path):

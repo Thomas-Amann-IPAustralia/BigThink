@@ -164,6 +164,25 @@ Run workflow). That is the only place the repository secrets can be exercised �
 nobody, including a Claude session working on this repo, can read them
 otherwise.
 
+**3b. If the bucket has a jurisdiction, say so**
+
+A bucket created under a jurisdiction (EU, FedRAMP) lives on its own endpoint,
+`<account>.<jurisdiction>.r2.cloudflarestorage.com`, and is **invisible from
+the default one** — every call returns `AccessDenied`, including `ListBuckets`,
+which is indistinguishable from a permissions problem by inspection. Set
+`storage.r2.jurisdiction` to match.
+
+An API token's resource key names it:
+`com.cloudflare.edge.r2.bucket.<account>_<jurisdiction>_<bucket>`, where an
+unrestricted bucket reads `_default_`. Check that string first if access is
+refused and the permissions look right.
+
+Note `R2_ACCOUNT_ID` is the account ID alone — 32 hex characters, from the R2
+overview page. Not the endpoint URL, and not the Access Key ID, which is also
+32 hex characters and is the easier of the two mistakes to make. A wrong
+account ID shows up as a refused TLS handshake rather than an S3 error, because
+Cloudflare rejects the handshake for an account it does not recognise.
+
 **4. Turn it on in config** — edit `bigthink_config.yaml`:
 
 ```yaml

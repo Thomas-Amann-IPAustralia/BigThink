@@ -40,8 +40,8 @@ works, not as a finding.
 | 4 — Opportunity index | **Working, partial** | `patent_activity` has no data without PatentsView; weight redistributes automatically |
 | 5 — Synthesis | **Working** | Shortlist, 2×2 views, evidence cards, CSV, published HTML |
 | Notebook export | **Working, not yet reviewed by anyone** | `src/notebook.py`; written automatically after Stage 5. Re-derives emergence, horizon, index and composite rank from stored inputs |
-| Automation | **Half exercised** | `tests.yml` first ran 2026-08-30 on PR #2 and passed. `verify-access.yml` added 2026-08-30 — OpenAlex passes, R2 fails (issue 10). `scan.yml` has still never run — see below |
-| Tests | **166 passing** | Offline by design; every defect found so far has one |
+| Automation | **Half exercised** | `tests.yml` first ran 2026-08-30 on PR #2 and passed. `verify-access.yml` added 2026-08-30 — **both credentials pass**. `scan.yml` has still never run — see below |
+| Tests | **195 passing** | Offline by design; every defect found so far has one |
 
 **First real run — `2026-08-29`:** 7,780 documents across 2018–2026 from
 Crossref (2,431), GDELT (3,183), arXiv (2,018), data.gov.au (148). Roughly
@@ -208,56 +208,57 @@ from that run's CSV is missing the asset axis's most interpretable output —
 including the notebook, which is the artefact meant to explain it. Low effort
 to fix: add both to `_SCORE_COLUMNS` in `db.py` and to the dict Stage 5 writes.
 
-### 10. The R2 key pair has no rights on `bigthink-corpus`
+### 10. ~~The R2 key pair has no rights on `bigthink-corpus`~~ — RESOLVED 2026-08-30
 
-Verified 2026-08-30 by `verify-access.yml`, twice, ten minutes apart. All
-three `R2_*` secrets are set with the right shapes — account ID 32 characters,
-access key ID 32, secret 64 — and they **authenticate successfully**. Every
-operation on the bucket is then refused:
+Verified working 2026-08-30 by `verify-access.yml`:
 
 ```
-HeadBucket=DENIED, PutObject=DENIED, ListObjectsV2=DENIED, ListBuckets=DENIED
-Token grants on this bucket: read=denied, write=denied
+[PASS] Cloudflare R2 (bucket 'bigthink-corpus', eu jurisdiction)
+       HeadBucket=ok, PutObject=ok, GetObject=ok, ListObjectsV2=ok,
+       DeleteObject=ok (42 bytes round-tripped)
 ```
 
-**What that rules out.** The errors are `AccessDenied`, not
-`InvalidAccessKeyId` or `SignatureDoesNotMatch`, so the key pair is genuine
-and `R2_ACCOUNT_ID` resolves to the account those keys belong to. It is not
-the R2 quirk where a bucket-scoped token refuses bucket-level calls but
-permits object ones — the object calls are refused too. And it is not a
-read-only or write-only token: a `GetObject` against a deliberately-absent key
-returns `AccessDenied` rather than `NoSuchKey`, so read is refused before the
-lookup happens.
+**The cause was the endpoint, not the permissions.** The bucket was created in
+the **EU jurisdiction**, which puts it on `<account>.eu.r2.cloudflarestorage.com`
+and makes it invisible from the default endpoint `storage.py` hardcoded. Every
+request went to a jurisdiction the token has no resources in, and R2 answers
+that with `AccessDenied` on everything — including `ListBuckets` — which is
+indistinguishable from a permissions problem by inspection.
 
-**The contradiction that locates it.** The Cloudflare UI shows a token named
-"R2 Account Token" scoped to R2 Buckets → `bigthink-corpus`, with *Workers R2
-Storage Bucket Item* → **Edit** granted. If that were the token in use and the
-policy were saved, `PutObject` would succeed. It does not. So the key pair in
-the GitHub secrets is not that token's — either the policy edit was never
-saved, or the secrets carry an access key from a different token.
+The jurisdiction is visible in an API token's resource key:
+`com.cloudflare.edge.r2.bucket.<account>_eu_<bucket>`. An unrestricted bucket
+reads `_default_`. That string is the fastest way to confirm which endpoint a
+bucket needs, and is now the first thing to check if this recurs.
 
-Note the earlier reading of this, that the token was scoped to a bucket not
-named `bigthink-corpus`, was wrong. It came from `ListBuckets` being denied,
-which is normal for any bucket-scoped token and says nothing about the name.
-The check no longer draws that inference.
+**Two false diagnoses on the way, both worth remembering**, because both were
+confident and both were wrong in the same direction — reading a transport-level
+failure as an authorisation one:
 
-**Fix.**
-1. Tick **Read** as well as Edit. Both are needed and only Edit is set:
-   `push_corpus` writes (`PutObject`), `pull_corpus` reads (`GetObject`), and
-   `pull_raw` lists (`ListObjectsV2`). The R2-specific token page calls the
-   pair "Object Read & Write".
-2. Save the token, then compare the Access Key ID Cloudflare shows against the
-   `R2_ACCESS_KEY_ID` secret. If they differ, re-copy both values — editing a
-   token keeps its key pair, but creating a new one issues a fresh pair.
-3. Re-run **Actions → Verify credentials**.
+1. *"The token is scoped to a bucket not named `bigthink-corpus`."* Inferred
+   from `ListBuckets` being denied. But `ListBuckets` is denied for **every**
+   bucket-scoped token, so it was never evidence about the name.
+2. *"The key pair is stale or the policy was never saved."* Inferred from
+   `PutObject` being refused while the Cloudflare UI showed Edit granted. The
+   contradiction was real; the explanation was not.
 
-Until it passes, `storage.r2.enabled` stays `false`: a run that believes it is
-persisting a corpus and is not would be worse than one that never tried.
+**A third cause sat underneath**: `R2_ACCOUNT_ID` held the wrong 32 characters
+(the Access Key ID is also 32 hex — an easy swap). This produced a refused TLS
+handshake rather than an S3 error, because Cloudflare rejects the handshake
+outright for an account ID it does not recognise. Confirmed by testing a real
+account against a fabricated one on both endpoints.
 
-**Consequence: none, currently.** R2 was always additive. `scan.yml` carries
-the corpus between runs as a `corpus-*` GitHub Release asset, and that remains
-the source of truth. R2 buys a fixed URL for pulling the corpus to a laptop for
-Stage 3-5 tuning; nothing is lost while it is off.
+**What the checker learned**, so none of this costs the same time twice:
+`storage.r2.jurisdiction` with strict validation; `verify_access.py` importing
+`storage.endpoint_url` so a check cannot pass against an endpoint the pipeline
+never uses; per-operation probing rather than failing at the first refusal; a
+`GetObject` on a deliberately-absent key to separate a denied read from a
+denied write; account-ID shape validation; and connection-level failures
+short-circuiting to their own verdict instead of being narrated as permissions.
+
+**`storage.r2.enabled` is now `true`.** `scan.yml` mirrors the corpus to R2
+after each run. The `corpus-*` GitHub Release asset remains the source of truth
+CI restores from — R2 is a convenience pull point for local Stage 3-5 tuning,
+not a replacement.
 
 ---
 
@@ -413,7 +414,7 @@ Day 5.** A ranked list nobody has interrogated is not research.
 
 For whoever — or whichever Claude instance — picks this up next:
 
-1. `python -m pytest tests/ -q` — expect 166 passing. If not, start there.
+1. `python -m pytest tests/ -q` — expect 195 passing. If not, start there.
 2. Read `docs/method.md` if you have not; it is what the numbers mean.
 3. `python -m src.verify_access` — confirms the OpenAlex and R2 credentials
    still work before a run depends on them. Locally it needs the variables
@@ -456,7 +457,7 @@ For whoever — or whichever Claude instance — picks this up next:
 | GitHub Actions | `tests.yml` on push/PR — **first ran 2026-08-30, green.** `scan.yml` weekly Sun 19:00 UTC — **still never run.** Its first run is the one to watch: it is the only one that restores the corpus release, calls live APIs, and publishes a new corpus asset, so it is where an untested workflow would actually cost something |
 | GitHub Pages | `docs/` is built by `src.report`; Pages needs enabling in repository settings |
 | Local corpus | `data/bigthink.duckdb`, gitignored, ~10 MB at 7,780 documents |
-| Cloudflare R2 | `src/storage.py` added 2026-08-30. Secrets set, **but the token cannot reach the bucket** — see issue 10. `storage.r2.enabled` stays `false` until it can, so nothing is currently mirrored. The `corpus-*` GitHub Release asset remains the source of truth CI restores from, and is unaffected |
+| Cloudflare R2 | **Working, verified 2026-08-30.** `storage.r2.enabled: true`, bucket `bigthink-corpus` in the **eu** jurisdiction (`storage.r2.jurisdiction: eu` — it is not reachable from the default endpoint; see issue 10). `scan.yml` mirrors the corpus after each run; the `corpus-*` Release asset stays the source of truth CI restores from |
 
 ---
 
