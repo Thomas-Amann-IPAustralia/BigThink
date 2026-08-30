@@ -19,11 +19,14 @@ outlives the sprint and can be pointed at future questions.
 **Approach.** `SuggestedConceptualApproach.md` (the source research report),
 implemented as Stages 0–5. `docs/method.md` explains what each number means.
 
-**Where it stands.** The pipeline is built, runs end to end in about 13 seconds
-on a collected corpus, and produces a plausible ranked shortlist with evidence
-cards. **The method is not yet validated.** No weight in it has been tested
-against a known past opportunity. Treat current output as proof the machinery
-works, not as a finding.
+**Where it stands.** The pipeline is built and has now completed a full
+scheduled run end to end — collection, analysis, publication, corpus release and
+R2 mirror. `2026-08-30` is the current baseline: 7,219 documents, 15 topics,
+OpenAlex contributing for the first time. **The method is still not validated.**
+No weight in it has been tested against a known past opportunity, and reading
+the evidence cards for that run found **two of fifteen shortlisted topics to be
+artefacts** (issue 11). Treat current output as proof the machinery works, not
+as a finding.
 
 **Time budget.** Roughly one week, of which day 1 is spent. See the plan below.
 
@@ -34,16 +37,50 @@ works, not as a finding.
 | Stage | State | Notes |
 |---|---|---|
 | 0 — Strategy encoding | **Working** | 34 references: 9 objectives, 6 initiatives, 7 DISR fields, 12 assets |
-| 1 — Signal collection | **Working, five of six sources** | OpenAlex key verified 2026-08-30, so it goes live at the next collection run — but has contributed nothing to the corpus so far. PatentsView still disabled (issue 6) |
+| 1 — Signal collection | **Working, five of six sources** | OpenAlex went live on the `2026-08-30` run: 20/20 queries succeeded, but the relevance floor holds it to 8% of the corpus (issue 3). PatentsView still disabled (issue 6). Crossref is returning peer-review records as if they were papers (issue 11) |
 | 2 — Emergence detection | **Working** | Kleinberg bursts, logistic growth curves, Rotolo five-attribute score, Three Horizons |
 | 3 — Fit and leverage | **Working, weak** | Strategic fit is usable; asset leverage is compressed — see Open issue 2 |
 | 4 — Opportunity index | **Working, partial** | `patent_activity` has no data without PatentsView; weight redistributes automatically |
 | 5 — Synthesis | **Working** | Shortlist, 2×2 views, evidence cards, CSV, published HTML |
 | Notebook export | **Working, not yet reviewed by anyone** | `src/notebook.py`; written automatically after Stage 5. Re-derives emergence, horizon, index and composite rank from stored inputs |
-| Automation | **Half exercised** | `tests.yml` first ran 2026-08-30 on PR #2 and passed. `verify-access.yml` added 2026-08-30 — **both credentials pass**. `scan.yml` has still never run — see below |
+| Automation | **Fully exercised** | `tests.yml` green. `verify-access.yml` — **both credentials pass**. `scan.yml` **first ran 2026-08-30 (run 33310810297) and succeeded end to end**: 66 min collection, 0 failed pairs, site built, outputs committed, first corpus release published, R2 mirror written |
 | Tests | **195 passing** | Offline by design; every defect found so far has one |
 
-**First real run — `2026-08-29`:** 7,780 documents across 2018–2026 from
+**Current baseline — `2026-08-30`** (workflow run 33310810297, the first
+`scan.yml` execution). Collected from an empty database, because no corpus
+release existed to restore: 7,653 records fetched, 7,219 documents after
+deduplication, across 2018–2026, with **zero failed or skipped source/frame
+pairs** — the first clean sweep on this project. Sources: Crossref 2,432,
+GDELT 2,040, arXiv 2,018, **OpenAlex 581**, data.gov.au 148. 15 topics survived
+filtering; 2,760 documents (38%) were assigned to one.
+
+All four notebook verifications passed — emergence score, horizon band,
+opportunity index and composite rank each re-derived from stored inputs against
+the run's own config snapshot.
+
+| # | Topic | H | Emrg | Fit | Lev | Note |
+|---:|---|:-:|---:|---:|---:|---|
+| 1 | artificial / intelligence / patent / examination | H2 | 0.58 | 0.19 | 0.10 | Holds up on reading. Maps to SI-3 |
+| 2 | arc additive / wire arc / additive manufacturing | H1 | **0.84** | 0.07 | 0.07 | **Artefact** — one paper's peer reviews (issue 11) |
+| 3 | automated decision-making / administrative law | H1 | 0.67 | 0.11 | 0.05 | Holds up. Maps to SI-3 |
+| 4 | prior art / patent / search / retrieval | H2 | 0.56 | 0.05 | 0.10 | Holds up |
+| 6 | delivery / service / government / local | H1 | 0.42 | 0.12 | 0.06 | **Artefact** — one paper's peer reviews (issue 11) |
+| 15 | image / patent / learning / watermark | H2 | 0.32 | 0.07 | 0.08 | Catch-all: 1,497 docs = 54% of everything assigned. Correctly ranked last |
+
+Three things worth noticing. **The strategy encoding still works** — AI-in-patent-examination
+→ SI-3 is the mapping a human would make. **The scoring correctly demoted its own
+catch-all** to last place on novelty 0.045 and coherence 0.337, unprompted. And
+**the highest emergence score in the run belongs to an artefact**, which only
+reading the evidence cards revealed — every other check in the pipeline passed it.
+
+A stepwise walkthrough of how each of these was identified, written for a mixed
+technical and non-technical audience, is in
+`docs/signal-walkthrough-2026-08-30.html`.
+
+**Previous run — `2026-08-29`** (local, no OpenAlex; its corpus was never
+persisted and no longer exists). Not comparable to the baseline above — every
+headline score is percentile-ranked within its own run, so a different corpus
+means a different population and different numbers: 7,780 documents across 2018–2026 from
 Crossref (2,431), GDELT (3,183), arXiv (2,018), data.gov.au (148). Roughly
 400–640 documents per year, so growth curves have something to fit. 14 topics
 survived filtering.
@@ -78,6 +115,53 @@ Three things in that table are worth noticing, and one of them is a warning.
 ---
 
 ## Open issues, most important first
+
+*Numbers are stable identifiers, not ranks — they are referenced from elsewhere
+in this file, so new issues keep the next free number wherever they sit in the
+ordering.*
+
+### 11. Crossref peer-review records are producing phantom topics — NEW 2026-08-30
+
+**Two of the fifteen topics on the `2026-08-30` baseline are not topics.** Both
+are the peer-review history of a single paper.
+
+- **Rank 2, `arc additive / wire arc / additive manufacturing`** — carrying the
+  **highest emergence score in the run (0.843)**. All eight documents nearest
+  its centre are review reports for one paper, `10.1002/eng2.70518`, registered
+  as `/v1/review1`, `/v1/review2`, `/v1/review3`, `/v2/review1`, `/v2/review2`,
+  `/v3/review1`, `/v4/review2`, `/v4/review3`. Nineteen of its twenty-seven
+  documents fall in 2025.
+- **Rank 6, `delivery / service / government / local`** — carrying the
+  **highest opportunity index in the run (0.689)**. Its eight nearest documents
+  are review reports of *Financial Autonomy: Panacea for Improved Service
+  Delivery in Imo State Local Government System*. The label reads like
+  Australian public-service delivery; the centre is Nigerian local-government
+  finance.
+
+**Why every guard missed it.** Crossref registers peer-review reports as
+first-class records with their own DOIs, so `native_id` deduplication is working
+correctly — these genuinely are distinct identifiers. The reviews share the
+reviewed paper's title, so they cluster *very* tightly (coherence 0.779, the
+highest in the run), look maximally novel (0.878 — nothing like them existed
+earlier), and all arrive in one year, so Kleinberg flags a real burst. Every
+measurement was correct. The input was wrong.
+
+A related case sits at rank 8, where three of the nearest documents are titled
+simply *References* — book bibliographies registered with their own DOIs.
+
+**Measured extent.** Of the 120 documents nearest the fifteen topic centres, 16
+are `peer-review` — and all 16 sit inside those two topics rather than being
+spread thin. Also present: 4 `posted-content` (preprints, legitimate) and 1
+`component`.
+
+**Fix.** `src/collectors/crossref.py` already requests the `type` field but uses
+it only as a fallback venue label when a record has no container title; it never
+filters on it. Excluding `peer-review`, and probably `component` and back-matter
+titled *References*, removes both artefacts at source.
+
+**Not applied yet, deliberately.** It changes what every future run collects, so
+it needs a test and a calibration-log entry rather than a quiet edit — and the
+run it would change is the baseline everything is now measured against.
 
 ### 1. The ranking has never been validated — do this before trusting anything
 
@@ -114,7 +198,7 @@ This is the highest-value single change available.
 more entries, and more of the phrasing the literature actually uses, would
 help under either backend.
 
-### 3. ~~OpenAlex is metered and currently contributes nothing~~ — RESOLVED 2026-08-30
+### 3. OpenAlex — ~~contributes nothing~~ key fixed, but the relevance floor now caps it at 8%
 
 Verified 2026-08-29: OpenAlex is no longer simply "free, no key". Requests are
 metered in dollars against a small daily allowance per IP, reset at midnight
@@ -132,6 +216,24 @@ and contributed zero of the 7,378 documents.
 **Fixed.** `OPENALEX_API_KEY` is set as a repository secret and verified
 against the live API on 2026-08-30 by `verify-access.yml`: an authenticated
 query returned 29,771,915 works for 2026. The key is 22 characters.
+
+**Confirmed live on the `2026-08-30` run, but throttled by the relevance floor
+— REOPENED as a calibration question.** All 20 queries logged `success` and the
+source was never retired, which is the change that matters. But it returned only
+**592 records, 581 documents, 8% of the corpus**, against a configured ceiling of
+5 pages × 200 = 20,000. That is a mean of **29.6 records per query** — and since
+a single page holds 200, *no query reached even the end of its first page*.
+
+The cut is not the budget: a budget failure raises `PermanentError` and retires
+the source, and nothing was retired. It is `min_relative_score: 0.4`, which stops
+the collector at the first result scoring below 40% of that query's own top
+relevance score. OpenAlex relevance scores decay steeply, so the floor bites
+almost immediately — it is a much tighter constraint against OpenAlex's scoring
+than against Crossref's, even though both are configured at 0.4.
+
+**Next:** lower `collection.sources.openalex.min_relative_score` toward 0.2 and
+record what it does to corpus size and topic quality. The best research source
+available is currently contributing less than data.gov.au and arXiv combined.
 
 Note this does **not** retroactively improve any existing run. The 7,378-document
 corpus was collected without OpenAlex and still contains zero of its records;
@@ -152,13 +254,20 @@ environmental ones. **Compensate deliberately at the human synthesis session**,
 and treat a thin Social/Values shortlist as a property of the instrument rather
 than a finding about the world.
 
-### 5. GDELT is unreliable from shared IPs
+### 5. GDELT is unreliable from shared IPs — but behaved perfectly on 2026-08-30
 
 It rate-limits by source IP and drops connections mid-response with no error
-code — a majority of requests failed even at 6 seconds apart. It still returned
-3,183 records over the full run, so it works; it just cannot be relied on for
-any single frame. Failures are logged and cost only the attention component for
-that frame. Nothing to fix; know it when reading `collection_log`.
+code — a majority of requests failed even at 6 seconds apart on 2026-08-29. It
+still returned 3,183 records over that run, so it works; it just cannot be
+relied on for any single frame.
+
+**On the `2026-08-30` run, all 18 GDELT queries succeeded** and returned 2,069
+records — no failures at all. That is one Actions runner on one day, not a fix,
+and the failure mode should still be expected. But it does mean a run with zero
+GDELT failures is achievable, and the 0-failure baseline is not evidence that
+anything was skipped. Failures, when they happen, are logged and cost only the
+attention component for that frame. Nothing to fix; know it when reading
+`collection_log`.
 
 ### 6. PatentsView is off, so there is no patent signal at all
 
@@ -266,6 +375,26 @@ not a replacement.
 
 Append to this. Every entry should say what changed, why, and what moved.
 
+### 2026-08-30 — new baseline corpus (OpenAlex live); no weight changed
+
+**What changed.** Nothing in the config. The *corpus* changed: `scan.yml` ran
+for the first time, from an empty database, with `OPENALEX_API_KEY` set. The
+2026-08-29 corpus was local and no longer exists.
+
+**What moved.** Everything, and none of it is comparable. 7,219 documents
+against 7,780; 15 topics against 14; a different source mix (OpenAlex 581 in,
+GDELT down 3,183 → 2,040). Because emergence, the opportunity index and the
+composite rank are all percentile-ranked *within a run*, a changed population
+changes every headline score whether or not the world moved. Recorded here so
+that a future reader comparing the two shortlists knows not to.
+
+**What is newly known.** The clustering threshold `0.30`, swept against the
+4,195-document topic-forming corpus of 2026-08-29, does not transfer: on this
+corpus the catch-all topic `T0000` holds 1,497 documents — **54% of everything
+assigned to any topic**, against the 10% largest-cluster figure that justified
+0.30. Topic coverage is 38% of the corpus. Re-sweep before trusting any
+cluster-derived number on a corpus this size.
+
 ### 2026-08-29 — clustering threshold 0.18 → 0.30 (hashing backend)
 
 **Why.** Topic labels on the first real run were incoherent
@@ -348,9 +477,12 @@ the following day does not happen.
 
 The pipeline is only as good as what it collects and what it scores against.
 
-1. **Get the API keys.** OpenAlex (issue 3) and PatentsView (issue 6). Half an
-   hour, and it roughly doubles the evidence base.
-2. **Re-run collection** with both live: `python -m src.pipeline --run-id $(date -u +%F)`.
+1. ~~**Get the OpenAlex key.**~~ Done — live and contributing as of 2026-08-30,
+   though throttled by the relevance floor (issue 3). **PatentsView is still
+   unset** (issue 6), so there is no patent signal at all.
+2. ~~**Re-run collection.**~~ Done — the `2026-08-30` baseline. The next
+   collection run should carry the issue 11 and issue 3 fixes, since both change
+   what is collected and both are cheaper to do before more runs accumulate.
 3. **Review the scan frame** (`data/strategy/scan_frame.yaml`) with fresh eyes,
    and if possible with a colleague. It determines what can be found at all.
    Specifically: is anything IPAVentures cares about absent? Are the Social and
@@ -412,18 +544,32 @@ Day 5.** A ranked list nobody has interrogated is not research.
 
 ## Next actions, concretely
 
-For whoever — or whichever Claude instance — picks this up next:
+For whoever — or whichever Claude instance — picks this up next. The first two
+come out of the `2026-08-30` baseline and are both small:
 
-1. `python -m pytest tests/ -q` — expect 195 passing. If not, start there.
-2. Read `docs/method.md` if you have not; it is what the numbers mean.
-3. `python -m src.verify_access` — confirms the OpenAlex and R2 credentials
+1. **Fix issue 11 (Crossref record types).** Filter `type == "peer-review"` in
+   `src/collectors/crossref.py`, add a test with a peer-review fixture, and
+   record it in the calibration log. This is the highest-value change available
+   and it removes two artefacts from the top six.
+2. **Loosen the OpenAlex relevance floor** (issue 3) —
+   `collection.sources.openalex.min_relative_score` from 0.4 toward 0.2 — then
+   re-run collection. The best research source is contributing 8%.
+3. **Re-sweep the clustering threshold** on the new corpus:
+   `python -m src.calibrate threshold --show-labels`. The 0.30 value was
+   calibrated against a corpus that no longer exists, and the catch-all now
+   holds 54% of everything assigned.
+4. `python -m pytest tests/ -q` — expect 195 passing. If not, start there.
+5. Read `docs/method.md` if you have not; it is what the numbers mean.
+6. `python -m src.verify_access` — confirms the OpenAlex and R2 credentials
    still work before a run depends on them. Locally it needs the variables
    exported; in CI the **Verify credentials** workflow is the only thing that
-   can read the repository secrets.
-4. `python -m src.pipeline --run-id $(date -u +%F)` for a fresh full run.
-5. Open `data/outputs/<run_id>/shortlist.md` and read the top five evidence
-   cards **before** looking at any score.
-6. To hand the method to someone else — a colleague, a reviewer, anyone who
+   can read the repository secrets. Note that a *local* full run now starts from
+   an empty database unless you pull the corpus first:
+   `python -m src.storage pull-corpus`.
+7. Open `data/outputs/<run_id>/shortlist.md` and read the top five evidence
+   cards **before** looking at any score. On the baseline run that check is what
+   found both artefacts; nothing else did.
+8. To hand the method to someone else — a colleague, a reviewer, anyone who
    should be able to disagree with it — send
    `data/outputs/<run_id>/horizon-scan-<run_id>.ipynb` rather than the
    shortlist. It shows the run stage by stage and re-derives its numbers, so
@@ -431,8 +577,8 @@ For whoever — or whichever Claude instance — picks this up next:
    did this come from?". Write the answers back into
    `data/outputs/<run_id>/observations.yaml`; they are folded into the notebook
    the next time it is generated.
-7. Work the day plan above from wherever it has got to.
-8. Append to the calibration log whenever you change a number.
+9. Work the day plan above from wherever it has got to.
+10. Append to the calibration log whenever you change a number.
 
 ### Things not to do
 
@@ -451,13 +597,14 @@ For whoever — or whichever Claude instance — picks this up next:
 
 | What | State |
 |---|---|
-| `OPENALEX_API_KEY` | **Set and verified working 2026-08-30** — an authenticated query returned 29,771,915 works. Verified in CI by `verify-access.yml`, the only place the repository secrets can be read. Issue 3 is resolved as of the next collection run |
+| `OPENALEX_API_KEY` | **Set, verified, and now exercised** — 20/20 queries succeeded on the `2026-08-30` run, where every previous run retired the source at the first frame. It contributes only 8% of the corpus; the cause is the relevance floor, not the key (issue 3) |
 | `PATENTSVIEW_API_KEY` | **Not set.** No patent signal (issue 6) |
 | Crossref, arXiv, GDELT, data.gov.au | Working, no keys needed |
-| GitHub Actions | `tests.yml` on push/PR — **first ran 2026-08-30, green.** `scan.yml` weekly Sun 19:00 UTC — **still never run.** Its first run is the one to watch: it is the only one that restores the corpus release, calls live APIs, and publishes a new corpus asset, so it is where an untested workflow would actually cost something |
+| GitHub Actions | `tests.yml` on push/PR — green. `scan.yml` weekly Sun 19:00 UTC — **first ran 2026-08-30 (run 33310810297) and succeeded end to end.** Every step passed: corpus restore (no-op, nothing to restore), 66 min collection, analysis, site build, output commit, corpus release, R2 mirror, artefact upload |
 | GitHub Pages | `docs/` is built by `src.report`; Pages needs enabling in repository settings |
 | Local corpus | `data/bigthink.duckdb`, gitignored, ~10 MB at 7,780 documents |
-| Cloudflare R2 | **Working, verified 2026-08-30.** `storage.r2.enabled: true`, bucket `bigthink-corpus` in the **eu** jurisdiction (`storage.r2.jurisdiction: eu` — it is not reachable from the default endpoint; see issue 10). `scan.yml` mirrors the corpus after each run; the `corpus-*` Release asset stays the source of truth CI restores from |
+| Cloudflare R2 | **Working, and now carrying a real corpus.** Verified 2026-08-30, then exercised for real by the baseline run: `Pushed data/bigthink.duckdb -> r2://bigthink-corpus/bigthink.duckdb`. Bucket `bigthink-corpus` in the **eu** jurisdiction (`storage.r2.jurisdiction: eu` — not reachable from the default endpoint; see issue 10) |
+| Corpus release | **Exists for the first time.** The baseline run published the first `corpus-*` Release asset. Before 2026-08-30 there were none, which is why that run collected from an empty database. This is the state `scan.yml` restores from |
 
 ---
 

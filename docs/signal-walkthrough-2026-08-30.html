@@ -1,0 +1,865 @@
+<title>From Query to Shortlist</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+
+<style>
+/* ============================================================
+   Two registers, encoded in colour AND type:
+     technical → cool ground, violet rules, Plex Sans / Plex Mono
+     plain     → warm ground, orange rule, Newsreader serif
+   Data marks use the validated violet/orange pair (all six
+   checks pass, light and dark).
+   ============================================================ */
+:root {
+  --paper:        #FAFAF7;
+  --surface:      #FFFFFF;
+  --surface-cool: #F1F2F7;
+  --surface-warm: #FBF4EA;
+  --ink:          #1A1D27;
+  --ink-soft:     #4E5261;
+  --ink-faint:    #7C8092;
+  --rule:         #DEDFE7;
+  --rule-soft:    #EAEBF0;
+
+  --accent:       #4a3aa7;
+  --accent-quiet: #6B5CC4;
+  --flag:         #eb6834;
+  --flag-quiet:   #C2551F;
+
+  --good:         #1F6B47;
+  --bad:          #A33520;
+
+  --measure: 68ch;
+  --s1: .35rem; --s2: .7rem; --s3: 1.1rem; --s4: 1.75rem;
+  --s5: 2.75rem; --s6: 4rem; --s7: 6rem;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper:        #14151B;
+    --surface:      #1A1C24;
+    --surface-cool: #1E2130;
+    --surface-warm: #251E17;
+    --ink:          #E9EAF1;
+    --ink-soft:     #B2B6C6;
+    --ink-faint:    #838899;
+    --rule:         #2C3040;
+    --rule-soft:    #232734;
+
+    --accent:       #9085e9;
+    --accent-quiet: #A79EEF;
+    --flag:         #d95926;
+    --flag-quiet:   #E0764A;
+
+    --good:         #5FB98B;
+    --bad:          #E0806A;
+  }
+}
+:root[data-theme="dark"] {
+  --paper:        #14151B;
+  --surface:      #1A1C24;
+  --surface-cool: #1E2130;
+  --surface-warm: #251E17;
+  --ink:          #E9EAF1;
+  --ink-soft:     #B2B6C6;
+  --ink-faint:    #838899;
+  --rule:         #2C3040;
+  --rule-soft:    #232734;
+
+  --accent:       #9085e9;
+  --accent-quiet: #A79EEF;
+  --flag:         #d95926;
+  --flag-quiet:   #E0764A;
+
+  --good:         #5FB98B;
+  --bad:          #E0806A;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 16.5px;
+  line-height: 1.62;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 82rem; margin: 0 auto; padding: 0 clamp(1rem, 4vw, 3rem) var(--s7); }
+.col  { max-width: var(--measure); }
+
+h1, h2, h3, h4 {
+  font-family: Newsreader, ui-serif, Georgia, serif;
+  font-weight: 600; line-height: 1.15; text-wrap: balance; margin: 0;
+}
+p { margin: 0; }
+
+.eyebrow {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: .7rem; letter-spacing: .13em; text-transform: uppercase;
+  color: var(--ink-faint); font-weight: 500;
+}
+
+/* ---------- masthead ---------- */
+.masthead {
+  border-bottom: 1px solid var(--rule);
+  padding: clamp(3rem, 8vw, 5.5rem) 0 var(--s5);
+  display: flex; flex-direction: column; gap: var(--s3);
+}
+.masthead h1 {
+  font-size: clamp(2.6rem, 7vw, 4.4rem);
+  letter-spacing: -.022em; max-width: 16ch;
+}
+.masthead .standfirst {
+  font-family: Newsreader, ui-serif, Georgia, serif;
+  font-size: clamp(1.1rem, 2.2vw, 1.3rem);
+  color: var(--ink-soft); max-width: 54ch; line-height: 1.5;
+}
+.runline {
+  display: flex; flex-wrap: wrap; gap: var(--s1) var(--s3);
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: .76rem; color: var(--ink-faint); margin-top: var(--s2);
+}
+.runline b { color: var(--ink-soft); font-weight: 500; }
+
+/* ---------- stat row ---------- */
+.stats {
+  display: grid; gap: 1px; background: var(--rule);
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  border: 1px solid var(--rule); margin: var(--s5) 0 0;
+}
+.stat { background: var(--surface); padding: var(--s3) var(--s3) var(--s3); }
+.stat .n {
+  font-family: Newsreader, ui-serif, Georgia, serif;
+  font-size: 2rem; line-height: 1; font-variant-numeric: tabular-nums;
+  display: block; margin-bottom: var(--s1);
+}
+.stat .k { font-size: .78rem; color: var(--ink-faint); line-height: 1.35; display: block; }
+.stat.hl .n { color: var(--accent); }
+
+/* ---------- steps ---------- */
+.step { padding-top: var(--s6); }
+.step-head { display: flex; gap: var(--s3); align-items: baseline; margin-bottom: var(--s3); }
+.step-num {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: .78rem; font-weight: 500; color: var(--flag);
+  border: 1px solid var(--flag); border-radius: 2px;
+  padding: .18rem .45rem; flex: none; letter-spacing: .04em;
+}
+.step-head h2 { font-size: clamp(1.55rem, 3.4vw, 2.1rem); letter-spacing: -.014em; }
+.step > .col > * + * { margin-top: var(--s3); }
+
+h3 { font-size: 1.22rem; margin-top: var(--s4) !important; }
+h4 { font-family: "IBM Plex Sans", sans-serif; font-size: .95rem; font-weight: 600; }
+
+a { color: var(--accent); text-underline-offset: 2px; text-decoration-thickness: 1px; }
+
+/* ---------- the plain-language register ---------- */
+.plain {
+  background: var(--surface-warm);
+  border-left: 3px solid var(--flag);
+  padding: var(--s3) var(--s4);
+  font-family: Newsreader, ui-serif, Georgia, serif;
+  font-size: 1.09rem; line-height: 1.55; color: var(--ink);
+  max-width: 64ch;
+}
+.plain .lbl {
+  display: block; font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: .66rem; letter-spacing: .13em; text-transform: uppercase;
+  color: var(--flag-quiet); margin-bottom: var(--s1); font-weight: 500;
+}
+.plain p + p { margin-top: var(--s2); }
+
+/* ---------- technical inset ---------- */
+.tech {
+  background: var(--surface-cool);
+  border: 1px solid var(--rule);
+  padding: var(--s3) var(--s4);
+  font-size: .93rem;
+}
+.tech .lbl {
+  display: block; font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: .66rem; letter-spacing: .13em; text-transform: uppercase;
+  color: var(--accent); margin-bottom: var(--s2); font-weight: 500;
+}
+.formula {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: .86rem; line-height: 1.75; color: var(--ink);
+  overflow-x: auto; white-space: pre; padding-bottom: var(--s1);
+}
+code, .mono { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: .87em; }
+code { background: var(--surface-cool); padding: .08em .3em; border-radius: 2px; }
+
+/* ---------- tables ---------- */
+.scroll { overflow-x: auto; border: 1px solid var(--rule); background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: .86rem; }
+caption {
+  caption-side: top; text-align: left; padding: var(--s2) var(--s3);
+  font-size: .78rem; color: var(--ink-faint); border-bottom: 1px solid var(--rule-soft);
+}
+th, td { padding: .42rem var(--s3); text-align: left; white-space: nowrap; }
+th {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: .68rem; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--ink-faint); font-weight: 500; border-bottom: 1px solid var(--rule);
+}
+td { border-bottom: 1px solid var(--rule-soft); font-variant-numeric: tabular-nums; }
+tbody tr:last-child td { border-bottom: 0; }
+td.num, th.num { text-align: right; }
+td.name { white-space: normal; min-width: 15rem; }
+tr.flagged td { background: color-mix(in srgb, var(--flag) 9%, transparent); }
+tr.hero   td { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.tag {
+  font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: .66rem;
+  padding: .1rem .35rem; border-radius: 2px; letter-spacing: .04em;
+  border: 1px solid currentColor;
+}
+.tag.bad  { color: var(--bad); }
+.tag.good { color: var(--good); }
+
+/* ---------- charts ---------- */
+figure { margin: 0; background: var(--surface); border: 1px solid var(--rule); padding: var(--s3) var(--s4) var(--s3); }
+figcaption { font-size: .8rem; color: var(--ink-faint); margin-top: var(--s2); line-height: 1.45; }
+.chart-title { font-size: .95rem; font-weight: 600; margin-bottom: var(--s1); }
+.chart-sub { font-size: .78rem; color: var(--ink-faint); margin-bottom: var(--s3); }
+.bars { display: flex; align-items: flex-end; gap: 4px; height: 168px; padding-top: 1.25rem; }
+.bcol { flex: 1; display: flex; align-items: flex-end; height: 100%; position: relative; cursor: default; }
+.bar { width: 100%; background: var(--accent); border-radius: 3px 3px 0 0; min-height: 2px; transition: opacity .12s; }
+.bcol.burst .bar { background: var(--flag); }
+.bcol:hover .bar { opacity: .75; }
+.blab {
+  font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: .64rem;
+  color: var(--ink-faint); font-variant-numeric: tabular-nums;
+}
+.bcol.burst .blab { color: var(--flag-quiet); font-weight: 500; }
+.bval {
+  position: absolute; top: -1.2rem; left: 0; right: 0; text-align: center;
+  font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: .68rem;
+  font-variant-numeric: tabular-nums; color: var(--flag-quiet); font-weight: 500;
+}
+.axis { border-top: 1px solid var(--rule); display: flex; gap: 4px; padding-top: var(--s1); }
+.axis .bcol { height: auto; justify-content: center; }
+.axis .blab { width: 100%; text-align: center; }
+.legend { display: flex; gap: var(--s3); flex-wrap: wrap; font-size: .76rem; color: var(--ink-soft); margin-top: var(--s2); }
+.legend span { display: inline-flex; align-items: center; gap: .35rem; }
+.sw { width: 11px; height: 11px; border-radius: 2px; display: inline-block; }
+
+#tip {
+  position: fixed; z-index: 40; pointer-events: none; opacity: 0;
+  transition: opacity .1s; background: var(--ink); color: var(--paper);
+  font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: .72rem;
+  padding: .3rem .5rem; border-radius: 3px; white-space: nowrap;
+}
+
+/* ---------- misc ---------- */
+.lede { font-size: 1.06rem; color: var(--ink-soft); }
+.chain {
+  display: flex; flex-wrap: wrap; gap: var(--s1); align-items: center;
+  font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: .74rem;
+}
+.chain i { font-style: normal; border: 1px solid var(--rule); background: var(--surface); padding: .25rem .5rem; border-radius: 2px; }
+.chain u { text-decoration: none; color: var(--ink-faint); }
+ul, ol { margin: 0; padding-left: 1.25rem; }
+li + li { margin-top: var(--s2); }
+hr { border: 0; border-top: 1px solid var(--rule); margin: var(--s6) 0 0; }
+.footer { padding-top: var(--s5); color: var(--ink-faint); font-size: .84rem; }
+.verify { display: grid; gap: var(--s2); }
+.vrow { display: flex; gap: var(--s3); align-items: baseline; font-size: .88rem; border-bottom: 1px solid var(--rule-soft); padding-bottom: var(--s2); }
+.vrow .ok { color: var(--good); font-family: "IBM Plex Mono", monospace; font-size: .7rem; font-weight: 500; flex: none; letter-spacing: .06em; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div id="tip" role="status" aria-live="off"></div>
+
+<div class="wrap">
+
+<header class="masthead">
+  <span class="eyebrow">IPAVentures horizon scan · methodological walkthrough</span>
+  <h1>From Query to Shortlist</h1>
+  <p class="standfirst">How the baseline scan of 30 August 2026 turned twenty search queries into 7,219 documents, fifteen topics and one ranked shortlist — traced stage by stage, including the two signals that turned out not to be signals at all.</p>
+  <div class="runline">
+    <span>run <b>2026-08-30</b></span>
+    <span>corpus <b>7,219 docs</b> · 2018–2026</span>
+    <span>backend <b>hashing</b></span>
+    <span>collection <b>66 min</b></span>
+    <span>workflow run <b>33310810297</b></span>
+  </div>
+</header>
+
+<div class="stats">
+  <div class="stat hl"><span class="n">20/20</span><span class="k">OpenAlex queries succeeded — previously retired at the first frame</span></div>
+  <div class="stat"><span class="n">0</span><span class="k">failed or skipped source/frame pairs</span></div>
+  <div class="stat"><span class="n">15</span><span class="k">topics survived filtering</span></div>
+  <div class="stat"><span class="n">38%</span><span class="k">of documents attached to any topic</span></div>
+  <div class="stat"><span class="n">2</span><span class="k">shortlisted topics that are artefacts</span></div>
+</div>
+
+<!-- ============================================================ -->
+<section class="step">
+  <div class="col">
+    <p class="lede">This report answers one question: <em>where did each of these signals come from?</em> Not "what does the pipeline do in general" — that is <code>docs/method.md</code> — but how these specific fifteen topics were produced from these specific documents, and which of them deserve to be believed.</p>
+
+    <div class="plain">
+      <span class="lbl">How to read this</span>
+      <p>Every technical passage is followed by a plain-language box like this one. If you skip the technical parts entirely and read only these, you will still get an accurate picture of what happened and what it is worth.</p>
+      <p>The short version: a computer read about seven thousand research papers, news articles and government datasets, grouped them by what they were about, worked out which groups were growing unusually fast, and then checked each group against what IP Australia has actually said it plans to do. It produced a ranked list. Two entries near the top of that list are mistakes, and this report shows exactly how they got there — because that is the most useful thing it can show you.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section class="step">
+  <div class="step-head"><span class="step-num">CONTEXT</span><h2>Why this run is a baseline and not a comparison</h2></div>
+  <div class="col">
+    <p>Three things were true for the first time on 30 August 2026.</p>
+    <ul>
+      <li><strong>OpenAlex contributed data.</strong> OpenAlex meters its free tier in dollars per day per IP address, and a shared cloud runner has almost always spent that budget already. Every previous run retired the source at the first query and collected nothing from it. With an API key configured, all twenty queries succeeded.</li>
+      <li><strong>The corpus was persisted.</strong> The scheduled workflow had never completed before, so no corpus had ever been published. This run wrote the first one — as a GitHub release, and mirrored to Cloudflare R2 at <code>r2://bigthink-corpus/bigthink.duckdb</code>.</li>
+      <li><strong>The database started empty.</strong> Because there was no corpus to restore, this run collected from zero rather than adding to previous work.</li>
+    </ul>
+
+    <div class="tech">
+      <span class="lbl">Why the previous shortlist cannot be used as a comparison</span>
+      <p>Almost every headline number in this pipeline is <em>percentile-ranked within its own run</em> before it is used. The emergence score, the opportunity index and the composite rank all measure a topic's position against the other topics collected at the same time. Change the corpus and you change the population; change the population and every score moves, whether or not the world did.</p>
+    </div>
+
+    <div class="plain">
+      <span class="lbl">In plain terms</span>
+      <p>The scores are marks on a curve, not marks out of ten. A topic scoring 0.84 did not clear some fixed bar — it came top of <em>this</em> class. A run full of dull topics still produces one scoring near the top.</p>
+      <p>So the sensible way to read the previous run against this one is as two separate photographs, not as before-and-after of the same thing.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section class="step">
+  <div class="step-head"><span class="step-num">STEP 0</span><h2>Encoding what IP Australia says it will do</h2></div>
+  <div class="col">
+    <p>Before anything is searched for, the agency's own strategy is turned into a set of reference points that topics can later be measured against. Thirty-four of them, from four hand-curated YAML files.</p>
+
+    <div class="scroll">
+      <table>
+        <caption>The reference set every strategic-fit and asset-leverage score is measured against</caption>
+        <thead><tr><th>Reference type</th><th class="num">Count</th><th>Source</th></tr></thead>
+        <tbody>
+          <tr><td>Objective</td><td class="num">9</td><td>Strategic Corporate Plan 2026-27</td></tr>
+          <tr><td>Initiative</td><td class="num">6</td><td>Corporate Plan strategic initiatives (SI-1 … SI-6)</td></tr>
+          <tr><td>Critical technology</td><td class="num">7</td><td>DISR List of Critical Technologies</td></tr>
+          <tr><td>Asset</td><td class="num">12</td><td>What IP Australia would bring to a venture</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>Each reference carries two things: a paragraph of text, which becomes a vector, and a hand-written list of terms, which is matched literally. Both are needed. An embedding catches a topic that means the same thing in different words; the term list catches a topic that names the thing exactly — “geographical indications” must score against initiative SI-1 on the strength of the phrase, and embedding a whole paragraph can dilute that to nothing.</p>
+
+    <div class="plain">
+      <span class="lbl">In plain terms</span>
+      <p>This is the yardstick. Everything the scan later calls “on strategy” means “close to one of these thirty-four things”.</p>
+      <p>That has a consequence worth holding onto: <strong>a trend the strategy does not describe cannot score highly on fit, however important it is.</strong> That is a property of the ruler, not a finding about the world.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section class="step">
+  <div class="step-head"><span class="step-num">STEP 1</span><h2>Asking twenty questions, and what came back</h2></div>
+  <div class="col">
+    <p>The scan frame — <code>data/strategy/scan_frame.yaml</code> — defines twenty subject areas, each tagged with a STEEPV category and carrying one seed query per source. This file is the single biggest determinant of the whole output, because <strong>the scan cannot find what the frame does not ask for.</strong></p>
+
+    <div class="scroll">
+      <table>
+        <caption>What each source contributed. “Fetched” counts records returned; “documents” counts what survived deduplication on a stable identifier.</caption>
+        <thead><tr><th>Source</th><th>What it measures</th><th class="num">Queries</th><th class="num">Fetched</th><th class="num">Documents</th><th class="num">Share</th></tr></thead>
+        <tbody>
+          <tr><td>Crossref</td><td>Research and grey literature</td><td class="num">13</td><td class="num">2,572</td><td class="num">2,432</td><td class="num">34%</td></tr>
+          <tr><td>GDELT</td><td>News attention and tone</td><td class="num">18</td><td class="num">2,069</td><td class="num">2,040</td><td class="num">28%</td></tr>
+          <tr><td>arXiv</td><td>Preprints — the fastest signal</td><td class="num">9</td><td class="num">2,270</td><td class="num">2,018</td><td class="num">28%</td></tr>
+          <tr class="hero"><td>OpenAlex</td><td>Research volume, citations, institutions</td><td class="num">20</td><td class="num">592</td><td class="num">581</td><td class="num">8%</td></tr>
+          <tr><td>data.gov.au</td><td>Policy salience, agency datasets</td><td class="num">3</td><td class="num">150</td><td class="num">148</td><td class="num">2%</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>Collection took 66 minutes and recorded <strong>zero failed or skipped pairs</strong> — every query against every source returned successfully. That has not happened before on this project; GDELT in particular rate-limits by IP and drops connections mid-response, and previous runs logged a majority of its requests as failures.</p>
+
+    <h3>The OpenAlex result needs reading carefully</h3>
+    <p>OpenAlex is live, and that is a real change: twenty successful queries where previously there were none. But it contributed only 581 documents, 8% of the corpus — far less than its configuration allows.</p>
+
+    <div class="tech">
+      <span class="lbl">Where the 581 comes from</span>
+      <p>The collector is configured for up to 5 pages of 200 records per query — a ceiling of 20,000 records. It returned 592, an average of <strong>29.6 per query</strong>. Since a single page holds 200, <em>no query reached even the end of its first page.</em></p>
+      <p>The cut is not the daily budget: a budget failure raises a permanent error and retires the source, and all twenty queries logged <code>success</code>. It is the relevance floor. <code>min_relative_score: 0.4</code> makes the collector stop at the first result scoring below 40% of that query's own top relevance score, and OpenAlex's relevance scores decay steeply.</p>
+    </div>
+
+    <div class="plain">
+      <span class="lbl">In plain terms</span>
+      <p>The key works. The tap is open. But there is a filter on it set tight enough that only the first few dozen results per question get through, and it closes as soon as one result looks much less relevant than the best one.</p>
+      <p>This is worth adjusting before the next run, and it is a one-line change. It is also <em>not</em> a bug — the filter exists because a keyword search returns a long tail of loosely-related material. The question is where to set it, and 0.4 is stricter against OpenAlex's scoring than it is against Crossref's.</p>
+    </div>
+
+    <h3>Where the evidence actually is</h3>
+    <p>The corpus is not evenly spread across the twenty frames, and the imbalance is systematic rather than random.</p>
+
+    <div class="scroll">
+      <table>
+        <caption>Documents by STEEPV category. The distribution mirrors where free structured data exists, not where opportunities are.</caption>
+        <thead><tr><th>Category</th><th class="num">Documents</th><th class="num">Share</th><th>Frames</th></tr></thead>
+        <tbody>
+          <tr><td>Technological</td><td class="num">3,099</td><td class="num">43%</td><td>9</td></tr>
+          <tr><td>Political</td><td class="num">1,433</td><td class="num">20%</td><td>3</td></tr>
+          <tr><td>Economic</td><td class="num">1,004</td><td class="num">14%</td><td>3</td></tr>
+          <tr><td>Legal</td><td class="num">776</td><td class="num">11%</td><td>2</td></tr>
+          <tr><td>Values</td><td class="num">424</td><td class="num">6%</td><td>1</td></tr>
+          <tr><td>Social</td><td class="num">334</td><td class="num">5%</td><td>1</td></tr>
+          <tr><td>Environmental</td><td class="num">149</td><td class="num">2%</td><td>1</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="plain">
+      <span class="lbl">In plain terms</span>
+      <p>Nearly half the evidence is about technology, and almost none is about social or environmental change. That is because free, machine-readable data about research and patents is abundant, while data about shifting public values is not.</p>
+      <p>So a thin showing for social or values-based trends in the shortlist is a fact about the instrument, not about the world. Compensate for it deliberately in the human session; do not read it as an answer.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section class="step">
+  <div class="step-head"><span class="step-num">STEP 2</span><h2>Turning seven thousand documents into fifteen topics</h2></div>
+  <div class="col">
+    <p>Every document's title and abstract is converted into a 2,048-number vector, and documents whose vectors point in similar directions are grouped together.</p>
+
+    <div class="tech">
+      <span class="lbl">The mechanics</span>
+      <p><strong>Embedding.</strong> The <code>hashing</code> backend — character n-gram hashing with TF-IDF weighting. It needs no model download, which is what lets the pipeline run anywhere, but it matches <em>vocabulary</em> rather than <em>meaning</em>. Two papers saying the same thing in different words will not be recognised as related.</p>
+      <p><strong>Clustering.</strong> Three passes: a leader pass assigning each document to the nearest cluster centre above cosine <code>0.30</code>; a reassignment pass that removes the order-dependence of the first; and a merge pass for near-duplicate clusters. A document matching nothing is <em>dropped</em>, not forced into the nearest cluster, which would corrupt that cluster's centre.</p>
+      <p><strong>Filtering.</strong> A cluster must hold at least 8 documents and at least 3 distinct terms. The second test exists because a run of dataset titles once produced a “topic” whose entire vocabulary was the word <em>index</em>.</p>
+      <p><strong>News is held out.</strong> GDELT's 70-character multilingual headlines would dominate clustering, so they take no part in forming topics and are attached afterwards, at a looser threshold, once the centres are fixed.</p>
+    </div>
+
+    <div class="plain">
+      <span class="lbl">In plain terms</span>
+      <p>Imagine every document as a point in a very large space, positioned by the words it uses. Clustering draws rings around points that sit close together, and each ring becomes a topic. Points that fall inside no ring are set aside.</p>
+      <p>The important limitation: this version measures <em>shared words</em>, not shared ideas. A paper on "automated decision-making" and one on "algorithmic administration" would land far apart despite meaning nearly the same thing.</p>
+    </div>
+
+    <h3>Only 38% of the corpus made it into a topic</h3>
+    <p>2,760 of 7,219 documents were assigned to one of the fifteen topics. The other 4,459 did not cluster tightly enough under a vocabulary-matching backend and appear in no score anywhere in this report.</p>
+    <p>And the assignment that did happen is very unevenly distributed. One topic — <code>T0000</code>, labelled <em>image / patent / learning / watermark</em> — holds 1,497 documents, which is <strong>54% of everything assigned</strong>.</p>
+
+    <div class="tech">
+      <span class="lbl">How the method handles its own catch-all</span>
+      <p>T0000 scores novelty <code>0.045</code> and coherence <code>0.337</code> — the lowest of both in the run. Novelty is measured as distance from the centre of the early corpus, so a score near zero means the topic <em>is</em> the corpus average: it has no distinct position. Its defining terms confirm it: <span class="mono">image, patent, learning, watermark, watermarking, system, ai, dataset, training, quantum</span> — watermarking and quantum computing are not one subject.</p>
+      <p>It ranked 15th of 15. The scoring demoted it without anyone intervening.</p>
+    </div>
+
+    <div class="plain">
+      <span class="lbl">In plain terms</span>
+      <p>There is always a bin labelled "miscellaneous", and here it is enormous — over half of everything that got sorted. The good news is that the method noticed: a group that is about everything is about nothing, and it landed last.</p>
+      <p>The bad news is that a very large catch-all means the clustering threshold is no longer well-tuned for this corpus. It was calibrated against a different, smaller collection. This is the clearest thing to re-tune before the next run.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section class="step">
+  <div class="step-head"><span class="step-num">STEP 3</span><h2>Deciding which topics are <em>emerging</em></h2></div>
+  <div class="col">
+    <p>A topic being large is not interesting. A topic <em>moving</em> is. Four separate measurements establish movement, and then five attributes are combined into one emergence score.</p>
+
+    <h3>The time series, and what is excluded from it</h3>
+    <p>Each topic gets a count of documents per year, zero-filled across the whole 2018–2026 window — a topic absent until 2024 must show zeros for 2018–2023, or its growth is measured from a starting point that does not exist.</p>
+
+    <div class="tech">
+      <span class="lbl">Why news is excluded from the timeline</span>
+      <p>GDELT is collected over a rolling 24-month window, so every one of its 2,040 documents carries a 2026 date. Counted in the yearly totals it would put more than a third of the corpus into a single slice, making every earlier year look sparse and turning flat topics into ones apparently "bursting" for eight consecutive years.</p>
+      <p>A source whose coverage does not span the analysis window cannot define a trend within it. News still counts toward attention and document totals — which is what it is actually evidence of.</p>
+    </div>
+
+    <h3>Burst detection</h3>
+    <p>Kleinberg's two-state automaton asks, for each year, whether the topic's share of that year's documents is better explained by its normal rate or by an elevated one, with a cost for switching between them. The lowest-cost sequence of states is found exactly, by Viterbi.</p>
+
+    <div class="plain">
+      <span class="lbl">In plain terms</span>
+      <p>The crucial property is that <strong>a topic growing at the same rate as everything around it does not count as bursting.</strong> Without that, every subject in a growing collection would look like it was taking off.</p>
+      <p>So a burst means: this grew faster than its surroundings, in this particular year, by enough that the maths prefers to call it a different state.</p>
+    </div>
+
+    <h3>Growth curve and Three Horizons</h3>
+    <p>A logistic S-curve is fitted to the cumulative counts by direct least squares over a grid of candidate shapes. The fitted position along that curve at the final year is the topic's <em>maturity</em>, and maturity — not age — decides its Three Horizons band.</p>
+
+    <div class="tech">
+      <span class="lbl">A trap the code deliberately avoids</span>
+      <p>The textbook way to fit a logistic curve is to linearise it. It fails here. For a series still in its exponential phase, the linearised expression is near-straight for <em>any</em> sufficiently large ceiling, so maximising straightness picks the smallest ceiling and reports a young, fast-growing technology as <em>saturated</em>.</p>
+      <p>That inverts the horizon band for precisely the technologies a horizon scan exists to find. Fitting the curve itself has no such degeneracy, and a regression test guards it.</p>
+    </div>
+
+    <h3>The five attributes</h3>
+    <p>Rotolo, Hicks &amp; Martin (2015) define emergence through five attributes. Each becomes one computable indicator, and the five are combined with fixed weights.</p>
+
+    <div class="scroll">
+      <table>
+        <caption>The emergence score. Weights are a considered judgement from the literature — not fitted to any known outcome.</caption>
+        <thead><tr><th>Attribute</th><th>How it is measured</th><th class="num">Weight</th></tr></thead>
+        <tbody>
+          <tr><td>Novelty</td><td class="name">Cosine distance from the early-corpus centre — how far this sits from where the field already was</td><td class="num">0.25</td></tr>
+          <tr><td>Growth</td><td class="name">Annual growth rate blended with Kleinberg burst intensity</td><td class="num">0.30</td></tr>
+          <tr><td>Coherence</td><td class="name">How tightly the documents cluster around their own centre</td><td class="num">0.15</td></tr>
+          <tr><td>Impact</td><td class="name">Citation percentile, computed <em>within</em> each source</td><td class="num">0.20</td></tr>
+          <tr><td>Uncertainty</td><td class="name">Spread of institutions and evidence types working on it</td><td class="num">0.10</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="tech">
+      <span class="lbl">Two details that change results materially</span>
+      <p><strong>Impact is ranked within source.</strong> arXiv reports no citation counts at all. Ranked globally, every preprint would sit at the bottom and the fastest-moving evidence in the corpus would be systematically penalised. Where a source reports no citation variation whatsoever, its documents get a neutral 0.5 rather than a confident wrong answer.</p>
+      <p><strong>Attributes are percentile-ranked before weighting.</strong> The five have very different natural ranges — novelty spans roughly 0.05–0.88 here while growth spans 0.00–0.34. A plain weighted sum of raw values is dominated by whichever attribute happens to be widest, so the configured weights would describe something other than what the code does.</p>
+      <div class="formula">emergence = 0.25·rank(novelty) + 0.30·rank(growth) + 0.15·rank(coherence)
+          + 0.20·rank(impact) + 0.10·rank(uncertainty)</div>
+    </div>
+
+    <div class="plain">
+      <span class="lbl">In plain terms</span>
+      <p>Five different questions get asked about each topic — is it new? is it growing? is it one clear subject? are people citing it? are lots of different organisations involved? — and each topic is placed in order against the others on each question separately, before the five orderings are blended.</p>
+      <p>Ranking each question separately is what makes the stated weights honest. Otherwise whichever question happened to produce the widest spread of raw numbers would quietly dominate everything.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section class="step">
+  <div class="step-head"><span class="step-num">STEP 4</span><h2>Deciding which emerging topics matter to <em>IP Australia</em></h2></div>
+  <div class="col">
+    <p>Two scores, against the Step 0 reference set. Each blends an embedding similarity with a literal term-overlap term, and each takes the score of the topic's single <em>best-matching</em> reference rather than an average across all of them — a trend speaking directly to one objective is a strong fit, and averaging it against eight unrelated objectives would bury it.</p>
+
+    <div class="tech">
+      <span class="lbl">The two axes</span>
+      <div class="formula">strategic fit  = 0.7·cosine + 0.3·lexical    (against objectives and initiatives)
+asset leverage = 0.6·cosine + 0.4·lexical    (against the asset inventory)</div>
+      <p>Each is multiplied by the reference's own priority weight — objectives 4.1 and 4.2 and initiative SI-3 carry 1.3, objective 3.2 carries 0.6 — so the strategy's own emphasis flows through. A DISR critical-technology match adds a fixed bonus, and is binary because the DISR list is a policy designation: a topic either falls in a national-interest field or it does not.</p>
+    </div>
+
+    <div class="plain">
+      <span class="lbl">In plain terms</span>
+      <p><strong>Strategic fit</strong> asks: has the agency already said it cares about this? <strong>Asset leverage</strong> asks: could the agency actually do something about it that others could not?</p>
+      <p>The second is the one that separates an interesting trend from a viable venture. A trend everybody can see and nobody has an advantage in is not an opportunity for anyone in particular.</p>
+    </div>
+
+    <h3>What both axes actually did this run</h3>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Axis</th><th class="num">Range</th><th class="num">Median</th><th class="num">Mean</th><th>Reading</th></tr></thead>
+        <tbody>
+          <tr><td>Strategic fit</td><td class="num">0.036 – 0.318</td><td class="num">0.086</td><td class="num">0.110</td><td class="name">Usable. Top value is 9× the bottom.</td></tr>
+          <tr class="flagged"><td>Asset leverage</td><td class="num">0.030 – 0.101</td><td class="num">0.059</td><td class="num">0.062</td><td class="name">Compressed — barely discriminates.</td></tr>
+          <tr><td>DISR matches</td><td class="num">0 of 15</td><td class="num">—</td><td class="num">—</td><td class="name">No topic cleared the 0.25 threshold.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="plain">
+      <span class="lbl">In plain terms — and this one matters</span>
+      <p>The asset-leverage axis spans a very narrow band, which means it is barely distinguishing between topics. But because scores are converted to rankings before being combined, it still contributes its full configured 25% of the final order.</p>
+      <p>So a quarter of the ranking is being driven by an axis whose underlying differences are tiny. Small gaps on this axis should not be treated as meaningful. The cause is the vocabulary-matching embedding backend: a topic's terms and a 60-word asset description share almost no exact words, so only the literal term list carries any signal.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section class="step">
+  <div class="step-head"><span class="step-num">STEP 5</span><h2>The opportunity index, and why it is kept out of the ranking</h2></div>
+  <div class="col">
+    <p>A composite of four measures, percentile-ranked within the run and combined. It is <strong>not a market size, not a dollar figure, and cannot be converted into one.</strong> It answers only: of two topics in this run, which shows more of the signals that usually accompany a large opportunity?</p>
+
+    <div class="tech">
+      <span class="lbl">Weight redistribution, visible</span>
+      <p>The index is configured with five components. <code>patent_activity</code> had no data — PatentsView requires an API key that is not set — so its 15% was redistributed proportionally across the other four rather than being scored as zero:</p>
+      <div class="formula">configured              →  effective (patent_activity omitted)
+research_growth  0.30   →  0.3529
+attention        0.25   →  0.2941
+policy_salience  0.20   →  0.2353
+attention_tone   0.10   →  0.1176
+patent_activity  0.15   →  —</div>
+      <p>Without redistribution, disabling a source would silently shrink every topic's index by 15% and the ranking would look unchanged while measuring something different.</p>
+      <p>Two topics — <code>T0014</code> and <code>T0013</code>, at 10 and 14 documents — fall below the 15-document floor and carry <em>no index at all</em>. They are suppressed rather than scored zero: an unmeasurable quantity and a low one are different claims.</p>
+    </div>
+
+    <div class="plain">
+      <span class="lbl">In plain terms</span>
+      <p>There is no patent data in this run at all. For an IP office's horizon scan that is a real gap — patents are the lagging confirmation half of the picture — and it is worth stating in any briefing rather than quoting the configured weights as though all five components were present.</p>
+      <p>The index is deliberately left out of the headline ranking. It is the least well-founded number in the pipeline, and folding it into the order everyone reads first would launder that weakness.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section class="step">
+  <div class="step-head"><span class="step-num">STEP 6</span><h2>The ranking</h2></div>
+  <div class="col">
+    <div class="tech">
+      <span class="lbl">The composite</span>
+      <div class="formula">composite = 0.40·rank(emergence) + 0.35·rank(strategic fit) + 0.25·rank(asset leverage)</div>
+      <p>Three axes, each percentile-ranked across the fifteen topics before weighting. The opportunity index is not among them.</p>
+    </div>
+
+    <div class="scroll">
+      <table>
+        <caption>The published shortlist, 2026-08-30. Highlighted rows are traced in full below.</caption>
+        <thead><tr>
+          <th class="num">#</th><th>Topic</th><th class="num">Docs</th><th>H</th><th>Signal</th>
+          <th class="num">Emrg</th><th class="num">Fit</th><th class="num">Lev</th><th class="num">Index</th><th class="num">Composite</th>
+        </tr></thead>
+        <tbody>
+          <tr class="hero"><td class="num">1</td><td class="name">artificial / intelligence / patent / examination</td><td class="num">129</td><td>H2</td><td>strong</td><td class="num">0.582</td><td class="num">0.191</td><td class="num">0.098</td><td class="num">0.613</td><td class="num">0.900</td></tr>
+          <tr class="flagged"><td class="num">2</td><td class="name">arc additive / wire arc / additive manufacturing <span class="tag bad">artefact</span></td><td class="num">27</td><td>H1</td><td>weak</td><td class="num">0.843</td><td class="num">0.067</td><td class="num">0.069</td><td class="num">0.618</td><td class="num">0.654</td></tr>
+          <tr><td class="num">3</td><td class="name">automated decision-making / administrative law</td><td class="num">46</td><td>H1</td><td>strong</td><td class="num">0.671</td><td class="num">0.107</td><td class="num">0.054</td><td class="num">0.410</td><td class="num">0.643</td></tr>
+          <tr><td class="num">4</td><td class="name">prior art / patent / search / retrieval</td><td class="num">66</td><td>H2</td><td>strong</td><td class="num">0.557</td><td class="num">0.051</td><td class="num">0.101</td><td class="num">0.506</td><td class="num">0.586</td></tr>
+          <tr><td class="num">5</td><td class="name">genetic / resource / access / pgrfa</td><td class="num">10</td><td>H1</td><td>noise</td><td class="num">0.500</td><td class="num">0.114</td><td class="num">0.038</td><td class="num">—</td><td class="num">0.518</td></tr>
+          <tr class="flagged"><td class="num">6</td><td class="name">delivery / service / government / local <span class="tag bad">artefact</span></td><td class="num">142</td><td>H1</td><td>strong</td><td class="num">0.421</td><td class="num">0.124</td><td class="num">0.059</td><td class="num">0.689</td><td class="num">0.489</td></tr>
+          <tr><td class="num">7</td><td class="name">corporate / governance / ip asset / reporting</td><td class="num">24</td><td>H1</td><td>noise</td><td class="num">0.464</td><td class="num">0.076</td><td class="num">0.064</td><td class="num">0.567</td><td class="num">0.482</td></tr>
+          <tr><td class="num">8</td><td class="name">human right / indigenous / intellectual property</td><td class="num">19</td><td>H1</td><td>noise</td><td class="num">0.475</td><td class="num">0.070</td><td class="num">0.064</td><td class="num">0.515</td><td class="num">0.468</td></tr>
+          <tr><td class="num">9</td><td class="name">geographical / indication / trade / product</td><td class="num">124</td><td>H2</td><td>latent</td><td class="num">0.396</td><td class="num">0.318</td><td class="num">0.052</td><td class="num">0.456</td><td class="num">0.461</td></tr>
+          <tr><td class="num">10</td><td class="name">intellectual / property / right / enforcement</td><td class="num">445</td><td>H1</td><td>strong</td><td class="num">0.418</td><td class="num">0.086</td><td class="num">0.074</td><td class="num">0.529</td><td class="num">0.457</td></tr>
+          <tr><td class="num">11</td><td class="name">trust / institution / public / citizen</td><td class="num">130</td><td>H2</td><td>latent</td><td class="num">0.436</td><td class="num">0.171</td><td class="num">0.030</td><td class="num">0.429</td><td class="num">0.443</td></tr>
+          <tr><td class="num">12</td><td class="name">valuation / property / market / intellectual</td><td class="num">47</td><td>H1</td><td>weak</td><td class="num">0.557</td><td class="num">0.042</td><td class="num">0.055</td><td class="num">0.450</td><td class="num">0.429</td></tr>
+          <tr><td class="num">13</td><td class="name">patent law / evolving standard / standard prior art</td><td class="num">14</td><td>H3</td><td>noise</td><td class="num">0.486</td><td class="num">0.036</td><td class="num">0.058</td><td class="num">—</td><td class="num">0.336</td></tr>
+          <tr><td class="num">14</td><td class="name">trade / agreement / wto / viii</td><td class="num">40</td><td>H1</td><td>noise</td><td class="num">0.371</td><td class="num">0.136</td><td class="num">0.036</td><td class="num">0.622</td><td class="num">0.321</td></tr>
+          <tr class="hero"><td class="num">15</td><td class="name">image / patent / learning / watermark <span class="tag">catch-all</span></td><td class="num">1,497</td><td>H2</td><td>strong</td><td class="num">0.321</td><td class="num">0.068</td><td class="num">0.075</td><td class="num">0.395</td><td class="num">0.314</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section class="step">
+  <div class="step-head"><span class="step-num">TRACE</span><h2>Three signals, followed end to end</h2></div>
+  <div class="col">
+    <p>The stages above describe the machinery. What follows is the machinery applied — the full provenance of three specific entries on that list, chosen because they show three different outcomes.</p>
+  </div>
+
+  <div class="col">
+    <h3>Signal 1 — AI and patent examination <span class="tag good">holds up</span></h3>
+    <p class="lede">Ranked first. The strongest candidate in the run, and the one that survives inspection.</p>
+
+    <div class="chain">
+      <i>seed queries</i><u>→</u><i>129 documents</i><u>→</u><i>cluster @ 0.30</i><u>→</u><i>burst 2025</i><u>→</u><i>H2 · strong</i><u>→</u><i>SI-3</i><u>→</u><i>rank 1</i>
+    </div>
+  </div>
+
+  <div class="col" style="margin-top:var(--s3)">
+    <figure>
+      <div class="chart-title">Documents per year — <span class="mono">T0002</span></div>
+      <div class="chart-sub">Research and preprint sources only; news is excluded from the timeline.</div>
+      <div class="bars" data-chart>
+        <div class="bcol" data-y="2018" data-v="4"><span class="bval"></span><span class="bar" style="height:11%"></span></div>
+        <div class="bcol" data-y="2019" data-v="8"><span class="bval"></span><span class="bar" style="height:23%"></span></div>
+        <div class="bcol" data-y="2020" data-v="13"><span class="bval"></span><span class="bar" style="height:37%"></span></div>
+        <div class="bcol" data-y="2021" data-v="7"><span class="bval"></span><span class="bar" style="height:20%"></span></div>
+        <div class="bcol" data-y="2022" data-v="5"><span class="bval"></span><span class="bar" style="height:14%"></span></div>
+        <div class="bcol" data-y="2023" data-v="14"><span class="bval"></span><span class="bar" style="height:40%"></span></div>
+        <div class="bcol" data-y="2024" data-v="19"><span class="bval"></span><span class="bar" style="height:54%"></span></div>
+        <div class="bcol burst" data-y="2025" data-v="35"><span class="bval">35</span><span class="bar" style="height:100%"></span></div>
+        <div class="bcol" data-y="2026" data-v="16"><span class="bval"></span><span class="bar" style="height:46%"></span></div>
+      </div>
+      <div class="axis">
+        <div class="bcol"><span class="blab">’18</span></div><div class="bcol"><span class="blab">’19</span></div>
+        <div class="bcol"><span class="blab">’20</span></div><div class="bcol"><span class="blab">’21</span></div>
+        <div class="bcol"><span class="blab">’22</span></div><div class="bcol"><span class="blab">’23</span></div>
+        <div class="bcol"><span class="blab">’24</span></div><div class="bcol burst"><span class="blab">’25</span></div>
+        <div class="bcol"><span class="blab">’26</span></div>
+      </div>
+      <div class="legend">
+        <span><i class="sw" style="background:var(--accent)"></i> normal year</span>
+        <span><i class="sw" style="background:var(--flag)"></i> Kleinberg burst</span>
+      </div>
+      <figcaption>2026 is a part year — the run was collected in August. Counts: 4, 8, 13, 7, 5, 14, 19, <strong>35</strong>, 16.</figcaption>
+    </figure>
+  </div>
+
+  <div class="col">
+    <p><strong>How it was identified, step by step.</strong> 129 documents clustered around the terms <span class="mono">artificial intelligence, patent, examination, inventorship, patent law</span>. The Kleinberg automaton flagged 2025 — 35 documents against a prior run of 4 to 19 — as a genuine elevated state rather than corpus-wide growth. The logistic fit put maturity at <code>0.434</code>, which falls between the 0.35 and 0.75 cut-points and so places it in <strong>H2</strong>, the contested middle. Annual growth ran at <strong>+19.8%</strong>.</p>
+    <p>On the five attributes it scored novelty 0.72, growth 0.28, coherence 0.43, impact 0.75 and uncertainty 0.66 — a composite emergence of <code>0.582</code>. Its best strategic match was initiative <strong>SI-3, AI and Automated Decision Making in IP administration</strong>, at <code>0.191</code>, the second-highest fit in the run and against one of the two highest-weighted references in the strategy. Asset leverage reached <code>0.098</code>, second only to 0.101 on that compressed axis.</p>
+    <p>On the opportunity index its research-growth component scored <code>0.929</code> — the second-fastest-growing topic in the run. It sits in the <strong>“act”</strong> quadrant: above the median on both strategic fit and asset leverage.</p>
+
+    <div class="tech">
+      <span class="lbl">The evidence check</span>
+      <p>The documents nearest the centre are <em>Artificial Intelligence and Patent Law</em>, <em>Artificial Intelligence and Inventorship</em>, <em>Impact of Artificial Intelligence on Patent Law</em>, <em>Artificial intelligence is breaking patent law</em> (Nature, 2022) and <em>Patent Analysis of Artificial Intelligence: A Comprehensive Study 2013–2022</em>.</p>
+      <p>That is a coherent theme, from named venues, spanning eight years, and it means what the label says it means.</p>
+    </div>
+
+    <div class="plain">
+      <span class="lbl">In plain terms</span>
+      <p>This one is real. A genuine body of research on what AI does to patent law and patent examination, growing steadily since 2018 and jumping sharply in 2025, that maps directly onto an initiative IP Australia has already committed to and weighted highly.</p>
+      <p>It is also, honestly, the least surprising thing the scan could have found — an IP office scanning for AI-and-IP topics found one. That is a point in favour of the machinery working, not evidence of a discovery.</p>
+    </div>
+  </div>
+
+  <div class="col">
+    <h3 style="margin-top:var(--s6) !important">Signal 2 — Wire arc additive manufacturing <span class="tag bad">artefact</span></h3>
+    <p class="lede">Ranked second, with the <em>highest emergence score in the entire run</em>. It is not a signal. It is one paper's peer-review history.</p>
+
+    <div class="chain">
+      <i>seed queries</i><u>→</u><i>27 documents</i><u>→</u><i>cluster @ 0.30</i><u>→</u><i>burst 2025</i><u>→</u><i>emergence 0.843</i><u>→</u><i>rank 2</i><u>→</u><i style="border-color:var(--flag);color:var(--flag-quiet)">discarded on reading</i>
+    </div>
+  </div>
+
+  <div class="col" style="margin-top:var(--s3)">
+    <figure>
+      <div class="chart-title">Documents per year — <span class="mono">T0010</span></div>
+      <div class="chart-sub">Nineteen of the topic's twenty-seven documents fall in a single year.</div>
+      <div class="bars" data-chart>
+        <div class="bcol" data-y="2018" data-v="2"><span class="bval"></span><span class="bar" style="height:11%"></span></div>
+        <div class="bcol" data-y="2019" data-v="0"><span class="bval"></span><span class="bar" style="height:0"></span></div>
+        <div class="bcol" data-y="2020" data-v="0"><span class="bval"></span><span class="bar" style="height:0"></span></div>
+        <div class="bcol" data-y="2021" data-v="0"><span class="bval"></span><span class="bar" style="height:0"></span></div>
+        <div class="bcol" data-y="2022" data-v="0"><span class="bval"></span><span class="bar" style="height:0"></span></div>
+        <div class="bcol" data-y="2023" data-v="0"><span class="bval"></span><span class="bar" style="height:0"></span></div>
+        <div class="bcol" data-y="2024" data-v="1"><span class="bval"></span><span class="bar" style="height:5%"></span></div>
+        <div class="bcol burst" data-y="2025" data-v="19"><span class="bval">19</span><span class="bar" style="height:100%"></span></div>
+        <div class="bcol" data-y="2026" data-v="0"><span class="bval"></span><span class="bar" style="height:0"></span></div>
+      </div>
+      <div class="axis">
+        <div class="bcol"><span class="blab">’18</span></div><div class="bcol"><span class="blab">’19</span></div>
+        <div class="bcol"><span class="blab">’20</span></div><div class="bcol"><span class="blab">’21</span></div>
+        <div class="bcol"><span class="blab">’22</span></div><div class="bcol"><span class="blab">’23</span></div>
+        <div class="bcol"><span class="blab">’24</span></div><div class="bcol burst"><span class="blab">’25</span></div>
+        <div class="bcol"><span class="blab">’26</span></div>
+      </div>
+      <div class="legend">
+        <span><i class="sw" style="background:var(--accent)"></i> normal year</span>
+        <span><i class="sw" style="background:var(--flag)"></i> Kleinberg burst</span>
+      </div>
+      <figcaption>Counts: 2, 0, 0, 0, 0, 0, 1, <strong>19</strong>, 0. A near-vertical spike from nothing is exactly the shape a horizon scan is built to notice.</figcaption>
+    </figure>
+  </div>
+
+  <div class="col">
+    <p><strong>Every stage behaved correctly.</strong> The topic scored novelty <code>0.878</code> — nothing resembling it existed in the early corpus. Coherence <code>0.779</code>, the highest in the run: these documents are extremely similar to one another. Growth <code>0.340</code>, also the highest, with a burst correctly detected in 2025 and an annual growth rate of <strong>+32.5%</strong>. Weighted together, an emergence score of <code>0.843</code> — the top of the run by a wide margin.</p>
+    <p>Then you read the documents.</p>
+
+    <div class="tech">
+      <span class="lbl">The eight documents nearest the centre</span>
+      <p>All eight are peer-review reports for a single paper — <em>Artificial Intelligence in Wire Arc Additive Manufacturing: A Systematic Review and Patent Landscape Analysis</em> — registered under DOIs <code>10.1002/eng2.70518/v1/review1</code>, <code>/v1/review2</code>, <code>/v1/review3</code>, <code>/v2/review1</code>, <code>/v2/review2</code>, <code>/v3/review1</code>, <code>/v4/review2</code> and <code>/v4/review3</code>.</p>
+      <p>Crossref registers peer-review reports as first-class records with their own DOIs. Four manuscript versions reviewed by up to three reviewers each produced a run of near-identical 2025 records, every one carrying the reviewed paper's title. Nineteen of the topic's twenty-seven documents fall in 2025, and all eight nearest its centre are reviews of this one paper.</p>
+      <p>Deduplication could not catch this: each review genuinely has a distinct, stable identifier. It is not a duplicate-detection failure. It is a record-type problem.</p>
+    </div>
+
+    <div class="plain">
+      <span class="lbl">In plain terms</span>
+      <p>One engineering paper was reviewed by three reviewers across four drafts. The academic plumbing gave every one of those twelve-odd review comments its own permanent web address, carrying the paper's title. The scan collected them as if they were twelve separate research papers appearing out of nowhere in 2025.</p>
+      <p>Of course they clustered tightly — they have <em>identical titles</em>. Of course they looked novel — nothing like them existed before. Of course they burst — they all arrived at once. Every measurement was correct, and the conclusion was nonsense.</p>
+      <p>This is precisely why reading the source documents is not an optional final polish. It is the only check that catches this class of error, and no amount of re-weighting would have.</p>
+    </div>
+
+    <p><strong>It is not the only one.</strong> Rank 6, <em>delivery / service / government / local</em> — which carries the highest opportunity index in the run at <code>0.689</code> — has the same problem. Its eight nearest documents are peer-review reports of a single paper: <em>Financial Autonomy: Panacea for Improved Service Delivery in Imo State Local Government System</em>. The topic's label reads like Australian public-service delivery. Its centre is reviews of a paper about local government finance in Nigeria.</p>
+
+    <div class="scroll">
+      <table>
+        <caption>Record types among the 120 documents nearest the fifteen topic centres</caption>
+        <thead><tr><th>Crossref record type</th><th class="num">Count</th><th>Where</th></tr></thead>
+        <tbody>
+          <tr class="flagged"><td>peer-review</td><td class="num">16</td><td class="name">Entirely within T0010 (8) and T0005 (8) — two dense single-paper clusters</td></tr>
+          <tr><td>posted-content</td><td class="num">4</td><td class="name">Scattered; preprints, generally legitimate</td></tr>
+          <tr><td>component</td><td class="num">1</td><td class="name">A figure or table registered separately from its parent</td></tr>
+          <tr><td>journal article, chapter, monograph</td><td class="num">99</td><td class="name">The rest — normal research literature</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>A related case appears at rank 8, where three of the nearest documents are titled simply <em>References</em> — book bibliographies registered with their own DOIs.</p>
+
+    <div class="tech">
+      <span class="lbl">The fix</span>
+      <p>The Crossref collector already requests the <code>type</code> field, but uses it only as a fallback label when a record has no container title. It never filters on it. Excluding <code>peer-review</code> — and probably <code>component</code>, and back-matter titled <em>References</em> — would remove both artefacts at the source.</p>
+      <p>This is a small change, but it changes what every future run collects, so it belongs in the calibration log with a stated reason rather than being applied quietly.</p>
+    </div>
+  </div>
+
+  <div class="col">
+    <h3 style="margin-top:var(--s6) !important">Signal 3 — The catch-all <span class="tag">correctly demoted</span></h3>
+    <p class="lede">Ranked last, holding more than half of every document the scan managed to sort.</p>
+
+    <p>T0000 gathered 1,497 documents under the terms <span class="mono">image, patent, learning, watermark, watermarking, system, ai, dataset, training, quantum</span>. Watermarking and quantum computing are not one subject, and the scoring said so: novelty <code>0.045</code> and coherence <code>0.337</code>, the lowest of each in the run, producing an emergence score of <code>0.321</code> and last place.</p>
+
+    <div class="plain">
+      <span class="lbl">In plain terms</span>
+      <p>Novelty here is measured as "how far is this from the average of everything?" A score of 0.045 means this group <em>is</em> the average of everything — it has no particular position, because it contains a bit of everything.</p>
+      <p>That the method demoted it without being told to is genuinely reassuring. That it exists at all, and is this large, says the grouping threshold needs re-tuning for a corpus this size.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section class="step">
+  <div class="step-head"><span class="step-num">CHECK</span><h2>What the arithmetic proves — and what it does not</h2></div>
+  <div class="col">
+    <p>The run generates a notebook that reads the finished corpus back out and recomputes four stored numbers from their stored inputs, verifying against the config snapshot recorded at run time rather than the file on disk today.</p>
+
+    <div class="verify">
+      <div class="vrow"><span class="ok">PASS</span><span><strong>Emergence score</strong> reproduced for all 15 topics — largest deviation 0, tolerance 1e-9</span></div>
+      <div class="vrow"><span class="ok">PASS</span><span><strong>Three Horizons band</strong> reproduced — 15 of 15 identical</span></div>
+      <div class="vrow"><span class="ok">PASS</span><span><strong>Opportunity index</strong> reproduced for 13 scored topics — largest deviation 9.71e-05, tolerance 1e-3 (the stored components are rounded to 4dp; that rounding is the whole error budget)</span></div>
+      <div class="vrow"><span class="ok">PASS</span><span><strong>Composite rank and ordering</strong> reproduced — deviation 0, and 15 of 15 positions identical</span></div>
+    </div>
+
+    <p style="margin-top:var(--s3)">The last check calls the pipeline's own ranking function rather than reimplementing it, so the check cannot drift away from the code it is checking. The config on disk was confirmed identical to the config that produced the run.</p>
+
+    <div class="plain">
+      <span class="lbl">In plain terms — the important distinction</span>
+      <p>All of this establishes that <strong>given this corpus and these weights, the shortlist follows</strong>. The sums are right. Nobody has to take the arithmetic on trust.</p>
+      <p>It establishes <strong>nothing whatsoever about whether the weights are right.</strong> Every weight here was set by reading the research literature and thinking, not by testing against a known outcome. Signal 2 makes the point vividly: the arithmetic was flawless and the answer was still wrong, because the input was wrong.</p>
+      <p>The useful argument to have about this document is about the scan frame, the weights and the topics — not about the sums.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section class="step">
+  <div class="step-head"><span class="step-num">NEXT</span><h2>What to change before the next run</h2></div>
+  <div class="col">
+    <p>In priority order, from what this run actually showed.</p>
+    <ol>
+      <li><strong>Filter Crossref record types.</strong> Two of fifteen shortlisted topics are single-paper peer-review clusters, one of them ranked second and one carrying the highest opportunity index in the run. This is the highest-value fix available and it is a few lines in one collector.</li>
+      <li><strong>Loosen the OpenAlex relevance floor.</strong> The best research source available is contributing 8% of the corpus because every query stops inside its first page. It is live and working; it is simply being filtered hard.</li>
+      <li><strong>Re-sweep the clustering threshold.</strong> The 0.30 value was calibrated against a different, smaller corpus. On this one the catch-all topic holds 54% of everything assigned, and 62% of the corpus is in no topic at all.</li>
+      <li><strong>Switch the embedding backend.</strong> Asset leverage spans 0.030–0.101 and still drives a quarter of the ranking. The vocabulary-matching backend is the root cause, and this remains the single highest-value change to the method as a whole.</li>
+      <li><strong>Validate against a known past opportunity.</strong> Still the largest gap. Until the ranking is tested against something IP Australia already pursued, it remains a hypothesis about ranking.</li>
+    </ol>
+
+    <div class="plain">
+      <span class="lbl">And one thing not to change</span>
+      <p>The evidence cards. Reading the primary documents behind a topic is the cheapest and most reliable quality control in this entire method, and it is the only step that caught the two artefacts. Every other check in the pipeline passed them.</p>
+    </div>
+  </div>
+</section>
+
+<hr>
+<footer class="footer col">
+  <p>Run <span class="mono">2026-08-30</span> · corpus 7,219 documents, 2018–2026 · embedding backend <span class="mono">hashing</span> · clustering threshold <span class="mono">0.30</span> · workflow run <span class="mono">33310810297</span>. Outputs in <span class="mono">data/outputs/2026-08-30/</span>; the peer-review notebook alongside them re-derives every number in this report from stored inputs.</p>
+  <p style="margin-top:var(--s2)">Method reference: <span class="mono">docs/method.md</span>. Live state and calibration log: <span class="mono">PROJECT_STATE.md</span>.</p>
+</footer>
+
+</div>
+
+<script>
+(function () {
+  var tip = document.getElementById('tip');
+  document.querySelectorAll('[data-chart] .bcol').forEach(function (col) {
+    col.addEventListener('mouseenter', function () {
+      tip.textContent = col.dataset.y + '  ' + col.dataset.v + ' doc' + (col.dataset.v === '1' ? '' : 's')
+        + (col.classList.contains('burst') ? '  · burst' : '');
+      tip.style.opacity = '1';
+    });
+    col.addEventListener('mousemove', function (e) {
+      tip.style.left = Math.min(e.clientX + 12, window.innerWidth - 140) + 'px';
+      tip.style.top = (e.clientY - 34) + 'px';
+    });
+    col.addEventListener('mouseleave', function () { tip.style.opacity = '0'; });
+  });
+})();
+</script>
