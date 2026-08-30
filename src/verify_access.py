@@ -192,6 +192,43 @@ def _diagnose_r2(exc: Exception, bucket: str) -> str:
     return f"{code or type(exc).__name__}: {exc}" + (f"\n           → {hint}" if hint else "")
 
 
+def _visible_buckets(client, wanted: str) -> str:
+    """On failure, ask what this token *can* see.
+
+    Every object call being denied has two very different causes that the
+    error text cannot tell apart: the token is scoped to a different bucket,
+    or the bucket name is wrong. ListBuckets separates them — if it works and
+    the name is absent, the bucket does not exist under this account ID; if
+    it works and the name is present, the token simply is not scoped to it.
+    A token scoped to specific buckets may refuse this too, which is itself
+    the answer: the scope is narrower than this bucket.
+    """
+    try:
+        buckets = [b["Name"] for b in client.list_buckets().get("Buckets", [])]
+    except Exception as exc:  # noqa: BLE001 - botocore raises its own types
+        return (
+            "\n           ListBuckets is also denied, so the token is scoped to "
+            f"specific buckets that do not include {wanted!r} "
+            f"({type(exc).__name__})."
+        )
+    if not buckets:
+        return (
+            "\n           ListBuckets succeeded but this account has no buckets — "
+            "check R2_ACCOUNT_ID points at the account holding the bucket."
+        )
+    listed = ", ".join(repr(b) for b in sorted(buckets)[:20])
+    if wanted in buckets:
+        return (
+            f"\n           The bucket {wanted!r} DOES exist in this account, so the "
+            "name is right and the API token is not scoped to it. Buckets visible: "
+            f"{listed}."
+        )
+    return (
+        f"\n           No bucket named {wanted!r} in this account. Buckets visible: "
+        f"{listed}. Either create it or set storage.r2.bucket to one of these."
+    )
+
+
 def check_r2(bucket: str, cleanup: bool = True, timeout: int = 30) -> Result:
     """Round-trip a small object through the real bucket.
 
@@ -267,7 +304,7 @@ def check_r2(bucket: str, cleanup: bool = True, timeout: int = 30) -> Result:
     # PutObject and GetObject are the verdict: they are exactly what
     # push_corpus and pull_corpus do.
     if not wrote or fetched is None:
-        return result.failed(f"{summary}{reasons}")
+        return result.failed(f"{summary}{reasons}{_visible_buckets(client, bucket)}")
     if fetched != body:
         return result.failed(
             f"read-back mismatch: wrote {len(body)} bytes, got {len(fetched)}. {summary}"

@@ -272,3 +272,54 @@ def test_r2_keeps_test_object_when_cleanup_disabled(monkeypatch, r2_env):
     check_r2("bigthink-corpus", cleanup=False)
     assert len(fake.objects) == 1
     assert "DeleteObject" not in fake.calls
+
+
+# ---------------------------------------------------------------------------
+# When everything is denied, say whether the bucket exists at all
+# ---------------------------------------------------------------------------
+
+
+class _FakeR2WithBuckets(_FakeR2):
+    def __init__(self, buckets, deny=None, deny_list_buckets=False):
+        super().__init__(deny=deny)
+        self._buckets = buckets
+        self._deny_list_buckets = deny_list_buckets
+
+    def list_buckets(self):
+        if self._deny_list_buckets:
+            raise _FakeClientError("AccessDenied")
+        return {"Buckets": [{"Name": b} for b in self._buckets]}
+
+
+def test_denied_but_bucket_exists_points_at_the_token_scope(monkeypatch, r2_env):
+    fake = _FakeR2WithBuckets(["bigthink-corpus", "other"], deny={"PutObject"})
+    _install(monkeypatch, fake)
+    detail = check_r2("bigthink-corpus").detail
+    assert "DOES exist" in detail and "not scoped to it" in detail
+
+
+def test_denied_and_bucket_absent_points_at_the_name(monkeypatch, r2_env):
+    fake = _FakeR2WithBuckets(["something-else"], deny={"PutObject"})
+    _install(monkeypatch, fake)
+    detail = check_r2("bigthink-corpus").detail
+    assert "No bucket named" in detail and "'something-else'" in detail
+
+
+def test_denied_list_buckets_is_itself_reported_as_a_narrow_scope(monkeypatch, r2_env):
+    fake = _FakeR2WithBuckets([], deny={"PutObject"}, deny_list_buckets=True)
+    _install(monkeypatch, fake)
+    assert "scoped to specific buckets" in check_r2("bigthink-corpus").detail
+
+
+def test_empty_account_points_at_the_account_id(monkeypatch, r2_env):
+    fake = _FakeR2WithBuckets([], deny={"PutObject"})
+    _install(monkeypatch, fake)
+    assert "R2_ACCOUNT_ID" in check_r2("bigthink-corpus").detail
+
+
+def test_bucket_listing_is_not_consulted_when_the_check_passes(monkeypatch, r2_env):
+    # The happy path must not spend an extra call, and must not depend on a
+    # permission the pipeline never needs.
+    fake = _FakeR2WithBuckets(["bigthink-corpus"], deny_list_buckets=True)
+    _install(monkeypatch, fake)
+    assert check_r2("bigthink-corpus").symbol == "PASS"
