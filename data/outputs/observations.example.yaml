@@ -1,0 +1,55 @@
+# =============================================================================
+# observations.example.yaml
+#
+# Copy this to data/outputs/<run_id>/observations.yaml and write in it after
+# reading a run. Everything here is inserted into that run's notebook as
+# markdown the next time it is generated:
+#
+#     python -m src.notebook --run-id <run_id>
+#
+# WHY BOTHER. The pipeline can say what it did. It cannot tell you which topics
+# are clustering artefacts, and reading the evidence is the only check that
+# finds them. This file is where that reading gets written down, so the
+# judgement travels with the numbers instead of living in someone's inbox.
+#
+# Every value is markdown. Anchors are optional — write only what you have.
+# An unknown anchor is an error rather than a silent drop, so a typo cannot
+# quietly discard your writing.
+# =============================================================================
+
+# --- section anchors ---------------------------------------------------------
+# overview | provenance | stage0 | stage1 | stage2 | stage3 | stage4 | stage5
+# evidence | closing
+
+overview: |
+  Reviewed 2026-09-02 with the IPAVentures team. Two of the top five are
+  artefacts (see the per-topic notes); the remaining three go to the
+  sense-making session on Thursday.
+
+stage1: |
+  OpenAlex contributed nothing again — the key is still not set, so the best
+  research source is absent from this run. Treat the research-growth component
+  as resting on Crossref and arXiv alone.
+
+stage3: |
+  Asset leverage is still compressed under the `hashing` backend. The ordering
+  it produces looks sensible, but do not read the gaps between adjacent topics
+  as meaningful until we have re-run under `bge`.
+
+closing: |
+  Decision: re-run after switching to the `bge` backend before this goes to
+  anyone outside the lab. Nothing here should be quoted as a finding yet.
+
+# --- per-topic anchors -------------------------------------------------------
+# Key on the topic id shown in the evidence section: topic:<topic_id>
+# Only topics that get a full evidence section can carry one (see
+# notebook.topics_detailed in bigthink_config.yaml).
+
+# topic:t0003: |
+#   **Artefact.** The documents share the word "protocol" and nothing else —
+#   three are network engineering papers. Discard; do not carry to synthesis.
+#
+# topic:t0001: |
+#   Real, and the closest thing in this run to something we could act on.
+#   Worth checking against the ADM work already under way in Policy before
+#   anyone calls it a gap.

@@ -39,8 +39,9 @@ works, not as a finding.
 | 3 — Fit and leverage | **Working, weak** | Strategic fit is usable; asset leverage is compressed — see Open issue 2 |
 | 4 — Opportunity index | **Working, partial** | `patent_activity` has no data without PatentsView; weight redistributes automatically |
 | 5 — Synthesis | **Working** | Shortlist, 2×2 views, evidence cards, CSV, published HTML |
+| Notebook export | **Working, not yet reviewed by anyone** | `src/notebook.py`; written automatically after Stage 5. Re-derives emergence, horizon, index and composite rank from stored inputs |
 | Automation | **Written, not yet exercised** | `scan.yml` and `tests.yml` — neither has run in Actions yet |
-| Tests | **95 passing** | Offline by design; every defect found so far has one |
+| Tests | **116 passing** | Offline by design; every defect found so far has one |
 
 **First real run — `2026-08-29`:** 7,780 documents across 2018–2026 from
 Crossref (2,431), GDELT (3,183), arXiv (2,018), data.gov.au (148). Roughly
@@ -181,6 +182,24 @@ of the sprint. See Day 4 below.
 `similarity_threshold_by_backend.bge: 0.62` has never been swept — only the
 `hashing` value has. Run `python -m src.calibrate threshold` after switching
 backends, before trusting any score computed under it.
+
+### 9. Two Stage 3/5 outputs are computed but never persisted
+
+`best_asset` (which agency asset a topic is closest to) and `fit_quadrant`
+(its 2×2 placement) are produced in memory and reach `topics.csv`, the evidence
+cards and `summary.json` — but neither is written to `topic_scores`.
+`best_asset` has a column in the schema that nothing populates; `fit_quadrant`
+has none.
+
+Found while building the notebook export, which reads everything back from
+DuckDB and so cannot see either. The notebook recomputes `fit_quadrant` from
+the stored axes (identical result, and it shows the derivation); `best_asset`
+is simply not recoverable and is omitted from its Stage 3 table.
+
+**Consequence.** Anything that reads a past run from the database rather than
+from that run's CSV is missing the asset axis's most interpretable output —
+including the notebook, which is the artefact meant to explain it. Low effort
+to fix: add both to `_SCORE_COLUMNS` in `db.py` and to the dict Stage 5 writes.
 
 ---
 
@@ -341,8 +360,16 @@ For whoever — or whichever Claude instance — picks this up next:
 4. `python -m src.pipeline --run-id $(date -u +%F)` for a fresh full run.
 5. Open `data/outputs/<run_id>/shortlist.md` and read the top five evidence
    cards **before** looking at any score.
-6. Work the day plan above from wherever it has got to.
-7. Append to the calibration log whenever you change a number.
+6. To hand the method to someone else — a colleague, a reviewer, anyone who
+   should be able to disagree with it — send
+   `data/outputs/<run_id>/horizon-scan-<run_id>.ipynb` rather than the
+   shortlist. It shows the run stage by stage and re-derives its numbers, so
+   the argument starts at the scan frame and the weights instead of at "where
+   did this come from?". Write the answers back into
+   `data/outputs/<run_id>/observations.yaml`; they are folded into the notebook
+   the next time it is generated.
+7. Work the day plan above from wherever it has got to.
+8. Append to the calibration log whenever you change a number.
 
 ### Things not to do
 

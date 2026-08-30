@@ -122,7 +122,10 @@ jobs:
         run: python -m src.report --run-id ${{ steps.runid.outputs.run_id }}
 
       # ------------------------------------------------------------------
-      # Commit only the small, readable outputs.
+      # Commit only the small, readable outputs: the shortlist, the evidence
+      # cards, topics.csv, and the peer-review notebook the pipeline writes
+      # after Stage 5 (data/outputs/<run_id>/horizon-scan-<run_id>.ipynb —
+      # executed at generation time, so it reads without being run).
       # ------------------------------------------------------------------
       - name: Commit outputs
         if: always()

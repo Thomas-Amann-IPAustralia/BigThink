@@ -169,6 +169,11 @@ def _validate(cfg: dict[str, Any]) -> None:
     _validate_scoring(cfg["scoring"])
     _validate_opportunity_index(cfg["opportunity_index"])
     _validate_synthesis(cfg["synthesis"])
+    # Optional, and deliberately not in the required list above: the notebook
+    # export produces no score, so a config predating it must still load and
+    # still run the pipeline. It is validated only when present.
+    if "notebook" in cfg:
+        _validate_notebook(cfg["notebook"])
 
 
 def _validate_pipeline(p: dict[str, Any]) -> None:
@@ -313,6 +318,25 @@ def _validate_synthesis(s: dict[str, Any]) -> None:
             "synthesis.evidence_documents_per_topic must be >= 1 — evidence cards are "
             "the audit trail for every score this pipeline produces."
         )
+
+
+def _validate_notebook(n: Any) -> None:
+    if not isinstance(n, dict):
+        raise ConfigError("notebook must be a mapping if present.")
+    for key in ("topics_detailed", "evidence_documents_per_topic"):
+        if key in n:
+            try:
+                value = int(n[key])
+            except (TypeError, ValueError):
+                raise ConfigError(f"notebook.{key} must be an integer, got {n[key]!r}") from None
+            if value < 1:
+                raise ConfigError(
+                    f"notebook.{key} must be >= 1 — a notebook with no evidence in it "
+                    "is not a peer-review artefact."
+                )
+    for key in ("enabled", "include_verification"):
+        if key in n and not isinstance(n[key], bool):
+            raise ConfigError(f"notebook.{key} must be true or false, got {n[key]!r}")
 
 
 def _require_weight_sum(weights: Any, label: str, target: float = 1.0) -> None:

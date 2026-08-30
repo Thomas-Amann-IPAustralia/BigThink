@@ -222,7 +222,8 @@ ordering would launder that weakness. It is reported alongside, where a reader
 can weigh it themselves.
 
 Outputs: a ranked shortlist, one evidence card per shortlisted topic, a full
-topic CSV, a machine-readable summary, and a published HTML page.
+topic CSV, a machine-readable summary, a published HTML page, and a Jupyter
+notebook (below).
 
 **Every evidence card carries the primary documents behind the scores.** If
 those documents do not look like a coherent theme, the topic is a clustering
@@ -234,6 +235,56 @@ qualitative stage is where a regulator's real options appear. Doblin's research
 found breakthroughs usually combine several innovation types and that
 product-only innovation returns the least; a regulator can innovate in process,
 channel and engagement, not only in what it offers.
+
+---
+
+## The notebook — what is checkable, and what is only arguable
+
+`python -m src.notebook --run-id RUN` writes
+`data/outputs/<run_id>/horizon-scan-<run_id>.ipynb`: one frozen run, walked
+stage by stage, with every code cell runnable against the same DuckDB and its
+output already embedded from a real execution. The pipeline writes it
+automatically after Stage 5.
+
+It exists to move an argument. Four numbers are recomputed from their stored
+inputs and checked against what the pipeline stored:
+
+| Recomputed | From |
+|---|---|
+| `emergence_score` | the five Rotolo attributes, percentile-ranked, × `rotolo_weights` |
+| `horizon` | fitted maturity × the Three Horizons cut-points |
+| `opportunity_index` | stored components × effective (redistributed) weights |
+| `composite_rank_score` | the three ranking axes × `rank_weights`, via `stage5_synthesis.composite_scores` itself |
+
+The last one calls the production function rather than reimplementing it, so
+the check cannot drift away from the code it is checking.
+
+Two properties of that design are worth stating, because they are what make the
+notebook worth anything:
+
+- **Verification loads the config from `pipeline_runs.config_snapshot`, not
+  from `bigthink_config.yaml`.** A weight edited after the run must not be able
+  to change retrospectively what "reproduced" means. The notebook also diffs
+  the two and says so when the repository has moved since the run.
+- **Stage 1 is described, never re-executed.** Collectors call live,
+  rate-limited, metered APIs; a cell claiming to reproduce the corpus would be
+  a lie the moment a source changed its budget. The notebook reports collection
+  from `collection_log` and re-derives only what is genuinely deterministic.
+
+So what the notebook establishes is that *given this corpus and these weights,
+the shortlist follows*. It establishes nothing about whether the weights are
+right — which is the point. It moves the reviewable question off the arithmetic
+and onto the scan frame, the weights and the topics, where the real
+uncertainty lives.
+
+Analyst commentary goes in `data/outputs/<run_id>/observations.yaml`, keyed by
+anchor (`stage1`, `stage4`, `topic:<topic_id>`, …). Anything written there is
+inserted as markdown the next time the notebook is generated, so the reading of
+a run travels with its numbers instead of living in someone's inbox. The
+notebook also derives its own observations from the run — silent sources,
+topic coverage, compressed axes, suppressed indices, topics sitting within 0.05
+of a horizon cut-point — because those are the caveats that are easy to miss
+and expensive to miss.
 
 ---
 
