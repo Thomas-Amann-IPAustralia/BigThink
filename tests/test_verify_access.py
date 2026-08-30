@@ -499,3 +499,64 @@ def test_uppercase_account_id_is_accepted(monkeypatch, r2_env):
     monkeypatch.setenv("R2_ACCOUNT_ID", "6CD7669A5E77A844ABC49B6A0EECD0A3")
     _install(monkeypatch, _FakeR2())
     assert check_r2("bigthink-corpus").symbol == "PASS"
+
+
+# ---------------------------------------------------------------------------
+# A refused TLS handshake is a statement about the account ID
+#
+# Cloudflare completes the handshake for a real account and returns an S3
+# error; for a well-formed but unknown account ID it refuses the handshake on
+# both the default and jurisdiction endpoints. So this is not a TLS problem,
+# not a network problem, and above all not a permissions problem — nothing was
+# ever authorised or denied.
+# ---------------------------------------------------------------------------
+
+
+class _FakeSSLError(Exception):
+    def __init__(self) -> None:
+        super().__init__(
+            "SSL validation failed for https://x.eu.r2.cloudflarestorage.com "
+            "[SSL: SSLV3_ALERT_HANDSHAKE_FAILURE] sslv3 alert handshake failure"
+        )
+
+
+_FakeSSLError.__name__ = "SSLError"
+
+
+class _UnreachableR2(_FakeR2):
+    def _guard(self, op):
+        self.calls.append(op)
+        raise _FakeSSLError()
+
+
+def test_handshake_failure_blames_the_account_id(monkeypatch, r2_env):
+    _install(monkeypatch, _UnreachableR2())
+    detail = check_r2("bigthink-corpus", jurisdiction_name="eu").detail
+    assert "R2_ACCOUNT_ID" in detail
+    assert "does not recognise" in detail
+
+
+def test_handshake_failure_is_not_reported_as_a_permissions_problem(monkeypatch, r2_env):
+    _install(monkeypatch, _UnreachableR2())
+    detail = check_r2("bigthink-corpus", jurisdiction_name="eu").detail
+    assert "read=" not in detail
+    assert "Object Read & Write" not in detail
+
+
+def test_handshake_failure_names_the_access_key_mixup(monkeypatch, r2_env):
+    _install(monkeypatch, _UnreachableR2())
+    assert "Access Key ID" in check_r2("bigthink-corpus").detail
+
+
+def test_connection_error_detection():
+    from src.verify_access import _is_connection_error
+
+    assert _is_connection_error(_FakeSSLError()) is True
+    assert _is_connection_error(_FakeClientError("AccessDenied")) is False
+
+
+def test_access_denied_still_reports_grants(monkeypatch, r2_env):
+    # The permissions narrative must survive for the case it is actually about.
+    fake = _FakeR2WithBuckets(["bigthink-corpus"], deny={"PutObject"})
+    _install(monkeypatch, fake)
+    assert "read=granted" in check_r2("bigthink-corpus").detail

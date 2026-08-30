@@ -190,6 +190,23 @@ def _diagnose_r2(exc: Exception, bucket: str) -> str:
     return f"{code or type(exc).__name__}: {exc}" + (f"\n           → {hint}" if hint else "")
 
 
+def _is_connection_error(exc: Exception) -> bool:
+    """True when the request never reached R2's API at all.
+
+    Cloudflare refuses the TLS handshake outright for an account ID it does
+    not recognise — verified by comparing a real account, which completes the
+    handshake and returns an S3 error, against a well-formed but non-existent
+    one, which fails with sslv3 alert handshake failure on both the default
+    and jurisdiction endpoints. So a handshake failure here is a statement
+    about the account ID, not about TLS or the network, and must not be
+    reported as a permissions problem: nothing was ever authorised or denied.
+    """
+    name = type(exc).__name__
+    if name in ("SSLError", "EndpointConnectionError", "ConnectTimeoutError", "ConnectionError"):
+        return True
+    return "handshake failure" in str(exc).lower()
+
+
 def _error_code(exc: Exception) -> str:
     response = getattr(exc, "response", None)
     if not isinstance(response, dict):
@@ -339,6 +356,7 @@ def check_r2(
 
     outcomes: list[str] = []
     detail: dict[str, str] = {}
+    errors: dict[str, Exception] = {}
 
     def probe(label: str, fn) -> Any:
         """Run one operation, record whether it worked, and keep going."""
@@ -347,6 +365,7 @@ def check_r2(
         except Exception as exc:  # noqa: BLE001 - botocore raises its own types
             outcomes.append(f"{label}=DENIED")
             detail[label] = _diagnose_r2(exc, bucket)
+            errors[label] = exc
             return None
         outcomes.append(f"{label}=ok")
         return value if value is not None else True
@@ -367,6 +386,20 @@ def check_r2(
     # PutObject and GetObject are the verdict: they are exactly what
     # push_corpus and pull_corpus do.
     if not wrote or fetched is None:
+        if any(_is_connection_error(exc) for exc in errors.values()):
+            # Never reached the API, so nothing here is evidence about the
+            # token's grants — saying "denied" would send someone to the
+            # permissions screen for a problem that is not there.
+            return result.failed(
+                f"{summary} — but none of these reached R2: the TLS handshake was "
+                f"refused at {endpoint}. Cloudflare rejects the handshake for an "
+                "account ID it does not recognise, so R2_ACCOUNT_ID is a "
+                "well-formed value that is not this account's ID. It is 32 hex "
+                "characters and so is the Access Key ID, which is the usual "
+                "mix-up; the account ID is the one on the R2 overview page, and "
+                "the one an API token's resource key spells as "
+                "com.cloudflare.edge.r2.bucket.<account>_<jurisdiction>_<bucket>."
+            )
         grants = ""
         if not wrote:
             # Which checkbox is missing, in the terms the Cloudflare UI uses.
