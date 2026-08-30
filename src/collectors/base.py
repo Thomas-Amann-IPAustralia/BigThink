@@ -158,6 +158,7 @@ class Collector:
 
         self.config = config
         self.run_id = run_id
+        self._incidents: list[str] = []
         self.settings: dict[str, Any] = get(config, "collection", "sources", self.name, default={}) or {}
         self.contact_email = contact_email(config)
         self.time_granularity = str(get(config, "emergence", "time_slice", default="year"))
@@ -171,6 +172,33 @@ class Collector:
             {"User-Agent": user_agent(config), "Accept": "application/json"}
         )
         self._last_request_at = 0.0
+
+    # -- incident recording ----------------------------------------------
+    # A collector that fails soft must still say so. Every `collect` that
+    # catches its own error and returns early records the reason here, and
+    # Stage 1 reads it after the generator is drained. Without this a source
+    # that returned nothing is indistinguishable in `collection_log` from one
+    # that legitimately found nothing — which is how four GDELT frames were
+    # recorded as `success` with zero records on the 2026-08-30 run, and how
+    # that run reported "0 failed pairs" while a fifth of the attention signal
+    # was missing.
+    #
+    # Why not simply raise: `collect` is a generator consumed with `list()`,
+    # so an exception thrown after the first yield discards the documents
+    # already produced. A partial window is worth keeping; a silent one is not.
+
+    def begin_frame(self) -> None:
+        """Reset per-frame incident state. Called by Stage 1 before each frame."""
+        self._incidents = []
+
+    def note_incident(self, message: str) -> None:
+        """Record a failure that `collect` handled rather than raised."""
+        self._incidents.append(str(message)[:300])
+
+    @property
+    def incidents(self) -> list[str]:
+        """Failures recorded during the most recent frame."""
+        return list(self._incidents)
 
     # -- to implement ----------------------------------------------------
     def collect(
@@ -302,6 +330,35 @@ class Collector:
         return str(
             get(self.config, "collection", "steepv_default_by_source", self.name, default="Technological")
         )
+
+    def relevance_floor(
+        self, scores: Sequence[float], *, min_relative: float, anchor_rank: int
+    ) -> float:
+        """Score below which a relevance-ranked result set stops being useful.
+
+        The floor is a fraction of an *anchor* score drawn from the ranked
+        results, because absolute relevance scores are not comparable across
+        queries — or across APIs.
+
+        `anchor_rank` is 1-indexed and chooses which result anchors it.
+        Rank 1 (the maximum) is the obvious choice and the wrong one for any
+        API whose relevance score is unnormalised. OpenAlex blends text match
+        with citation count, so a query naming a well-known field returns one
+        enormous score and a normal tail: measured on the 2026-08-30 scan
+        frame, `ct_ai` scored 3,011 at rank 1 and 1,628 at rank 2, so a floor
+        of 0.4 x max cut the results at six, while `ct_biotech` (609 then 573)
+        kept 110. Same query shape, same depth of literature, 18x the yield —
+        the floor was measuring how much of an outlier the top hit was.
+
+        A later rank is robust to that: one anomalous score no longer moves the
+        floor. Rank 1 reproduces the original behaviour exactly, which is what
+        Crossref still uses.
+        """
+        usable = [float(s) for s in scores if s is not None]
+        if not usable:
+            return 0.0
+        index = min(max(int(anchor_rank), 1), len(usable)) - 1
+        return usable[index] * float(min_relative)
 
     def cap(self, count: int) -> bool:
         """True when sample mode says to stop."""

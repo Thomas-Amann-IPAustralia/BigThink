@@ -30,13 +30,34 @@ touching anything else.
 ```yaml
 emergence:
   topics:
-    similarity_threshold_by_backend:
-      hashing: 0.18      # raise for tighter topics
-      bge: 0.62
+    method: "agglomerative"
+    similarity_thresholds:
+      agglomerative:
+        hashing: 0.14    # raise for tighter topics
+        bge: 0.45
+      leader:
+        hashing: 0.30
+        bge: 0.62
 ```
 
-Cosine values are not comparable across backends. Tune the entry for the
-backend you are actually running, and never copy a value between them.
+A threshold belongs to a **method and a backend together**, and copying a value
+across either axis is the single easiest way to break topic formation while
+everything still appears to run.
+
+- **Across backends**, because the backend sets a cosine's scale. Hashed TF-IDF
+  puts two closely-related abstracts around 0.25-0.35; BGE puts the same pair
+  above 0.8.
+- **Across methods**, because the method decides what the cosine is *between*.
+  `leader` compares a document to a cluster centroid — an average of many
+  vectors, and so similar to almost anything. `agglomerative` compares the mean
+  pairwise similarity between two clusters' members, which is far lower on
+  identical data. Measured on 2,987 real OpenAlex documents under `hashing`:
+  mean pairwise cosine 0.075, 99th percentile 0.191. At the leader value of
+  0.30, average linkage assigned **23 of 2,987 documents**.
+
+`python -m src.calibrate threshold` sweeps whichever method is configured, over
+a range appropriate to it. Sweeping one method and configuring another produces
+a number that looks calibrated and is not.
 
 ---
 

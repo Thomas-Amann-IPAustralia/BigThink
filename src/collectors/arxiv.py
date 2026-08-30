@@ -84,6 +84,12 @@ class ArxivCollector(Collector):
             try:
                 root = ET.fromstring(xml_text)
             except ET.ParseError as exc:
+                # This year is lost and the remaining years still run, because
+                # each year is its own generator. Recorded so the frame is
+                # logged `partial` — a corpus missing one year of arXiv history
+                # is a growth curve fitted to a hole, and nothing downstream
+                # can tell unless the gap is written down here.
+                self.note_incident(f"{year}: unparseable XML ({exc})")
                 logger.warning(
                     "arXiv returned unparseable XML for %r (%d): %s", query, year, exc
                 )

@@ -167,7 +167,9 @@ CREATE TABLE IF NOT EXISTS collection_log (
     run_id           VARCHAR NOT NULL,
     source           VARCHAR NOT NULL,
     scan_frame_key   VARCHAR NOT NULL,
-    status           VARCHAR NOT NULL,      -- success | skipped | failed
+    status           VARCHAR NOT NULL,      -- success | partial | skipped | failed
+                                            -- partial: some records, but the collector
+                                            -- handled a failure. See `message`.
     records          INTEGER DEFAULT 0,
     message          VARCHAR,
     logged_at        TIMESTAMP NOT NULL

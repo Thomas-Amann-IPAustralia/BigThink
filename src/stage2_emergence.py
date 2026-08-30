@@ -507,23 +507,34 @@ def _run_inner(conn: Any, config: dict[str, Any], run_id: str) -> dict[str, Any]
 
     method = str(get(config, "emergence", "topics", "method", default="agglomerative"))
     threshold = topic_similarity_threshold(config)
+    max_topics = int(get(config, "emergence", "topics", "max_topics", default=120))
     if method == "bertopic":
         found = topics_mod.cluster_bertopic(
             forming_texts, forming_vectors, min_topic_size=min_topic_size
+        )
+    elif method == "leader":
+        found = topics_mod.cluster_leader(
+            forming_vectors,
+            threshold=threshold,
+            min_topic_size=min_topic_size,
+            max_topics=max_topics,
         )
     else:
         found = topics_mod.cluster_agglomerative(
             forming_vectors,
             threshold=threshold,
             min_topic_size=min_topic_size,
-            max_topics=int(get(config, "emergence", "topics", "max_topics", default=120)),
+            max_topics=max_topics,
+            max_pairwise=int(
+                get(config, "emergence", "topics", "max_pairwise", default=12_000)
+            ),
         )
     if not found:
         raise insufficient_data_error(
             STAGE,
-            "clustering produced no topics — the similarity threshold for this backend "
-            "is probably too high for the corpus. See emergence.topics."
-            "similarity_threshold_by_backend.",
+            "clustering produced no topics — the similarity threshold is probably too "
+            "high for this corpus. Thresholds are per method AND per backend: see "
+            "emergence.topics.similarity_thresholds.",
         )
     topics_mod.label_topics(found, forming_texts)
     found = topics_mod.drop_vocabulary_poor_topics(

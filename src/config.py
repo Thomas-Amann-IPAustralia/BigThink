@@ -30,7 +30,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_CONFIG_PATH = REPO_ROOT / "bigthink_config.yaml"
 
 _VALID_EMBEDDING_BACKENDS = {"hashing", "bge"}
-_VALID_TOPIC_METHODS = {"agglomerative", "bertopic"}
+_VALID_TOPIC_METHODS = {"agglomerative", "leader", "bertopic"}
 _VALID_TIME_SLICES = {"year", "quarter"}
 _KNOWN_SOURCES = {
     "openalex",
@@ -114,21 +114,52 @@ def snapshot_config(config: dict[str, Any]) -> str:
 
 
 def topic_similarity_threshold(config: dict[str, Any]) -> float:
-    """Clustering threshold for the *currently selected* embedding backend.
+    """Clustering threshold for the active clustering *method* and embedding backend.
 
     Kept as a function rather than a plain config read so there is exactly one
-    place where the backend/threshold pairing is resolved. Reading the wrong
-    backend's threshold produces either one giant topic or none at all, and
-    both failure modes look like a data problem rather than a config one.
+    place where the pairing is resolved. Reading the wrong threshold produces
+    either one giant topic or none at all, and both failure modes look like a
+    data problem rather than a config one.
+
+    The threshold depends on BOTH axes because each names a different quantity:
+
+    * The backend sets the scale of a cosine. Hashed TF-IDF puts a related pair
+      around 0.28; BGE puts it above 0.8.
+    * The method decides what the cosine is *between*. `leader` compares a
+      document to a cluster centroid — an average of many vectors, so similar
+      to almost anything. `agglomerative` compares the mean pairwise similarity
+      between two clusters' members, which is far lower on the same data.
+
+    Measured on 2,987 real OpenAlex documents under `hashing`: mean pairwise
+    cosine 0.075, 99th percentile 0.191. At the leader threshold of 0.30,
+    average linkage assigned 23 of 2,987 documents; at 0.14 it assigned 56%
+    across 61 topics with the largest holding 10% of them. One number cannot
+    serve both methods any more than it can serve both backends.
     """
     backend = str(get(config, "embeddings", "backend", default="hashing"))
-    thresholds = get(config, "emergence", "topics", "similarity_threshold_by_backend", default={})
-    if backend not in thresholds:
-        raise ConfigError(
-            f"No emergence.topics.similarity_threshold_by_backend entry for active "
-            f"backend {backend!r}. Add one before running Stage 2."
-        )
-    return float(thresholds[backend])
+    method = str(get(config, "emergence", "topics", "method", default="agglomerative"))
+    topics = get(config, "emergence", "topics", default={}) or {}
+
+    by_method = topics.get("similarity_thresholds") or {}
+    if method in by_method:
+        if backend not in by_method[method]:
+            raise ConfigError(
+                f"No emergence.topics.similarity_thresholds.{method} entry for active "
+                f"backend {backend!r}. Add one before running Stage 2."
+            )
+        return float(by_method[method][backend])
+
+    # Pre-2026-08-30 shape: one map keyed by backend alone, when `leader` was
+    # the only numpy method. Still honoured so a run can be reproduced from its
+    # own config snapshot.
+    legacy = topics.get("similarity_threshold_by_backend") or {}
+    if backend in legacy:
+        return float(legacy[backend])
+
+    raise ConfigError(
+        f"No clustering threshold for method {method!r} and backend {backend!r}. "
+        f"Add emergence.topics.similarity_thresholds.{method}.{backend}."
+    )
 
 
 def contact_email(config: dict[str, Any]) -> str:
@@ -241,6 +272,33 @@ def _validate_collection(c: dict[str, Any]) -> None:
     if not any(bool(s.get("enabled")) for s in sources.values() if isinstance(s, dict)):
         raise ConfigError("collection.sources has no enabled source — nothing to collect.")
 
+    # Per-source relevance filtering. Both are strict because a wrong value
+    # here does not fail — it quietly changes how much of each API's result set
+    # reaches the corpus, which is indistinguishable from the world changing.
+    for name, settings in sources.items():
+        if not isinstance(settings, dict):
+            continue
+        if "min_relative_score" in settings:
+            score = float(settings["min_relative_score"])
+            if not 0.0 <= score <= 1.0:
+                raise ConfigError(
+                    f"collection.sources.{name}.min_relative_score must be in [0, 1], "
+                    f"got {score}. It is a fraction of an anchor score, not a score."
+                )
+        if "relevance_anchor_rank" in settings:
+            rank = int(settings["relevance_anchor_rank"])
+            if rank < 1:
+                raise ConfigError(
+                    f"collection.sources.{name}.relevance_anchor_rank must be >= 1 — "
+                    "it is a 1-indexed position in the ranked results, where 1 anchors "
+                    "the floor on the top-scoring result."
+                )
+        for key in ("exclude_types", "exclude_titles"):
+            if key in settings and not isinstance(settings[key], list):
+                raise ConfigError(
+                    f"collection.sources.{name}.{key} must be a list of strings."
+                )
+
     for name, cat in (c.get("steepv_default_by_source", {}) or {}).items():
         if cat not in STEEPV_CATEGORIES:
             raise ConfigError(
@@ -273,13 +331,40 @@ def _validate_emergence(e: dict[str, Any]) -> None:
         raise ConfigError(
             f"emergence.topics.method must be one of {sorted(_VALID_TOPIC_METHODS)}, got {method!r}"
         )
-    by_backend = topics.get("similarity_threshold_by_backend", {}) or {}
-    if not isinstance(by_backend, dict) or not by_backend:
+    by_method = topics.get("similarity_thresholds") or {}
+    legacy = topics.get("similarity_threshold_by_backend") or {}
+    if not by_method and not legacy:
         raise ConfigError(
-            "emergence.topics.similarity_threshold_by_backend must map each embedding "
-            "backend to its own threshold — cosine values are not comparable across backends."
+            "emergence.topics.similarity_thresholds must map each clustering method to "
+            "a threshold per embedding backend — a cosine means a different thing under "
+            "each, so one number cannot serve them all."
         )
-    for backend, value in by_backend.items():
+    if by_method:
+        if not isinstance(by_method, dict):
+            raise ConfigError("emergence.topics.similarity_thresholds must be a mapping.")
+        for name, thresholds in by_method.items():
+            if name not in _VALID_TOPIC_METHODS:
+                raise ConfigError(
+                    f"emergence.topics.similarity_thresholds has unknown method {name!r}. "
+                    f"Known methods: {sorted(_VALID_TOPIC_METHODS)}"
+                )
+            if not isinstance(thresholds, dict) or not thresholds:
+                raise ConfigError(
+                    f"emergence.topics.similarity_thresholds.{name} must map each embedding "
+                    "backend to its own threshold."
+                )
+            for backend, value in thresholds.items():
+                if backend not in _VALID_EMBEDDING_BACKENDS:
+                    raise ConfigError(
+                        f"emergence.topics.similarity_thresholds.{name} has unknown "
+                        f"backend {backend!r}"
+                    )
+                if not 0.0 < float(value) < 1.0:
+                    raise ConfigError(
+                        f"emergence.topics.similarity_thresholds.{name}.{backend} "
+                        "must be in (0, 1)"
+                    )
+    for backend, value in legacy.items():
         if backend not in _VALID_EMBEDDING_BACKENDS:
             raise ConfigError(
                 f"emergence.topics.similarity_threshold_by_backend has unknown backend {backend!r}"

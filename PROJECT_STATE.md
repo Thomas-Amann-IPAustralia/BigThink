@@ -37,20 +37,22 @@ as a finding.
 | Stage | State | Notes |
 |---|---|---|
 | 0 — Strategy encoding | **Working** | 34 references: 9 objectives, 6 initiatives, 7 DISR fields, 12 assets |
-| 1 — Signal collection | **Working, five of six sources** | OpenAlex went live on the `2026-08-30` run: 20/20 queries succeeded, but the relevance floor holds it to 8% of the corpus (issue 3). PatentsView still disabled (issue 6). Crossref is returning peer-review records as if they were papers (issue 11) |
-| 2 — Emergence detection | **Working** | Kleinberg bursts, logistic growth curves, Rotolo five-attribute score, Three Horizons |
+| 1 — Signal collection | **Working, five of six sources; rebuilt 2026-08-31** | OpenAlex relevance floor re-anchored — 3,120 records from one page per frame against 592 for the whole previous run (issue 3). Crossref peer-review records excluded (issue 11). GDELT windowed for real 24-month coverage (issue 5). Failures are now recorded rather than swallowed. PatentsView still disabled (issue 6) |
+| 2 — Emergence detection | **Working; clustering replaced 2026-08-31** | True average-linkage clustering at threshold 0.14 replaces leader clustering at 0.30 — largest cluster falls from 57% of everything assigned to 10-14%. Kleinberg bursts, logistic growth curves, Rotolo five-attribute score, Three Horizons unchanged, and the Rotolo blend carries a size bias (issue 12) |
 | 3 — Fit and leverage | **Working, weak** | Strategic fit is usable; asset leverage is compressed — see Open issue 2 |
 | 4 — Opportunity index | **Working, partial** | `patent_activity` has no data without PatentsView; weight redistributes automatically |
 | 5 — Synthesis | **Working** | Shortlist, 2×2 views, evidence cards, CSV, published HTML |
 | Notebook export | **Working, not yet reviewed by anyone** | `src/notebook.py`; written automatically after Stage 5. Re-derives emergence, horizon, index and composite rank from stored inputs |
 | Automation | **Fully exercised** | `tests.yml` green. `verify-access.yml` — **both credentials pass**. `scan.yml` **first ran 2026-08-30 (run 33310810297) and succeeded end to end**: 66 min collection, 0 failed pairs, site built, outputs committed, first corpus release published, R2 mirror written |
-| Tests | **195 passing** | Offline by design; every defect found so far has one |
+| Tests | **223 passing** | Offline by design; every defect found so far has one |
 
 **Current baseline — `2026-08-30`** (workflow run 33310810297, the first
 `scan.yml` execution). Collected from an empty database, because no corpus
 release existed to restore: 7,653 records fetched, 7,219 documents after
-deduplication, across 2018–2026, with **zero failed or skipped source/frame
-pairs** — the first clean sweep on this project. Sources: Crossref 2,432,
+deduplication, across 2018–2026. It was originally recorded here as having
+**zero failed or skipped source/frame pairs**; that was wrong — four GDELT
+frames collected nothing and were logged `success` (issue 5). The counter could
+not see the failure mode. Sources: Crossref 2,432,
 GDELT 2,040, arXiv 2,018, **OpenAlex 581**, data.gov.au 148. 15 topics survived
 filtering; 2,760 documents (38%) were assigned to one.
 
@@ -120,7 +122,13 @@ Three things in that table are worth noticing, and one of them is a warning.
 in this file, so new issues keep the next free number wherever they sit in the
 ordering.*
 
-### 11. Crossref peer-review records are producing phantom topics — NEW 2026-08-30
+### 11. ~~Crossref peer-review records are producing phantom topics~~ — FIXED 2026-08-31
+
+`src/collectors/crossref.py` now drops `type` in
+`collection.sources.crossref.exclude_types` (`peer-review`, `component`) and
+titles in `exclude_titles` (*References*, *Bibliography*, *Index*), with tests
+covering both the exclusion and the reviewed paper still being kept. The
+original diagnosis, kept because the mechanism is worth remembering:
 
 **Two of the fifteen topics on the `2026-08-30` baseline are not topics.** Both
 are the peer-review history of a single paper.
@@ -159,9 +167,68 @@ it only as a fallback venue label when a record has no container title; it never
 filters on it. Excluding `peer-review`, and probably `component` and back-matter
 titled *References*, removes both artefacts at source.
 
-**Not applied yet, deliberately.** It changes what every future run collects, so
-it needs a test and a calibration-log entry rather than a quiet edit — and the
-run it would change is the baseline everything is now measured against.
+**Applied 2026-08-31**, together with the other collection changes, since the
+baseline is being recut anyway. Note this removes the *documents*; it does not
+remove the scoring pressure that promoted them. A tight cluster of near-identical
+text scores maximally on novelty and coherence whatever produced it — see issue
+12.
+
+### 12. The emergence score is structurally biased toward small topics — NEW 2026-08-31
+
+Measured across the fifteen topics of the 2026-08-30 run:
+
+| attribute | rotolo weight | correlation with log(document count) |
+|---|---:|---:|
+| novelty | 0.25 | **-0.80** |
+| coherence | 0.15 | -0.54 |
+| uncertainty | 0.10 | -0.37 |
+| growth | 0.30 | +0.37 |
+| impact | 0.20 | -0.30 |
+| **emergence score** | **1.00** | **-0.43** |
+
+Half the Rotolo weight is anti-correlated with topic size, through three
+mechanisms that are each defensible alone:
+
+- **Novelty** is cosine distance from the early-corpus centroid, and a large
+  topic's centroid sits near the corpus centroid by construction.
+- **Coherence** is mean member-to-centroid cosine. Small clusters are tighter —
+  that is what makes them small.
+- **Uncertainty** normalises entropy by `log(observed categories)`, so a topic
+  whose ten documents each name a different institution scores a perfect 1.0
+  for actor dispersion, when the honest answer is "not measurable".
+
+This is the mechanism behind the artefacts, not just bad luck: the
+`arc additive / wire arc` topic took the highest emergence score in the run
+(0.843) on novelty 0.878 and coherence 0.779, which are *correct measurements
+of the wrong thing*.
+
+**Made more urgent by the clustering fix.** Average linkage produces more,
+smaller topics — 62 rather than 15 on a 2,987-document trial, with 36 of them
+below `min_docs_per_topic`. Ranks 2, 4, 7, 8 and 9 of that trial shortlist each
+held 8-10 documents.
+
+**Aggravated by issue 13.** Do not fix by tuning weights until the validation
+test in issue 1 has run; that is how a method becomes a way of confirming what
+you already thought.
+
+### 13. `min_docs_per_topic` does not gate anything — NEW 2026-08-31
+
+`CLAUDE.md` states the rule as "thin topics suppressed, not scored". Stage 4
+genuinely suppresses below `opportunity_index.min_documents: 15`. Stage 2's
+`emergence.min_docs_per_topic: 20` only emits a log warning — the topic is
+scored, ranked and published anyway.
+
+On the 2026-08-30 run that put `genetic / resource / access / pgrfa` at **rank
+5**: 10 documents, nothing since 2024, CAGR -100%/yr, classified `noise`,
+opportunity index suppressed as unmeasurable — ranked above geographical
+indications, IP enforcement and trust in institutions. It got there on novelty
+0.709 and impact 0.802, both computed from ten documents.
+
+**Fix is small** (gate in `stage2_emergence._run_inner`), but it changes the
+ranking, so it belongs behind issue 1 with the rest of issue 12. The
+alternative lever is `emergence.topics.min_topic_size`, currently 8, which is a
+clustering parameter rather than a scoring one and so is safe to sweep on the
+fresh baseline.
 
 ### 1. The ranking has never been validated — do this before trusting anything
 
@@ -198,7 +265,7 @@ This is the highest-value single change available.
 more entries, and more of the phrasing the literature actually uses, would
 help under either backend.
 
-### 3. OpenAlex — ~~contributes nothing~~ key fixed, but the relevance floor now caps it at 8%
+### 3. ~~OpenAlex is throttled to 8% of the corpus~~ — FIXED 2026-08-31 (the anchor, not the coefficient)
 
 Verified 2026-08-29: OpenAlex is no longer simply "free, no key". Requests are
 metered in dollars against a small daily allowance per IP, reset at midnight
@@ -231,9 +298,38 @@ relevance score. OpenAlex relevance scores decay steeply, so the floor bites
 almost immediately — it is a much tighter constraint against OpenAlex's scoring
 than against Crossref's, even though both are configured at 0.4.
 
-**Next:** lower `collection.sources.openalex.min_relative_score` toward 0.2 and
-record what it does to corpus size and topic quality. The best research source
-available is currently contributing less than data.gov.au and arXiv combined.
+**Root cause found and fixed 2026-08-31 — the anchor, not the coefficient.**
+The earlier diagnosis above is right that `min_relative_score` is the cut, and
+wrong about the shape of it. Replaying all 20 frames against the live API
+reproduces the run's per-frame yields **exactly, 20 of 20** at `0.4 x max` —
+but those yields are bimodal, not a mean of 29.6: 3, 3, 5, 6, 7, 9, 9 on seven
+frames and 100, 110, 60 on three.
+
+The cause is that OpenAlex `relevance_score` is unnormalised and blends text
+match with citation count. A query naming a well-known field returns one
+enormous top score and an ordinary tail, and a floor set at 40% of *that*
+becomes unreachable. `ct_ai` scored 3,011 at rank 1 and 1,628 at rank 2, so the
+floor cut at six; `ct_biotech` scored 609 then 573 and kept 110. Same query
+shape, comparable literature, 18x the yield. **The floor was measuring how much
+of an outlier the top hit was.**
+
+Worse, it is not random. The five hardest-hit frames are `ct_quantum`,
+`ip_admin_automation`, `ip_policy_reform`, `ct_ai` and `ct_advanced_ict` —
+three DISR critical technologies and the two frames mapping most directly to
+SI-3 and the Corporate Plan. The floor bit hardest exactly where a query names
+an established field cleanly, which is IP Australia's own subject matter.
+
+**Fixed** by anchoring on rank 10 rather than the maximum
+(`collection.sources.openalex.relevance_anchor_rank`). Lowering the coefficient
+to 0.2, as this issue previously proposed, would have raised the yield while
+leaving a 14x spread between frames. See the 2026-08-31 calibration entry.
+
+**Budget was never the constraint, and the config comment was wrong about it.**
+Measured from the live rate-limit headers: unauthenticated is $0.10/day, a key
+gives $1.00/day, and a request costs $0.001 (10 credits) — so 100 requests/day
+without a key and **1,000 with one**. The 2026-08-30 run used **20**. Every
+frame stopped inside page one, so `max_pages_per_query: 5` has never been
+exercised. The run received 4,000 records over the wire and kept 592.
 
 Note this does **not** retroactively improve any existing run. The 7,378-document
 corpus was collected without OpenAlex and still contains zero of its records;
@@ -254,20 +350,40 @@ environmental ones. **Compensate deliberately at the human synthesis session**,
 and treat a thin Social/Values shortlist as a property of the instrument rather
 than a finding about the world.
 
-### 5. GDELT is unreliable from shared IPs — but behaved perfectly on 2026-08-30
+### 5. GDELT is unreliable from shared IPs, and the 2026-08-30 run hid four total failures
 
 It rate-limits by source IP and drops connections mid-response with no error
 code — a majority of requests failed even at 6 seconds apart on 2026-08-29. It
 still returned 3,183 records over that run, so it works; it just cannot be
 relied on for any single frame.
 
-**On the `2026-08-30` run, all 18 GDELT queries succeeded** and returned 2,069
-records — no failures at all. That is one Actions runner on one day, not a fix,
-and the failure mode should still be expected. But it does mean a run with zero
-GDELT failures is achievable, and the 0-failure baseline is not evidence that
-anything was skipped. Failures, when they happen, are logged and cost only the
-attention component for that frame. Nothing to fix; know it when reading
-`collection_log`.
+**CORRECTED 2026-08-31. It did not behave perfectly on 2026-08-30, and the run
+could not tell you.** Four frames — `ip_sme_access`, `ai_authorship_inventorship`,
+`ct_biotech` and `ct_advanced_ict` — returned **zero records** after exhausting
+all four retry attempts, and all four were written to `collection_log` with
+status `success`. 14 of 18, not 18 of 18.
+
+The path: the collector caught `BigThinkError`, logged a warning and returned an
+empty generator; Stage 1 saw a clean return and recorded `success` with zero
+records; `failed_pairs` stayed at 0; Stage 1's own status was `success`; and
+this file recorded "zero failed or skipped source/frame pairs — the first clean
+sweep on this project". None of that was true, and nothing in the output said
+so. `ct_biotech` — OpenAlex's single most productive frame — has no attention
+signal at all, feeding a component that carries 25% of the opportunity index.
+
+This violated the repo's own convention: *"Collectors raise, never swallow. A
+collector that returns an empty list on failure produces a silent scan."*
+
+**Fixed 2026-08-31.** Collectors record an incident (`Collector.note_incident`)
+rather than swallowing; Stage 1 reads it after draining the generator and logs
+`partial` when documents survived or `failed` when none did, with the reason.
+Raising instead was not an option: `collect` is a generator consumed with
+`list()`, so an exception after the first yield discards the documents already
+produced, and a partial window is worth keeping.
+
+The underlying flakiness is unchanged and should still be expected — GDELT
+rate-limited this investigation's own probes hard enough to kill a local smoke
+test. What changed is that the run now says so.
 
 ### 6. PatentsView is off, so there is no patent signal at all
 
@@ -293,10 +409,12 @@ rather than from the data.
 This is the largest piece of unbuilt work and is a genuine option for the rest
 of the sprint. See Day 4 below.
 
-### 8. The `bge` threshold is a guess
+### 8. Every `bge` threshold is a guess
 
-`similarity_threshold_by_backend.bge: 0.62` has never been swept — only the
-`hashing` value has. Run `python -m src.calibrate threshold` after switching
+`similarity_thresholds.leader.bge: 0.62` and
+`similarity_thresholds.agglomerative.bge: 0.45` have never been swept — only
+the `hashing` values have, and the agglomerative one only against an
+OpenAlex-only corpus. Run `python -m src.calibrate threshold` after switching
 backends, before trusting any score computed under it.
 
 ### 9. Two Stage 3/5 outputs are computed but never persisted
@@ -374,6 +492,124 @@ not a replacement.
 ## Calibration log
 
 Append to this. Every entry should say what changed, why, and what moved.
+
+### 2026-08-31 — clustering method replaced; OpenAlex floor re-anchored; GDELT windowed
+
+**Nothing here has been run end to end on a real scan yet.** The numbers below
+come from a 2,987-document OpenAlex corpus pulled specifically to measure them
+(one page per frame, 2026-08-30) and from replaying the 2026-08-30 scan frame
+against the live API. The next full run is the test.
+
+**1. Clustering: `leader` -> true average-linkage `agglomerative`.**
+
+*Why.* The method named "agglomerative" was not agglomerative — it was leader
+clustering, which updates a cluster's centroid in place as it accretes. A
+growing cluster's centroid drifts toward the corpus mean, a mean-ward centroid
+resembles everything, so it absorbs more. The 2026-08-30 run recorded the end
+state: `T0000` held 1,497 documents (57% of everything assigned) under the
+label "image / patent / learning / watermark", and its stored novelty of 0.045
+means its centroid sat at **cosine 0.955 from the corpus centroid**, against
+0.12-0.43 for every other topic.
+
+*Evidence.* Both methods run over the same 2,987 real documents, `hashing`:
+
+| method | thr | topics | assigned | largest | share of assigned | cos(centroid, corpus) |
+|---|---:|---:|---:|---:|---:|---:|
+| leader | 0.26 | 1 | 2,074 | 2,074 | 100% | 0.998 |
+| leader | 0.30 | 2 | 1,284 | 1,274 | **99%** | 0.995 |
+| agglomerative | 0.14 | 61 | 1,659 | 173 | **10%** | 0.967 |
+
+*Also fixed by construction.* Documents arrive `ORDER BY published_date`, so
+leader clustering seeded clusters from the oldest documents and spent eight
+years accreting — a topic first appearing in 2024 had to out-compete centroids
+that had already absorbed everything before it. Average linkage is
+order-invariant (`test_average_linkage_is_order_invariant`), so the bias cannot
+exist. Leader's silent drop of every unmatched document once `max_topics` was
+reached is also gone; the new method keeps the largest `max_topics` and says so.
+
+`leader` is retained as a config value so a pre-2026-08-30 run can be
+reproduced from its own snapshot.
+
+**2. Clustering threshold: 0.30 -> 0.14, and the key is now per method.**
+
+*Why.* A threshold belongs to a method as well as a backend. `leader` compares
+a document to a centroid; `agglomerative` compares the mean pairwise similarity
+between two clusters' members, which is far lower on identical data. Measured
+on those 2,987 documents: mean pairwise cosine **0.075**, 99th percentile
+**0.191**. At 0.30, average linkage assigned **23 of 2,987 documents**.
+
+*Sweep (agglomerative, hashing).* 0.14 chosen: first value with coverage above
+30% and no cluster over 25% of what is assigned.
+
+| thr | topics | coverage | largest share |
+|---:|---:|---:|---:|
+| 0.10 | 31 | 82% | 40% |
+| 0.12 | 48 | 71% | 25% |
+| **0.14** | **61** | **56%** | **10%** |
+| 0.16 | 63 | 40% | 9% |
+| 0.18 | 39 | 22% | 11% |
+
+Labels at 0.14 are interpretable without help: "energy / storage / battery /
+renewable", "quantum / cryptography / cryptographic / security", "traditional
+cultural / traditional knowledge / indigenous / cultural expression".
+
+`similarity_threshold_by_backend` becomes `similarity_thresholds`, keyed by
+method then backend. The old shape is still read, so old snapshots resolve.
+
+**Re-sweep this on the fresh baseline.** The corpus above is OpenAlex-only and
+the real one will not be. `bge: 0.45` is a shape-preserving guess and has never
+been swept (issue 8, still open).
+
+**3. OpenAlex relevance floor re-anchored: `0.4 x max` -> `0.4 x rank-10`.**
+
+*Why.* OpenAlex relevance blends text match with citation count, so a query
+naming a well-known field returns one enormous score and a normal tail.
+Anchoring the floor on that maximum made a frame's yield a function of how much
+of an outlier its top hit was rather than of how much literature existed. See
+the rewritten issue 3.
+
+*Evidence.* Replaying all 20 frames against the live API, `0.4 x max`
+reproduces the 2026-08-30 per-frame yields **exactly, 20 of 20** — which is
+what identifies the floor as the sole cause. Switching the anchor to rank 10:
+
+| | total kept | min frame | max frame | spread |
+|---|---:|---:|---:|---:|
+| 0.4 x max (old) | 592 | 3 | 110 | 37x |
+| 0.2 x max (previously proposed) | 3,544 | 29 | 400 | 14x |
+| **0.4 x rank-10** | **3,857** | **52** | **400** | **8x** |
+
+Confirmed live: one page per frame under the new anchor returned **3,120
+records**, against 592 for the entire previous run at five pages. Narrow queries
+still get less, correctly — `ip_enforcement_counterfeit` (1,283 works available)
+keeps 52.
+
+`relevance_anchor_rank: 1` reproduces the old behaviour and is what Crossref
+uses, where the gentler score decay makes the floor near-inert (197.8 of a
+possible 200 records per query on the 2026-08-30 run).
+
+**4. Crossref record types excluded: `peer-review`, `component`, and
+back-matter titled *References* / *Bibliography* / *Index*.** Closes issue 11.
+
+**5. GDELT window split into 4 date-range chunks.**
+
+*Why.* `timespan=24m` never returned 24 months. `artlist` sorts
+most-recent-first and `maxrecords` caps at 250, so one request returns the
+newest 250 articles however wide the window — every one of the 2,040 GDELT
+documents on the 2026-08-30 run carried a 2026 date, and a live re-test
+returned only 2026-06 to 2026-08. `startdatetime`/`enddatetime` do work
+(verified 2026-08-30, returning genuine 2025 articles), contrary to the note in
+the collector, which is now corrected.
+
+*Cost.* 32-36 s per request measured, so 4 windows x 18 frames is 72 artlist
+requests against 18. `scan.yml` timeout raised 180 -> 240 min. A failed window
+is recorded and the remaining windows still attempted. **Whether this survives
+a shared runner is the open question for the next run** — GDELT rate-limited
+this investigation's own probes hard enough that a local smoke test could not
+finish. If it does not hold, lower `window_chunks` rather than reverting to a
+window that lies.
+
+**6. Collector failures are now recorded, not swallowed.** See the rewritten
+issue 5. No result changes; it changes what the run can tell you about itself.
 
 ### 2026-08-30 — new baseline corpus (OpenAlex live); no weight changed
 
@@ -547,18 +783,21 @@ Day 5.** A ranked list nobody has interrogated is not research.
 For whoever — or whichever Claude instance — picks this up next. The first two
 come out of the `2026-08-30` baseline and are both small:
 
-1. **Fix issue 11 (Crossref record types).** Filter `type == "peer-review"` in
-   `src/collectors/crossref.py`, add a test with a peer-review fixture, and
-   record it in the calibration log. This is the highest-value change available
-   and it removes two artefacts from the top six.
-2. **Loosen the OpenAlex relevance floor** (issue 3) —
-   `collection.sources.openalex.min_relative_score` from 0.4 toward 0.2 — then
-   re-run collection. The best research source is contributing 8%.
-3. **Re-sweep the clustering threshold** on the new corpus:
-   `python -m src.calibrate threshold --show-labels`. The 0.30 value was
-   calibrated against a corpus that no longer exists, and the catch-all now
-   holds 54% of everything assigned.
-4. `python -m pytest tests/ -q` — expect 195 passing. If not, start there.
+1. **Collect the fresh baseline.** Issues 3, 5 and 11 are all fixed and all
+   change what is collected, so the 2026-08-30 corpus is not comparable and the
+   `corpus-*` release chain must not be restored onto it. Run `scan.yml` from an
+   empty database. Watch two things: whether the chunked GDELT window survives a
+   shared runner (lower `window_chunks` rather than reverting if not), and how
+   much of the corpus OpenAlex now accounts for.
+2. **Re-sweep the clustering threshold on that corpus**:
+   `python -m src.calibrate threshold --show-labels`. The 0.14 value was swept
+   against 2,987 OpenAlex-only documents; the real corpus will also carry
+   Crossref, arXiv and data.gov.au. Sweep `min_topic_size` at the same time —
+   average linkage produces finer clusters and 8 may now be too permissive
+   (issue 13).
+3. **Read the top evidence cards before any score.** Expect more, smaller topics
+   than the 15 of the last run.
+4. `python -m pytest tests/ -q` — expect 223 passing. If not, start there.
 5. Read `docs/method.md` if you have not; it is what the numbers mean.
 6. `python -m src.verify_access` — confirms the OpenAlex and R2 credentials
    still work before a run depends on them. Locally it needs the variables

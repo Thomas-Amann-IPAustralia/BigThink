@@ -104,16 +104,30 @@ collection:
   sources:
     openalex:
       enabled: true
-      # No key required. `mailto` (from pipeline.contact_email) buys the
-      # polite pool. Free API keys give ~$1/day of credits if you need more.
+      # A key is effectively required, not optional. Measured 2026-08-30 from
+      # the live rate-limit headers: unauthenticated callers get $0.10/day and
+      # a key gets $1.00/day, at $0.001 (10 credits) per request. That is 100
+      # requests/day without a key and 1,000 with one. A full scan at the
+      # ceiling below is 100 requests — comfortable with a key, the entire
+      # daily allowance without. `mailto` buys the polite pool, not budget.
       per_page: 200
       max_pages_per_query: 5
       min_year: 2018
-      # Drop results scoring below this fraction of the query's own top score.
-      # Absolute score cut-offs cannot work — scores are not comparable across
-      # queries — so the floor is relative. Raise toward 0.6 for a tighter,
-      # smaller corpus; lower toward 0.2 to widen the net and accept more noise.
+      # Drop results scoring below this fraction of an anchor score. Absolute
+      # cut-offs cannot work — relevance scores are not comparable across
+      # queries — so the floor is relative.
       min_relative_score: 0.4
+      # WHICH result anchors it, 1-indexed. This matters more than the fraction
+      # above. OpenAlex relevance blends text match with citation count, so a
+      # query naming a well-known field returns one enormous score and a normal
+      # tail; anchoring on that maximum (rank 1) made the yield a function of
+      # how much of an outlier the top hit was. On the 2026-08-30 run that kept
+      # 3 records for ct_quantum and 110 for ct_biotech — same query shape,
+      # comparable literature, 37x spread across the frame set, and it bit
+      # hardest on the frames closest to IP Australia's own subject matter.
+      # Rank 10 is robust to a single anomalous score. Set to 1 to reproduce
+      # runs collected before 2026-08-30.
+      relevance_anchor_rank: 10
     arxiv:
       enabled: true
       # Fastest emergence signal for AI/CS — publication lag measured in days,
@@ -136,12 +150,40 @@ collection:
       # ordering entirely. See the note in src/collectors/crossref.py.
       max_pages_per_query: 2
       min_relative_score: 0.4
+      # Anchored on the maximum, unlike OpenAlex: Crossref's score decays
+      # gently and this floor rarely binds (197.8 of a possible 200 records per
+      # query on the 2026-08-30 run). Left at 1 so the OpenAlex fix does not
+      # silently change this source too.
+      relevance_anchor_rank: 1
+      # Crossref registers peer-review reports and back-matter as first-class
+      # records with their own DOIs, so deduplication cannot see them and the
+      # reviews of one paper cluster very tightly — they share its title. On
+      # the 2026-08-30 run that produced two of the fifteen shortlisted topics,
+      # one carrying the highest emergence score in the run. Every measurement
+      # was correct; the input was wrong.
+      exclude_types: ["peer-review", "component"]
+      # Book bibliographies registered under their own DOI, titled only this.
+      exclude_titles: ["references", "bibliography", "index"]
     gdelt:
       enabled: true
-      # Attention/salience proxy. GDELT rejects windows longer than ~1 year on
-      # the DOC API, so long spans are chunked automatically.
+      # Attention/salience proxy.
+      #
+      # `max_records_per_query` is per REQUEST, and GDELT caps it at 250.
+      # `artlist` sorts most-recent-first, so a single request returns the
+      # newest 250 articles and nothing older however wide the window: on the
+      # 2026-08-30 run every one of the 2,040 GDELT documents carried a 2026
+      # date, and a live re-test of `timespan=24m` returned only 2026-06 to
+      # 2026-08. Splitting the window into explicit date ranges is the only way
+      # to get history out of this API.
       max_records_per_query: 250
       timespan_months: 24
+      # Number of equal date ranges the window is split into. Each costs one
+      # request, measured at 32-36 s, and GDELT drops connections without an
+      # error code from shared runners — so this is the main lever on both
+      # coverage and run time. 4 gives 6-month windows and up to 1,000 articles
+      # per frame. A failed window is recorded and the rest still attempted.
+      # Set to 1 to reproduce runs collected before 2026-08-30.
+      window_chunks: 4
     datagovau:
       enabled: true
       # CKAN at https://data.gov.au/data/api/3 — policy + IP Australia's own
@@ -196,26 +238,49 @@ emergence:
     # afterwards, so they count toward attention and the time series without
     # having distorted the topic that they are being counted against.
     forming_sources: ["openalex", "crossref", "arxiv", "datagovau", "patentsview"]
-    # `agglomerative` needs no heavy deps and is deterministic — good enough to
-    # shape the pipeline. Switch to `bertopic` once you install requirements-ml.txt.
+    # `agglomerative` is true average-linkage clustering: no heavy deps,
+    # deterministic, and order-invariant. `leader` is the pre-2026-08-30
+    # sequential nearest-centroid method, kept only to reproduce old runs — it
+    # builds a mega-cluster by construction (see src/topics.py). Switch to
+    # `bertopic` once you install requirements-ml.txt.
     method: "agglomerative"
-    # Cosine values are NOT comparable across embedding backends. Hashed TF-IDF
-    # puts two closely-related abstracts around 0.25-0.35; BGE puts the same
-    # pair above 0.8. One threshold cannot serve both, so each backend carries
-    # its own. Both figures below are starting points, NOT calibrated values —
-    # see PROJECT_STATE.md "Open calibration decisions" before trusting them.
-    similarity_threshold_by_backend:
-      # hashing: 0.30 was chosen from a sweep on the 2026-08-29 corpus
-      # (4,195 topic-forming documents). Below 0.30 a single mega-cluster
-      # absorbed 52-64% of the corpus and labelled itself
-      # "patent / watermark / llm / quantum"; at 0.30 it collapsed to 10% and
-      # every topic label became interpretable. Re-run `python -m src.calibrate
-      # threshold` after any material change to the corpus or the scan frame.
-      hashing: 0.30
-      # NOT calibrated. BGE cosines run much higher than hashed TF-IDF, so this
-      # is a plausible starting point only — sweep it before trusting any fit
-      # score computed under it.
-      bge: 0.62
+    # A cosine threshold depends on BOTH the backend and the method, because
+    # each names a different quantity.
+    #
+    #   Backend sets the SCALE. Hashed TF-IDF puts two closely-related
+    #   abstracts around 0.25-0.35; BGE puts the same pair above 0.8.
+    #
+    #   Method sets WHAT THE COSINE IS BETWEEN. `leader` compares a document to
+    #   a cluster centroid — an average of many vectors, and so similar to
+    #   almost everything. `agglomerative` compares the mean pairwise
+    #   similarity between two clusters' members, which is far lower on
+    #   identical data.
+    #
+    # Measured on 2,987 real OpenAlex documents under `hashing` (2026-08-30):
+    # mean pairwise cosine 0.075, 99th percentile 0.191. At the leader value of
+    # 0.30, average linkage assigned 23 of 2,987 documents. Carrying one number
+    # across methods is the same error as carrying one across backends.
+    similarity_thresholds:
+      agglomerative:
+        # 0.14 from a sweep over those 2,987 documents: 61 topics, 56% of the
+        # corpus assigned, largest cluster 10% of everything assigned, and
+        # every label interpretable ("energy / storage / battery / renewable",
+        # "quantum / cryptography / cryptographic / security"). Below 0.12 the
+        # largest cluster passes 25% and climbs fast; above 0.16 coverage
+        # collapses. Re-sweep on the fresh baseline — that corpus is
+        # OpenAlex-only and the real one will not be.
+        hashing: 0.14
+        # NOT calibrated — no BGE sweep has ever been run (PROJECT_STATE issue
+        # 8). BGE cosines run much higher than hashed TF-IDF, so this is a
+        # shape-preserving guess and nothing more.
+        bge: 0.45
+      leader:
+        # 0.30 from the 2026-08-29 sweep on a 4,195-document corpus that no
+        # longer exists. On the 2026-08-30 corpus it produced a catch-all
+        # holding 57% of everything assigned. Kept for reproducibility only.
+        hashing: 0.30
+        # NOT calibrated. Never swept.
+        bge: 0.62
     # Documents from sources outside `forming_sources` are attached to the
     # nearest topic at this fraction of the clustering threshold. Looser on
     # purpose: attachment happens after centroids are fixed and cannot move

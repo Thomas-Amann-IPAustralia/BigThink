@@ -43,6 +43,15 @@ class CrossrefCollector(Collector):
     name = "crossref"
     request_delay = 0.2
 
+    def __init__(self, config: dict[str, Any], run_id: str) -> None:
+        super().__init__(config, run_id)
+        self._excluded_types = {
+            str(t).strip().lower() for t in (self.settings.get("exclude_types") or [])
+        }
+        self._excluded_titles = {
+            str(t).strip().lower() for t in (self.settings.get("exclude_titles") or [])
+        }
+
     def collect(
         self, query: str, frame: dict[str, Any], start_year: int, end_year: int
     ) -> Iterator[dict[str, Any]]:
@@ -52,7 +61,7 @@ class CrossrefCollector(Collector):
         steepv = self.steepv_for(frame)
 
         emitted = 0
-        top_score: float | None = None
+        floor: float | None = None
         for page in range(max_pages):
             params = {
                 # query.bibliographic searches title, container and author
@@ -73,11 +82,19 @@ class CrossrefCollector(Collector):
                 return
             self.save_raw(str(frame.get("key", "query")), page, payload)
 
-            # The first item of the first page is the most relevant match for
-            # this query; every later item is judged against it.
-            if top_score is None:
-                top_score = float(items[0].get("score") or 0.0)
-            floor = (top_score or 0.0) * min_relative_score
+            # Anchored on rank 1 — the maximum — unlike OpenAlex. Crossref's
+            # `score` decays gently enough that the floor rarely binds here:
+            # on the 2026-08-30 run Crossref returned 197.8 records per query
+            # against a 200 ceiling, so the page cap, not the floor, was the
+            # limit. Left at 1 so this source's behaviour is unchanged by the
+            # OpenAlex fix; see Collector.relevance_floor for why OpenAlex
+            # cannot use the same anchor.
+            if floor is None:
+                floor = self.relevance_floor(
+                    [i.get("score") for i in items],
+                    min_relative=min_relative_score,
+                    anchor_rank=int(self.settings.get("relevance_anchor_rank", 1)),
+                )
 
             for item in items:
                 if float(item.get("score") or 0.0) < floor:
@@ -102,6 +119,18 @@ class CrossrefCollector(Collector):
         titles = item.get("title") or []
         title = titles[0] if titles else ""
         if not doi or not title:
+            return None
+
+        # Crossref registers peer-review reports, component parts and book
+        # back-matter as first-class records with their own DOIs. They are not
+        # papers, and `native_id` deduplication cannot remove them because the
+        # identifiers genuinely are distinct — while the reviews of one paper
+        # all carry that paper's title, so they cluster more tightly than any
+        # real topic. Filtering here rather than downstream is deliberate: by
+        # the time a cluster exists the damage is a topic, not a document.
+        if str(item.get("type", "")).strip().lower() in self._excluded_types:
+            return None
+        if _strip_markup(title).strip().lower() in self._excluded_titles:
             return None
 
         authors = [
