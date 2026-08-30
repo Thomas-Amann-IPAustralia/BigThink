@@ -212,9 +212,16 @@ class _FakeBody:
         return self._data
 
 
+# A Cloudflare account ID is exactly 32 hex characters, and check_r2 now
+# rejects anything else before it reaches botocore — so the fixture has to
+# use a realistic one.
+ACCOUNT = "6cd7669a5e77a844abc49b6a0eecd0a3"
+
+
 @pytest.fixture()
 def r2_env(monkeypatch):
-    for name in ("R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"):
+    monkeypatch.setenv("R2_ACCOUNT_ID", ACCOUNT)
+    for name in ("R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"):
         monkeypatch.setenv(name, "value")
 
 
@@ -420,7 +427,6 @@ def test_check_r2_uses_the_jurisdiction_endpoint(monkeypatch, r2_env):
     # never uses, which is worse than no check at all.
     import boto3
 
-    monkeypatch.setenv("R2_ACCOUNT_ID", "acct")
     captured = {}
 
     def fake_client(service, **kwargs):
@@ -429,7 +435,7 @@ def test_check_r2_uses_the_jurisdiction_endpoint(monkeypatch, r2_env):
 
     monkeypatch.setattr(boto3, "client", fake_client)
     check_r2("bigthink-corpus", jurisdiction_name="eu")
-    assert captured["endpoint_url"] == "https://acct.eu.r2.cloudflarestorage.com"
+    assert captured["endpoint_url"] == f"https://{ACCOUNT}.eu.r2.cloudflarestorage.com"
 
 
 def test_check_r2_names_the_jurisdiction_in_its_result(monkeypatch, r2_env):
@@ -440,8 +446,56 @@ def test_check_r2_names_the_jurisdiction_in_its_result(monkeypatch, r2_env):
 def test_check_r2_without_a_jurisdiction_uses_the_default_endpoint(monkeypatch, r2_env):
     import boto3
 
-    monkeypatch.setenv("R2_ACCOUNT_ID", "acct")
     captured = {}
     monkeypatch.setattr(boto3, "client", lambda service, **kw: (captured.update(kw), _FakeR2())[1])
     check_r2("bigthink-corpus")
-    assert captured["endpoint_url"] == "https://acct.r2.cloudflarestorage.com"
+    assert captured["endpoint_url"] == f"https://{ACCOUNT}.r2.cloudflarestorage.com"
+
+
+# ---------------------------------------------------------------------------
+# A malformed account ID must be named, not crashed on
+#
+# botocore raises a bare ValueError naming only the URL it could not parse,
+# and in CI that URL is secret-masked — so the message reduces to
+# "Invalid endpoint: https://***.eu.r2.cloudflarestorage.com", which says
+# nothing about what to fix.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "6cd7669a5e77a844abc49b6a0eecd0a3_eu_bigthink-corpus",  # the resource key
+        "https://6cd7669a5e77a844abc49b6a0eecd0a3.r2.cloudflarestorage.com",
+        "too-short",
+        "6cd7669a5e77a844abc49b6a0eecd0a",  # 31 characters
+        "",
+    ],
+)
+def test_malformed_account_id_is_reported_not_raised(monkeypatch, r2_env, value):
+    monkeypatch.setenv("R2_ACCOUNT_ID", value)
+    result = check_r2("bigthink-corpus", jurisdiction_name="eu")
+    assert result.symbol in ("FAIL", "SKIP")
+    if result.symbol == "FAIL":
+        assert "32 hexadecimal" in result.detail
+
+
+def test_malformed_account_id_reports_its_length(monkeypatch, r2_env):
+    monkeypatch.setenv("R2_ACCOUNT_ID", "6cd7669a5e77a844abc49b6a0eecd0a3_eu_bigthink-corpus")
+    assert "51 characters" in check_r2("bigthink-corpus").detail
+
+
+def test_malformed_account_id_points_at_the_jurisdiction_setting(monkeypatch, r2_env):
+    monkeypatch.setenv("R2_ACCOUNT_ID", "6cd7669a5e77a844abc49b6a0eecd0a3_eu_bigthink-corpus")
+    assert "storage.r2.jurisdiction" in check_r2("bigthink-corpus").detail
+
+
+def test_a_well_formed_account_id_proceeds(monkeypatch, r2_env):
+    _install(monkeypatch, _FakeR2())
+    assert check_r2("bigthink-corpus").symbol == "PASS"
+
+
+def test_uppercase_account_id_is_accepted(monkeypatch, r2_env):
+    monkeypatch.setenv("R2_ACCOUNT_ID", "6CD7669A5E77A844ABC49B6A0EECD0A3")
+    _install(monkeypatch, _FakeR2())
+    assert check_r2("bigthink-corpus").symbol == "PASS"

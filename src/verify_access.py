@@ -27,6 +27,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -299,18 +300,38 @@ def check_r2(
         return result.failed("boto3 is not installed (pip install -r requirements.txt).")
 
     account_id = os.environ["R2_ACCOUNT_ID"].strip()
+    # Checked before it reaches botocore, which rejects a malformed endpoint
+    # with a bare ValueError naming only the URL it could not parse — and the
+    # URL is secret-masked in CI logs, so the message there says nothing at
+    # all. The usual mistakes are pasting the endpoint URL or the token's
+    # resource key (<account>_<jurisdiction>_<bucket>) instead of the ID.
+    if not re.fullmatch(r"[0-9a-fA-F]{32}", account_id):
+        return result.failed(
+            f"R2_ACCOUNT_ID is {len(account_id)} characters; a Cloudflare account ID "
+            "is exactly 32 hexadecimal characters. Set it to the account ID alone — "
+            "not the endpoint URL, and not the API token's resource key "
+            "(<account>_<jurisdiction>_<bucket>), whose jurisdiction belongs in "
+            "storage.r2.jurisdiction instead."
+        )
+
     # Built by storage.py rather than rebuilt here: a check that constructs
     # its own endpoint can pass against one the pipeline never uses.
     from src.storage import endpoint_url
 
-    client = boto3.client(
-        "s3",
-        endpoint_url=endpoint_url(account_id, jurisdiction_name),
-        aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"].strip(),
-        aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"].strip(),
-        region_name="auto",
-        config=Config(connect_timeout=timeout, read_timeout=timeout, retries={"max_attempts": 2}),
-    )
+    endpoint = endpoint_url(account_id, jurisdiction_name)
+    try:
+        client = boto3.client(
+            "s3",
+            endpoint_url=endpoint,
+            aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"].strip(),
+            aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"].strip(),
+            region_name="auto",
+            config=Config(
+                connect_timeout=timeout, read_timeout=timeout, retries={"max_attempts": 2}
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001 - botocore raises ValueError here
+        return result.failed(f"could not build a client for {endpoint}: {exc}")
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     key = f"_verify/access-check-{stamp}.txt"
