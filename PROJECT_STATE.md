@@ -40,7 +40,7 @@ works, not as a finding.
 | 4 — Opportunity index | **Working, partial** | `patent_activity` has no data without PatentsView; weight redistributes automatically |
 | 5 — Synthesis | **Working** | Shortlist, 2×2 views, evidence cards, CSV, published HTML |
 | Notebook export | **Working, not yet reviewed by anyone** | `src/notebook.py`; written automatically after Stage 5. Re-derives emergence, horizon, index and composite rank from stored inputs |
-| Automation | **Written, not yet exercised** | `scan.yml` and `tests.yml` — neither has run in Actions yet |
+| Automation | **Half exercised** | `tests.yml` first ran 2026-08-30 on PR #2 and passed. `scan.yml` has still never run — see below |
 | Tests | **116 passing** | Offline by design; every defect found so far has one |
 
 **First real run — `2026-08-29`:** 7,780 documents across 2018–2026 from
@@ -391,7 +391,7 @@ For whoever — or whichever Claude instance — picks this up next:
 | `OPENALEX_API_KEY` | **Not set.** Blocks the best research source (issue 3) |
 | `PATENTSVIEW_API_KEY` | **Not set.** No patent signal (issue 6) |
 | Crossref, arXiv, GDELT, data.gov.au | Working, no keys needed |
-| GitHub Actions | `scan.yml` weekly Sun 19:00 UTC; `tests.yml` on push. **Neither has run yet** — the first scheduled run should be watched |
+| GitHub Actions | `tests.yml` on push/PR — **first ran 2026-08-30, green.** `scan.yml` weekly Sun 19:00 UTC — **still never run.** Its first run is the one to watch: it is the only one that restores the corpus release, calls live APIs, and publishes a new corpus asset, so it is where an untested workflow would actually cost something |
 | GitHub Pages | `docs/` is built by `src.report`; Pages needs enabling in repository settings |
 | Local corpus | `data/bigthink.duckdb`, gitignored, ~10 MB at 7,780 documents |
 
