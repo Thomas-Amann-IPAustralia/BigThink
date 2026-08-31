@@ -49,6 +49,11 @@ cd BigThink
 python3.11 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
+# The shipped config embeds with BGE and clusters with BERTopic, both of which
+# need the optional ML stack (~2 GB installed, ~400 MB model on first run):
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install -r requirements-ml.txt
+
 # Encode the strategy (fast, no network)
 python -m src.stage0_strategy --show
 
@@ -63,18 +68,48 @@ open data/outputs/dev/shortlist.md
 jupyter lab data/outputs/dev/horizon-scan-dev.ipynb
 ```
 
-A full run:
+Skipping the ML stack is supported — the pipeline falls back to hashed TF-IDF
+vectors and average-linkage clustering, which run anywhere with no model
+download. The pairing used is recorded in the run's config snapshot either way:
 
 ```bash
-python -m src.pipeline --run-id $(date -u +%F)
-python -m src.report   --run-id $(date -u +%F)
+python -m src.pipeline --run-id dev --sample \
+    --embedding-backend hashing --clustering-method agglomerative
+```
+
+A full run. The run ID defaults to the UTC date **and time to the minute**, so
+two runs on one day cannot overwrite each other's outputs:
+
+```bash
+python -m src.pipeline
+python -m src.report --run-id RUN
 ```
 
 Re-analyse without re-collecting — the fast loop for tuning:
 
 ```bash
-python -m src.pipeline --run-id $(date -u +%F) --skip-collect
+python -m src.pipeline --run-id RUN --skip-collect
 ```
+
+### Running it on GitHub Actions
+
+The **Horizon scan** workflow can be started by hand from the repository's
+Actions tab (Actions → Horizon scan → Run workflow). Every input is optional:
+
+| Input | Use it for |
+|---|---|
+| `run_id` | Naming a run. Blank gives the UTC date and time to the minute |
+| `skip_collect` | Re-analysing the accumulated corpus without re-collecting |
+| `sample` | A fast smoke test that caps records per query |
+| `fresh_baseline` | Starting from an empty database after a collector change |
+| `embedding_backend` | `hashing` for a cheap run; blank/`config` uses BGE |
+| `clustering_method` | `agglomerative` for a cheap run; blank/`config` uses BERTopic |
+| `log_level` | `DEBUG` when a run needs explaining |
+
+A scheduled run fires weekly at 19:00 UTC Sunday. Runs are serialised through a
+concurrency group — DuckDB takes an exclusive lock, so two at once fail to open
+the database rather than corrupting it — and a manual run will queue behind a
+scheduled one rather than cancelling it.
 
 ---
 

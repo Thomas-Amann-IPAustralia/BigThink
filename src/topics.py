@@ -3,17 +3,18 @@ src/topics.py — topic formation and labelling.
 
 Groups documents into topics and gives each a readable label. Three methods:
 
+  bertopic       BERTopic over an explicitly seeded UMAP + HDBSCAN pair.
+                 Requires requirements-ml.txt. The default since 2026-08-31.
+
   agglomerative  True average-linkage agglomerative clustering over cosine
-                 similarity, numpy only. Order-invariant. Default.
+                 similarity, numpy only. Order-invariant. The default from
+                 2026-08-30 to 2026-08-31, and still the fallback whenever the
+                 ML dependencies are not installed.
 
   leader         Sequential nearest-centroid ("leader") clustering, then one
                  reassignment pass, then a merge pass. The pre-2026-08-30
                  default, kept so an old run can be reproduced from its config
                  snapshot. See the warning below before choosing it.
-
-  bertopic       Delegates to BERTopic when requirements-ml.txt is installed.
-                 Better topics, heavy dependency, non-deterministic unless UMAP
-                 is seeded.
 
 WHY `leader` WAS REPLACED (measured on the 2026-08-30 run)
 
@@ -42,13 +43,37 @@ becomes progressively harder to join instead of easier. It is also
 order-invariant, so the seeding bias cannot exist — pinned by
 `test_average_linkage_is_order_invariant`.
 
-WHY NOT JUST BERTOPIC
+WHY BERTOPIC IS NOW THE DEFAULT (decided 2026-08-31)
 
-The proposal names BERTopic, and it is the right destination. But BERTopic
-brings UMAP and HDBSCAN, whose output shifts between runs unless carefully
-seeded — and this pipeline's whole value is that a score can be compared with
-last month's. Note that this argument has still never been *measured*; the
-bake-off harness that would settle it is not built yet.
+This module used to argue against it: BERTopic brings UMAP and HDBSCAN, whose
+output shifts between runs unless carefully seeded, and the pipeline's value
+was taken to be that a score could be compared with last month's.
+
+That trade has been made the other way round, on the owner's instruction. A
+single scan should be as accurate and as useful *on its own* as it can be, and
+its value as a reference point for a future run is explicitly secondary. Every
+argument for average linkage over BERTopic was an argument about the second
+thing.
+
+Two halves of "shifts between runs", worth separating because only one of them
+is now accepted:
+
+  * **Within a corpus** it does not shift. UMAP is seeded from
+    `BertopicParams.random_state` and HDBSCAN is deterministic, so the same
+    corpus and seed give the same topics — pinned by
+    `test_bertopic_is_deterministic_under_a_fixed_seed`. This is the property
+    that makes a result checkable, and it is kept.
+  * **Across corpora** it does shift, and more than average linkage does. UMAP
+    fits a manifold to the whole corpus, so next week's documents move this
+    week's topics rather than merely adding to them. That is the cost, it is
+    accepted deliberately, and it is why `docs/method.md` says a topic id means
+    nothing across runs.
+
+The bake-off harness that would have settled the original argument on evidence
+was never built, so the old default rested on the same kind of reasoning it
+warned against. What replaced it is a measurement: see the calibration log
+entry for 2026-08-31 in PROJECT_STATE.md, and `python -m src.calibrate
+bertopic` for the sweep that produced it.
 
 LABELLING
 
@@ -495,54 +520,159 @@ def _compose_label(terms: Sequence[tuple[str, float]]) -> str:
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class BertopicParams:
+    """Every hyperparameter that decides a BERTopic result, in one record.
+
+    Frozen and in one place because these are the numbers a reader has to be
+    able to check. A BERTopic run is reproducible only as far as its seed and
+    its neighbourhood parameters are written down, so `describe()` renders them
+    into the run log and Stage 2 stores the same values in the config snapshot.
+
+    `random_state` is load-bearing twice over. Unseeded, UMAP's stochastic
+    initialisation moves documents between clusters on identical input, so two
+    runs of the same corpus disagree about what the topics are. Seeded, it is
+    deterministic — at the cost of single-threaded UMAP, which is where the
+    "n_jobs overridden to 1" warning comes from and is a price worth paying.
+    """
+
+    random_state: int = 42
+    # --- UMAP: the manifold the clusterer sees ---
+    n_neighbors: int = 15        # local vs global structure
+    n_components: int = 5        # dimensions HDBSCAN clusters in
+    min_dist: float = 0.0        # 0.0 packs points tightly, which is what a
+                                 # density clusterer wants downstream
+    metric: str = "cosine"       # embeddings are L2-normalised
+    # --- HDBSCAN: the clusters themselves ---
+    min_cluster_size: int = 8    # defaults to min_topic_size at the call site
+    min_samples: int | None = None   # None -> HDBSCAN uses min_cluster_size
+    cluster_selection_method: str = "eom"
+
+    def describe(self) -> str:
+        return (
+            f"seed={self.random_state} umap(n_neighbors={self.n_neighbors}, "
+            f"n_components={self.n_components}, min_dist={self.min_dist}, "
+            f"metric={self.metric}) hdbscan(min_cluster_size={self.min_cluster_size}, "
+            f"min_samples={self.min_samples}, "
+            f"cluster_selection_method={self.cluster_selection_method})"
+        )
+
+
 def cluster_bertopic(
     texts: Sequence[str],
     vectors: np.ndarray,
     *,
     min_topic_size: int,
-    random_state: int = 42,
+    max_topics: int,
+    params: BertopicParams | None = None,
 ) -> list[Topic]:
-    """Cluster with BERTopic, reusing embeddings already computed here.
+    """Cluster with BERTopic over an explicit UMAP + HDBSCAN pair.
 
-    Seeds UMAP so runs are reproducible. BERTopic's -1 outlier cluster is
-    dropped rather than kept, matching the agglomerative method's treatment of
-    unassignable documents.
+    Both models are constructed here rather than left to BERTopic's defaults,
+    for one reason: a default is a hyperparameter nobody wrote down. Passing
+    them explicitly means every number that decides the result is in
+    `BertopicParams`, is logged, and travels into `pipeline_runs.config_snapshot`
+    with the run — which is the only thing that makes a months-old topic set
+    arguable rather than merely present.
+
+    Embeddings are the ones Stage 2 already computed, so BERTopic never
+    downloads or runs a second model, and the clustering is over exactly the
+    vectors the rest of the pipeline scores against.
+
+    WHAT THIS COSTS. HDBSCAN assigns no document it cannot place densely,
+    reporting them as cluster -1. Those are dropped, matching what
+    `cluster_agglomerative` does with a sub-threshold document: an unassignable
+    document is noise for this purpose and forcing it into the nearest topic
+    would corrupt that topic. Expect a lower assigned share than average
+    linkage gives, holding better-formed topics.
+
+    Terms and labels are left to `label_topics`, not taken from BERTopic's own
+    c-TF-IDF. One labelling path serves every clustering method, so a label
+    means the same thing whichever method produced it, and Stage 3 gets the 30
+    uni/bigram terms its lexicon matching needs rather than BERTopic's default
+    10 unigrams.
     """
     try:
         from bertopic import BERTopic  # noqa: PLC0415
+        from hdbscan import HDBSCAN  # noqa: PLC0415
         from umap import UMAP  # noqa: PLC0415
     except ImportError as exc:  # pragma: no cover - depends on environment
         raise ImportError(
-            "emergence.topics.method='bertopic' requires bertopic and umap-learn.\n"
-            "  pip install -r requirements-ml.txt"
+            "emergence.topics.method='bertopic' requires bertopic, umap-learn and "
+            "hdbscan.\n  pip install -r requirements-ml.txt"
         ) from exc
 
+    params = params or BertopicParams(min_cluster_size=min_topic_size)
+    n = len(vectors)
+    if n < max(params.n_neighbors, params.min_cluster_size) + 1:
+        raise ValueError(
+            f"BERTopic needs more than {max(params.n_neighbors, params.min_cluster_size)} "
+            f"documents to fit UMAP and HDBSCAN; got {n}. Lower "
+            "emergence.topics.bertopic.n_neighbors / min_topic_size, or use "
+            "method: agglomerative for a corpus this small."
+        )
+
+    logger.info("BERTopic clustering %d documents — %s", n, params.describe())
+
+    vectors = np.asarray(vectors, dtype=np.float64)
     model = BERTopic(
-        min_topic_size=min_topic_size,
         umap_model=UMAP(
-            n_neighbors=15, n_components=5, min_dist=0.0,
-            metric="cosine", random_state=random_state,
+            # n_neighbors must stay below the corpus size or UMAP fails on a
+            # small run — clamped rather than raised, since a sample run is a
+            # legitimate thing to do and this is not the number it is testing.
+            n_neighbors=max(2, min(params.n_neighbors, n - 1)),
+            n_components=max(2, min(params.n_components, n - 2)),
+            min_dist=params.min_dist,
+            metric=params.metric,
+            random_state=params.random_state,
+        ),
+        hdbscan_model=HDBSCAN(
+            min_cluster_size=params.min_cluster_size,
+            min_samples=params.min_samples,
+            metric="euclidean",  # on UMAP output, not on the embeddings
+            cluster_selection_method=params.cluster_selection_method,
+            prediction_data=False,
         ),
         calculate_probabilities=False,
         verbose=False,
     )
     assignments, _ = model.fit_transform(list(texts), embeddings=vectors)
 
+    by_cluster: dict[int, list[int]] = {}
+    for index, raw in enumerate(assignments):
+        cluster = int(raw)
+        if cluster < 0:
+            continue  # HDBSCAN outlier
+        by_cluster.setdefault(cluster, []).append(index)
+
     topics: list[Topic] = []
-    for cluster in sorted({int(a) for a in assignments if int(a) >= 0}):
-        members = [i for i, a in enumerate(assignments) if int(a) == cluster]
+    for members in by_cluster.values():
         if len(members) < min_topic_size:
             continue
         topics.append(
             Topic(
                 topic_id="",
-                member_indices=members,
+                member_indices=sorted(members),
                 centroid=_normalise(vectors[members].mean(axis=0)),
-                terms=[(w, float(s)) for w, s in (model.get_topic(cluster) or [])[:_MAX_SCORING_TERMS]],
             )
         )
+
+    # Largest first, then a stable tiebreak so ids are reproducible.
     topics.sort(key=lambda t: (-t.size, t.member_indices[0]))
+    if len(topics) > max_topics:
+        logger.info(
+            "Keeping the %d largest of %d topics (emergence.topics.max_topics)",
+            max_topics, len(topics),
+        )
+        topics = topics[:max_topics]
     for rank, topic in enumerate(topics):
         topic.topic_id = f"T{rank:04d}"
-        topic.label = _compose_label(topic.terms)
+
+    assigned = sum(t.size for t in topics)
+    outliers = sum(1 for a in assignments if int(a) < 0)
+    logger.info(
+        "BERTopic formed %d topics (>= %d members) from %d documents; %d (%.0f%%) "
+        "assigned, %d left as HDBSCAN outliers",
+        len(topics), min_topic_size, n, assigned, 100.0 * assigned / max(n, 1), outliers,
+    )
     return topics

@@ -57,6 +57,7 @@ from src import db, topics as topics_mod
 from src.burst import burst_score, detect_bursts
 from src.collectors.base import document_text
 from src.config import (
+    bertopic_params,
     get,
     load_config,
     resolve_path,
@@ -510,7 +511,11 @@ def _run_inner(conn: Any, config: dict[str, Any], run_id: str) -> dict[str, Any]
     max_topics = int(get(config, "emergence", "topics", "max_topics", default=120))
     if method == "bertopic":
         found = topics_mod.cluster_bertopic(
-            forming_texts, forming_vectors, min_topic_size=min_topic_size
+            forming_texts,
+            forming_vectors,
+            min_topic_size=min_topic_size,
+            max_topics=max_topics,
+            params=bertopic_params(config, min_topic_size),
         )
     elif method == "leader":
         found = topics_mod.cluster_leader(

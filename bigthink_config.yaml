@@ -61,9 +61,19 @@ embeddings:
   #              environment without torch.
   #   bge      — BAAI/bge-base-en-v1.5 sentence-transformers, the same model
   #              Tripwire uses at Stage 5. Better quality; ~400 MB download.
-  # Start on `hashing` to get the pipeline shaped, switch to `bge` before you
-  # trust the strategic-fit numbers.
-  backend: "hashing"
+  # `bge` since 2026-08-31. `hashing` matches vocabulary, not meaning, which is
+  # why the asset-leverage axis spanned only 0.03-0.10 across all 15 shortlisted
+  # topics on the 2026-08-30 run (PROJECT_STATE issue 2): a topic's 30 terms and
+  # a 60-word asset description share few exact tokens, so the cosine was near
+  # zero and only the lexicon match carried any signal.
+  #
+  # `hashing` remains fully supported and is what the tests and any
+  # torch-less environment run on. Note the two are NOT interchangeable
+  # mid-project: cosines from `hashing` are lexical-overlap-ish, cosines from
+  # BGE are semantic, and no threshold calibrated on one transfers to the
+  # other. `backend` is part of the vector cache key, so switching invalidates
+  # the cache rather than silently mixing two vector spaces.
+  backend: "bge"
   bge_model: "BAAI/bge-base-en-v1.5"
   hashing_dimensions: 2048
   # Cache computed vectors in DuckDB so re-runs do not re-embed a stable corpus.
@@ -141,8 +151,21 @@ collection:
       # source can support a growth curve.
       max_results_per_query: 270      # spread across the scan window
       max_results_per_year: 30        # explicit per-year quota; overrides the split
-      # arXiv asks for >=3 s between requests. Honour it.
+      # arXiv asks for >=3 s between requests. Honour it — but treat it as a
+      # floor rather than the real limit. The 2026-08-31 run took 28 HTTP 429s
+      # at this delay from a shared Actions IP and lost six of nine frames.
       request_delay_seconds: 3.0
+      # After each 429 the delay is multiplied by this and kept there for the
+      # rest of the run, up to the ceiling below (src/collectors/arxiv.py).
+      # Measured rather than configured: what a shared IP actually gets is not
+      # what the published limit says, and it varies with arXiv's load, so a
+      # single hand-set number is either too slow every week or too fast on the
+      # week it matters. Costs nothing when arXiv is healthy.
+      rate_limit_backoff_factor: 1.5
+      # 81 year-requests (9 frames x 2018-2026) is ~4 min at 3 s and ~27 at
+      # 20 s. Run time is the binding constraint now (PROJECT_STATE issue 17),
+      # so this is the number to lower if the job starts running long.
+      max_request_delay_seconds: 20.0
     crossref:
       enabled: true
       rows_per_query: 100
@@ -238,12 +261,22 @@ emergence:
     # afterwards, so they count toward attention and the time series without
     # having distorted the topic that they are being counted against.
     forming_sources: ["openalex", "crossref", "arxiv", "datagovau", "patentsview"]
+    # `bertopic` is BERTopic over a seeded UMAP + HDBSCAN pair, and the default
+    # since 2026-08-31. It needs requirements-ml.txt; without those installed
+    # Stage 2 says so and names `agglomerative` as the fallback.
+    #
     # `agglomerative` is true average-linkage clustering: no heavy deps,
-    # deterministic, and order-invariant. `leader` is the pre-2026-08-30
-    # sequential nearest-centroid method, kept only to reproduce old runs — it
-    # builds a mega-cluster by construction (see src/topics.py). Switch to
-    # `bertopic` once you install requirements-ml.txt.
-    method: "agglomerative"
+    # deterministic, order-invariant, and the right choice on a machine with no
+    # torch. `leader` is the pre-2026-08-30 sequential nearest-centroid method,
+    # kept only to reproduce old runs — it builds a mega-cluster by
+    # construction (see src/topics.py).
+    #
+    # The old default was `agglomerative`, argued for on week-over-week
+    # comparability. That trade was reversed deliberately: a single scan should
+    # be as accurate on its own as it can be, and its value as a reference
+    # point for a later run is secondary. See src/topics.py and the 2026-08-31
+    # calibration log entry.
+    method: "bertopic"
     # A cosine threshold depends on BOTH the backend and the method, because
     # each names a different quantity.
     #
@@ -260,7 +293,106 @@ emergence:
     # mean pairwise cosine 0.075, 99th percentile 0.191. At the leader value of
     # 0.30, average linkage assigned 23 of 2,987 documents. Carrying one number
     # across methods is the same error as carrying one across backends.
+    # --- BERTopic hyperparameters ---
+    # Every number that decides a BERTopic result, in one place, so it travels
+    # into pipeline_runs.config_snapshot with the run. A hyperparameter left to
+    # a library default is one nobody wrote down and nobody can argue with.
+    #
+    # Swept on the 5,184-document forming corpus of the 2026-08-30 baseline
+    # under `bge`; see the 2026-08-31 calibration log entry in PROJECT_STATE.md
+    # for the numbers and `python -m src.calibrate bertopic` to re-run it.
+    bertopic:
+      # THE SEED. UMAP's initialisation is stochastic, so without this two runs
+      # over an identical corpus disagree about what the topics are — and a
+      # number nobody can reproduce is a number nobody should believe. Seeding
+      # forces UMAP single-threaded (hence the "n_jobs overridden to 1"
+      # warning), which is the price of a checkable result.
+      #
+      # 42 is the swept choice, not a library default left in place. Seeds
+      # 0, 1, 7, 42 and 1234 on the corpus above, at n_neighbors 15:
+      #
+      #   seed   topics   assigned   largest cluster (of assigned)
+      #      0      115      73.5%    5.3%
+      #      1      112      73.4%    5.3%
+      #      7      105      77.3%   11.8%
+      #     42      112      75.0%    5.2%
+      #   1234      107      76.4%   12.1%
+      #
+      # 42 has the smallest largest-cluster share and the highest assigned
+      # share among the seeds that avoid the big cluster. Chosen on those
+      # structural criteria — never on which shortlist read best, which would
+      # be fitting the instrument to the answer it is meant to produce.
+      #
+      # THE SPREAD IS NOT SMALL and that is an open finding, not a settled one:
+      # two of five seeds form a ~480-document quantum cluster and three do
+      # not. See PROJECT_STATE.md issue 20.
+      random_state: 42
+      # UMAP: the manifold HDBSCAN then clusters in.
+      #
+      # n_neighbors swept at seed 42 on the corpus above. `raw` is clusters
+      # before max_topics; `largest` is a share of assigned documents:
+      #
+      #   n_neighbors   raw   kept   assigned   largest
+      #             5   163    115      67.3%      6.5%
+      #            10   139    114      70.7%      5.5%
+      #            15   118    112      75.0%      5.2%   <- chosen
+      #            20    99     94      78.2%     11.8%
+      #            30    93     90      77.1%     11.6%
+      #            50    86     83      72.6%     12.9%
+      #
+      # 15 is the inflection. Below it the corpus fragments badly (163 and 139
+      # clusters against a cap of 120). At 20 and above a single ~480-document
+      # quantum cluster forms and the largest share more than doubles.
+      #
+      # `raw` above is from an offline sweep; the pipeline formed 124 at these
+      # settings, not 118, because the two encodings of the same corpus differ
+      # by ~3e-7 and UMAP amplifies that (PROJECT_STATE issue 20). Read the
+      # shape of the table, not the individual counts. 15 gives the smallest
+      # largest cluster and labels that read cleanly:
+      # "geographical indication / gi / trade / agreement",
+      # "service delivery / government / digital / public service".
+      n_neighbors: 15        # local vs global structure
+      n_components: 5        # dimensions to reduce to before clustering
+      min_dist: 0.0          # pack points tightly — density clustering wants it
+      metric: "cosine"       # embeddings are L2-normalised
+      # HDBSCAN: the clusters themselves. min_cluster_size is left blank so it
+      # follows min_topic_size below; they are the same question asked twice,
+      # and letting them drift means HDBSCAN forms clusters the pipeline then
+      # discards.
+      min_cluster_size:      # blank -> min_topic_size
+      min_samples:           # blank -> HDBSCAN uses min_cluster_size
+      cluster_selection_method: "eom"
     similarity_thresholds:
+      # Under `bertopic` this threshold does NOT decide the clustering —
+      # HDBSCAN works on density in UMAP space and takes no cosine cut-off. It
+      # is still read, for one thing: attaching documents from non-forming
+      # sources (GDELT) to the nearest finished topic, at
+      # `attachment_threshold_ratio` of the value below. So it sets what counts
+      # as "this news article is about that topic", nothing more.
+      bertopic:
+        # Measured on the 2026-08-30 corpus under `bge` (2,317 GDELT documents
+        # against 112 BERTopic centroids). NOTE THE ARITHMETIC: this value is
+        # multiplied by attachment_threshold_ratio below, so the operative
+        # number is 0.90 x 0.6 = 0.54, and that is what to compare against the
+        # distribution. It attaches 86% of the GDELT corpus.
+        #
+        # BGE cosines do not start at zero — an unrelated pair still scores
+        # ~0.5 — so the whole distribution is shifted up and compressed:
+        # min 0.406, 10th 0.529, median 0.617, 90th 0.729, max 0.902. The
+        # earlier guess of 0.75 gave an operative 0.45, below even the observed
+        # minimum, and attached 99.5% of GDELT — i.e. it had stopped
+        # discriminating entirely, which is the exact failure mode
+        # docs/runbook-calibration.md warns about.
+        #
+        # The distribution is unimodal with no natural cut, so this is a
+        # judgement about how much of the tail to exclude, not a boundary that
+        # was discovered. 0.54 trims the worst ~14%. Re-run
+        # `python -m src.calibrate attachment` on a fresh corpus before trusting
+        # the attention component of the Stage 4 index.
+        bge: 0.90
+        # For a bertopic run on the cheap backend — supported, but the scale is
+        # lexical, so it is a different number entirely.
+        hashing: 0.30
       agglomerative:
         # 0.14 from a sweep over those 2,987 documents: 61 topics, 56% of the
         # corpus assigned, largest cluster 10% of everything assigned, and

@@ -279,3 +279,144 @@ def test_max_topics_keeps_the_largest_rather_than_dropping_silently():
         _blobs(rng, [40, 30, 20, 10]), threshold=0.5, min_topic_size=8, max_topics=2
     )
     assert [t.size for t in topics] == [40, 30]
+
+
+# --- BERTopic (PROJECT_STATE issue 2) -------------------------------------
+# The default clustering method since 2026-08-31. These need requirements-ml.txt
+# and skip without it — but they make no network call: BERTopic is handed the
+# embeddings Stage 2 already computed, so it never loads a model of its own.
+
+
+def _bertopic_blobs(n_per=40, dims=32, spread=0.05, seed=0):
+    """Three well-separated clusters of unit vectors, plus matching text."""
+    rng = np.random.default_rng(seed)
+    centres = rng.normal(size=(3, dims))
+    centres /= np.linalg.norm(centres, axis=1, keepdims=True)
+    vocab = [
+        ["quantum", "qubit", "error", "correction"],
+        ["trade", "mark", "examination", "opposition"],
+        ["battery", "storage", "renewable", "grid"],
+    ]
+    vectors, texts = [], []
+    for c in range(3):
+        for i in range(n_per):
+            v = centres[c] + rng.normal(scale=spread, size=dims)
+            vectors.append(v / np.linalg.norm(v))
+            texts.append(" ".join(vocab[c]) + f" study number {i}")
+    return np.array(vectors), texts
+
+
+def _bertopic():
+    pytest.importorskip("bertopic")
+    pytest.importorskip("hdbscan")
+    pytest.importorskip("umap")
+    from src.topics import BertopicParams, cluster_bertopic
+
+    return cluster_bertopic, BertopicParams
+
+
+def test_bertopic_recovers_well_separated_clusters():
+    cluster_bertopic, BertopicParams = _bertopic()
+    vectors, texts = _bertopic_blobs()
+
+    topics = cluster_bertopic(
+        texts, vectors, min_topic_size=8, max_topics=50,
+        params=BertopicParams(random_state=42, min_cluster_size=8),
+    )
+
+    assert len(topics) == 3
+    assert sorted(t.size for t in topics) == [40, 40, 40]
+
+
+def test_bertopic_is_deterministic_under_a_fixed_seed():
+    """The property that makes a BERTopic run reviewable at all.
+
+    UMAP's initialisation is stochastic. Unseeded, two runs over an identical
+    corpus disagree about what the topics are, and a topic set nobody can
+    reproduce is one nobody can check. This is the whole reason
+    `emergence.topics.bertopic.random_state` exists and is validated.
+    """
+    cluster_bertopic, BertopicParams = _bertopic()
+    vectors, texts = _bertopic_blobs()
+    params = BertopicParams(random_state=42, min_cluster_size=8)
+
+    first = cluster_bertopic(texts, vectors, min_topic_size=8, max_topics=50, params=params)
+    second = cluster_bertopic(texts, vectors, min_topic_size=8, max_topics=50, params=params)
+
+    assert [t.member_indices for t in first] == [t.member_indices for t in second]
+
+
+def test_bertopic_honours_max_topics():
+    cluster_bertopic, BertopicParams = _bertopic()
+    vectors, texts = _bertopic_blobs()
+
+    topics = cluster_bertopic(
+        texts, vectors, min_topic_size=8, max_topics=2,
+        params=BertopicParams(random_state=42, min_cluster_size=8),
+    )
+
+    assert len(topics) == 2, "the cap must bind, keeping the largest"
+    assert topics[0].size >= topics[1].size
+
+
+def test_bertopic_drops_clusters_below_min_topic_size():
+    """A composite computed on 8 documents looks identical to one on 800."""
+    cluster_bertopic, BertopicParams = _bertopic()
+    vectors, texts = _bertopic_blobs()
+
+    topics = cluster_bertopic(
+        texts, vectors, min_topic_size=100, max_topics=50,
+        params=BertopicParams(random_state=42, min_cluster_size=8),
+    )
+
+    assert topics == [], "40-document clusters cannot survive a floor of 100"
+
+
+def test_bertopic_topic_ids_are_contiguous_and_ordered_by_size():
+    cluster_bertopic, BertopicParams = _bertopic()
+    vectors, texts = _bertopic_blobs()
+
+    topics = cluster_bertopic(
+        texts, vectors, min_topic_size=8, max_topics=50,
+        params=BertopicParams(random_state=42, min_cluster_size=8),
+    )
+
+    assert [t.topic_id for t in topics] == [f"T{i:04d}" for i in range(len(topics))]
+    assert [t.size for t in topics] == sorted((t.size for t in topics), reverse=True)
+
+
+def test_bertopic_centroids_are_normalised():
+    """Stage 2 and Stage 3 take cosines against these directly."""
+    cluster_bertopic, BertopicParams = _bertopic()
+    vectors, texts = _bertopic_blobs()
+
+    topics = cluster_bertopic(
+        texts, vectors, min_topic_size=8, max_topics=50,
+        params=BertopicParams(random_state=42, min_cluster_size=8),
+    )
+
+    for topic in topics:
+        assert np.isclose(np.linalg.norm(topic.centroid), 1.0)
+
+
+def test_bertopic_refuses_a_corpus_too_small_to_fit():
+    """A clear message rather than a UMAP traceback three hours into a scan."""
+    cluster_bertopic, BertopicParams = _bertopic()
+    vectors, texts = _bertopic_blobs(n_per=2)
+
+    with pytest.raises(ValueError, match="more than"):
+        cluster_bertopic(
+            texts, vectors, min_topic_size=8, max_topics=50,
+            params=BertopicParams(random_state=42, n_neighbors=15, min_cluster_size=8),
+        )
+
+
+def test_bertopic_params_carry_every_hyperparameter_into_the_log():
+    """`describe()` is what puts the seed in the run log; keep it complete."""
+    _, BertopicParams = _bertopic()
+    described = BertopicParams(random_state=7, min_cluster_size=9).describe()
+
+    for expected in ("seed=7", "n_neighbors=", "n_components=", "min_dist=",
+                     "metric=", "min_cluster_size=9", "min_samples=",
+                     "cluster_selection_method="):
+        assert expected in described, f"{expected} missing from {described!r}"

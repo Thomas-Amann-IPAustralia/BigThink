@@ -31,15 +31,26 @@ the part that is easy to break invisibly:
 
 All from the repo root. Python 3.11+.
 
+The default config is `bge` + `bertopic`, which needs `requirements-ml.txt`
+(and torch from the CPU-only index). Without it, add
+`--embedding-backend hashing --clustering-method agglomerative` to any command
+below, or edit the config — everything still runs, just with lexical vectors.
+
 ```bash
-# Full pipeline
-python -m src.pipeline --run-id $(date -u +%F)
+# Full pipeline. The run ID now defaults to the UTC date AND time to the
+# minute, so two runs on one day cannot overwrite each other's outputs.
+python -m src.pipeline
 
 # Re-analyse without re-collecting — the fast loop for tuning
-python -m src.pipeline --run-id $(date -u +%F) --skip-collect
+python -m src.pipeline --run-id RUN --skip-collect
 
 # Small end-to-end run (caps records per query)
 python -m src.pipeline --run-id dev --sample
+
+# Cheap pairing, for a machine with no torch. Recorded in the config snapshot,
+# so a run always says which pairing produced it.
+python -m src.pipeline --run-id dev --sample \
+    --embedding-backend hashing --clustering-method agglomerative
 
 # Individual stages — each reads from DuckDB, so they run independently
 python -m src.stage0_strategy --show            # print the reference set, no writes
@@ -53,7 +64,15 @@ python -m src.report           --run-id RUN     # build docs/index.html
 python -m src.dashboard        --run-id RUN     # build docs/dashboard.html (point-cloud explorer)
 python -m src.notebook         --run-id RUN     # peer-review .ipynb for that run
 
-# Tests — offline by design, no network calls
+# Calibration. Nothing here writes; all of it reads the accumulated corpus.
+python -m src.calibrate threshold --show-labels   # sweep the clustering threshold
+python -m src.calibrate bertopic --show-labels    # sweep BERTopic seeds and n_neighbors
+python -m src.calibrate attachment                # where the attachment threshold belongs
+python -m src.calibrate attributes                # attribute ranges and influence
+
+# Tests — offline by design, no network calls. BERTopic tests run offline too
+# (they are handed embeddings, so no model loads); they skip without
+# requirements-ml.txt and run in the `ml` job in CI.
 python -m pytest tests/ -q
 
 # Are the optional credentials actually live? Hits OpenAlex and R2 for real.
@@ -107,10 +126,11 @@ Preserve this. Do not add cross-stage function calls that bypass the database.
 | Decision | Why |
 |---|---|
 | **DuckDB, not SQLite** | Every stage aggregates. `BasicInfraSuggestion.md` specifies it. Single-writer — hence the Actions concurrency group |
-| **Pluggable embeddings, `hashing` default** | The pipeline must run and be testable with no torch and no model download. `bge` is a config switch |
+| **Pluggable embeddings, `bge` default since 2026-08-31** | `hashing` matches vocabulary, not meaning, so a topic's terms and an asset description shared few exact tokens and the asset-leverage axis spanned only 0.03-0.10 across the whole shortlist. `hashing` stays fully supported and is what the tests and any torch-less machine run on — the pipeline must remain runnable with no torch and no model download |
 | **Per-method AND per-backend similarity thresholds** | The backend sets a cosine's *scale* (hashed TF-IDF puts a related pair around 0.28; BGE above 0.8). The method sets what the cosine is *between* — `leader` compares to a centroid, `agglomerative` to a mean pairwise similarity, which is far lower on identical data. At the leader value of 0.30, average linkage assigned 23 of 2,987 documents. `topic_similarity_threshold()` is the only place this is resolved |
 | **True average-linkage clustering, not leader clustering** | The pre-2026-08-30 method updated a centroid in place as it accreted, so a growing cluster drifted toward the corpus mean and then resembled everything. It produced a catch-all holding 57% of everything assigned, whose centroid sat at cosine 0.955 from the corpus centroid. Average linkage makes a cluster *harder* to join as it grows, and is order-invariant, so the chronological ordering of the corpus cannot bias which topics form |
-| **Agglomerative by default, not BERTopic** | BERTopic finds better topics but shifts between runs unless carefully seeded. This pipeline's value is week-over-week comparability. Note this argument has never been *measured* — the bake-off harness that would settle it is not built |
+| **BERTopic by default since 2026-08-31, over seeded UMAP + HDBSCAN** | Reverses the earlier call, on the owner's instruction: a single scan should be as accurate on its own as it can be, and its value as a reference point for a later run is explicitly secondary. Every argument for average linkage was an argument about the second thing. Within a corpus it is still deterministic — UMAP is seeded from `emergence.topics.bertopic.random_state` — so a result stays checkable; across corpora it moves more than average linkage, and that is the accepted cost |
+| **Every BERTopic hyperparameter is in the config, none left to a library default** | A default is a hyperparameter nobody wrote down. `BertopicParams` holds all of them, `describe()` puts them in the run log, and the config snapshot carries them with the run. The seed especially: unseeded UMAP makes two runs of one corpus disagree about what the topics are, so `config.py` refuses a non-integer `random_state` rather than letting an unreproducible run start |
 | **Direct logistic fit, not logit linearisation** | Linearisation reports an early-exponential topic as *saturated* — inverting the Three Horizons band for exactly the technologies a horizon scan exists to find. Guarded by `test_early_exponential_growth_is_horizon_3` |
 | **Crossref offset paging, not cursor** | Cursor paging silently discards relevance ordering (top scores fell 31.7 → 7.4 in testing). Do not "fix" this back to a cursor |
 | **A long `Retry-After` escalates to permanent** | OpenAlex sends ~62,000 s when its daily budget is spent. Retrying inside a run cannot succeed; it burns the job timeout. The source is retired for the run |

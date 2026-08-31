@@ -37,14 +37,14 @@ as a finding.
 | Stage | State | Notes |
 |---|---|---|
 | 0 — Strategy encoding | **Working** | 34 references: 9 objectives, 6 initiatives, 7 DISR fields, 12 assets |
-| 1 — Signal collection | **Working, five of six sources; rebuilt and exercised 2026-08-31** | OpenAlex 581 → **3,799 documents** across all 20 frames (issue 3). Crossref peer-review records excluded (issue 11). GDELT now genuinely spans 2024–2026 (issue 5). Failures recorded rather than swallowed — which immediately surfaced **arXiv losing 6 of 9 frames to HTTP 429** (issue 14). PatentsView still disabled (issue 6) |
-| 2 — Emergence detection | **Working; clustering replaced 2026-08-31** | True average-linkage clustering at 0.14 replaces leader clustering at 0.30. On the baseline the largest topic fell from **57% of everything assigned to 3.9%**, and the Rotolo size bias went with it (emergence vs log size −0.43 → +0.05) with no weight changed — issue 12. `max_topics` is now binding (issue 16) |
-| 3 — Fit and leverage | **Working, weak** | Strategic fit is usable; asset leverage is compressed — see Open issue 2 |
+| 1 — Signal collection | **Working, five of six sources; rebuilt and exercised 2026-08-31** | OpenAlex 581 → **3,799 documents** across all 20 frames (issue 3). Crossref peer-review records excluded (issue 11). GDELT now genuinely spans 2024–2026 (issue 5). Failures recorded rather than swallowed — which immediately surfaced **arXiv losing 6 of 9 frames to HTTP 429** (issue 14, **now fixed, not yet re-measured against the live API**). PatentsView still disabled (issue 6) |
+| 2 — Emergence detection | **Working; clustering replaced twice in two days** | Now **BGE embeddings + BERTopic over seeded UMAP + HDBSCAN** (issue 2), replacing the average linkage that had itself just replaced leader clustering. Measured on the accumulated corpus: largest topic **5.2% of assigned**, 75.0% of forming documents assigned, 112 topics, so `max_topics` no longer binds (issue 16). The seed is recorded and validated, but the topic set is **not stable across seeds** — issue 20 |
+| 3 — Fit and leverage | **Working; the fix for its weakness is in, unmeasured** | Strategic fit is usable. Asset leverage was compressed to 0.03–0.10 under `hashing`; the BGE switch is meant to widen it and **nobody has yet checked whether it did** — see Open issue 2 |
 | 4 — Opportunity index | **Working, partial** | `patent_activity` has no data without PatentsView; weight redistributes automatically |
 | 5 — Synthesis | **Working; not yet read by a human** | Shortlist, 2×2 views, evidence cards, CSV, published HTML. **No one has read the `2026-08-31` evidence cards** — the check that caught both artefacts last time |
 | Notebook export | **Working, not yet reviewed by anyone** | `src/notebook.py`; written automatically after Stage 5. Re-derives emergence, horizon, index and composite rank from stored inputs |
-| Automation | **Fully exercised** | `tests.yml` green. `verify-access.yml` — **both credentials pass**. `scan.yml` **first ran 2026-08-30 (run 33310810297) and succeeded end to end**: 66 min collection, 0 failed pairs, site built, outputs committed, first corpus release published, R2 mirror written |
-| Tests | **223 passing** | Offline by design; every defect found so far has one |
+| Automation | **Fully exercised; scan.yml reworked 2026-08-31, not yet run under the new defaults** | `tests.yml` now has a second `ml` job covering the default BGE/BERTopic path, while the first job still installs `requirements.txt` only — which keeps "runs with no torch" a tested guarantee. `verify-access.yml` — **both credentials pass**. `scan.yml` installs the ML stack only when the resolved settings need it, caches the model, takes `embedding_backend`/`clustering_method` dispatch inputs, and its timeout is 300 min (issue 17) |
+| Tests | **276 passing** | Offline by design — the BERTopic tests included, since BERTopic is handed embeddings and never loads a model. They skip without `requirements-ml.txt` and run in CI's `ml` job |
 
 **Current baseline — `2026-08-31`** (workflow run 33345343027, 164 min, from an
 empty database with all collection fixes live). **15,036 documents, 120 topics**,
@@ -345,7 +345,7 @@ shortlist. The gate is still absent and would still matter on a smaller corpus
 or a higher threshold — but the 10-document topic at rank 5 was a symptom of the
 clustering, not of the missing gate.
 
-### 14. arXiv lost 6 of 9 frames to rate limiting — NEW 2026-08-31
+### 14. ~~arXiv lost 6 of 9 frames to rate limiting~~ — FIXED 2026-08-31
 
 The `2026-08-31` baseline recorded **28 HTTP 429s** from `export.arxiv.org`.
 Three frames succeeded (679 documents); six returned nothing. The previous run
@@ -366,6 +366,41 @@ than silent.
    under load. Raising the delay costs run time, which is now the binding
    constraint (see below) — so fix (1) first and re-measure before touching it.
 
+**Fixed 2026-08-31.** Both halves, because (1) alone is not enough: contained
+per year, nine frames by nine years is 81 requests that each still spend the
+full retry budget against a server refusing all of them, which converts a lost
+frame into a lost hour.
+
+1. `_collect_year` now catches `BigThinkError` around `fetch_text`, records an
+   incident and returns, exactly as GDELT's per-window catch does. A frame that
+   loses 2024 keeps 2018-2023, and Stage 1 logs it `partial` rather than
+   `success`. It cannot simply raise — `collect` is a generator drained with
+   `list()`, so raising after the first yield discards the documents already
+   produced.
+2. `request_delay_seconds` stays at arXiv's published 3 s, but a 429 now
+   multiplies the delay by `rate_limit_backoff_factor` (1.5) for the rest of
+   the run, up to `max_request_delay_seconds` (20 s). One-way, and held on the
+   collector instance, which Stage 1 reuses across frames — the throttle is per
+   IP, not per query, and on 2026-08-31 frames 4 through 9 were lost to a limit
+   frames 1 through 3 had already found.
+
+The delay is measured rather than configured because the published limit is not
+what a shared IP actually gets, and what it gets varies with arXiv's load: a
+single hand-set number is either too slow every week or too fast on the week it
+matters. It costs nothing when arXiv is healthy.
+
+**Worst case is ~25 extra minutes** (81 requests at the 20 s ceiling against 4
+minutes at 3 s), which is part of why the job timeout went to 300 — see issue
+17. Lower `max_request_delay_seconds` first if a run starts running long.
+
+Pinned by nine tests in `tests/test_collectors.py`, including that a healthy
+run never widens the delay and that a 503 is contained without widening it —
+a 500 is not evidence about our request rate.
+
+**Not yet re-measured against the live API.** The next scheduled or manual run
+is the measurement; check `collection_log` for arXiv frames logged `partial`
+and the run log for "widening the request delay".
+
 ### 15. data.gov.au descriptions keep their HTML — NEW 2026-08-31
 
 `src/collectors/datagovau.py:89` takes CKAN `notes` verbatim, where
@@ -377,7 +412,80 @@ It did not reach the shortlist, and data.gov.au is only 148 documents, so this
 is small — but it is exactly the class of defect that produced the peer-review
 artefacts, and the fix is one function call.
 
-### 16. `max_topics` is now binding — NEW 2026-08-31
+### 20. BERTopic's topic set is not stable across seeds — NEW 2026-08-31
+
+The seed sweep behind the 2026-08-31 calibration entry found a bimodal result,
+not a tight one. At `n_neighbors` 15 on the same 5,184-document corpus:
+
+| seed | topics | assigned | largest cluster |
+|---|---|---|---|
+| 0 | 115 | 73.5% | 5.3% |
+| 1 | 112 | 73.4% | 5.3% |
+| 7 | 105 | 77.3% | **11.8%** |
+| 42 | 112 | 75.0% | 5.2% |
+| 1234 | 107 | 76.4% | **12.1%** |
+
+Three of five seeds produce a largest cluster around 5%; two produce one around
+12%, roughly a 480-document quantum cluster that the other three split up.
+Topic count varies 105–115 (±9%) and assigned share 73.4–77.3%.
+
+**Why this matters more than it looks.** The seed is recorded, so any single
+run is reproducible — that part is fine and is tested. The problem is
+interpretive: "quantum is one 480-document topic" and "quantum is several
+smaller topics" are different findings about the corpus, and which one a reader
+gets is currently decided by an arbitrary integer. A reader has no way to tell
+from the output that the alternative existed.
+
+**Not a reason to revert.** Every seed here still avoids the catch-all that
+made the previous method unusable — the worst seed's 12% against the old
+method's 54% — so this is a smaller problem than the one it replaced.
+
+**What would settle it.** Cluster at several seeds and keep only what is stable
+across them, or report per-topic a "how often did this topic appear across
+seeds" figure alongside the score. The second is cheaper and more honest: it
+puts the uncertainty in front of the reader instead of resolving it silently.
+Neither is built.
+
+**Until then**, treat a single topic's boundaries as softer than its existence,
+and re-read the evidence cards before believing any one large topic is really
+one thing.
+
+### The same instability, at float precision — found 2026-08-31
+
+Worse than the seed spread, and found by accident while checking the sweep
+against the real pipeline.
+
+The calibration sweep and the verification run clustered **the same 5,184
+documents** with the same model, the same seed and the same parameters. The
+sweep encoded in batches of 500; the pipeline encoded through
+`encode_with_cache` at its own batch size. The resulting vectors agree to
+**cosine 0.9999998** — maximum absolute difference 3.3e-7, mean 9.2e-9, which
+is float32 batching noise and nothing else.
+
+They produced **118 and 124 clusters** respectively.
+
+**What this does and does not mean.**
+
+- It does **not** break reproducibility in practice. Vectors are cached in
+  DuckDB's `vectors` table and re-read, so a re-analysis of a stored corpus
+  gets bit-identical input and therefore identical topics. That is why
+  `--skip-collect` remains a sound tuning loop.
+- It does mean the topic set is **not robust**, only deterministic. UMAP's
+  nearest-neighbour graph resolves near-ties differently under a perturbation
+  far below any meaningful precision, and HDBSCAN turns a changed graph into
+  changed cluster boundaries. Determinism and robustness are not the same
+  property, and only the first is tested.
+- Practically: **do not compare a topic count, a topic's size, or a topic id
+  across two runs** even of the same corpus, unless both read the same cached
+  vectors. Re-embedding on a different machine, a different batch size or a
+  different sentence-transformers build is enough to move them.
+
+This makes the "report how often a topic survives across seeds" idea above the
+right fix rather than a nice-to-have, and it should perturb the vectors too,
+not only the seed. A topic that survives both is a finding; one that does not
+is an artefact of the arithmetic.
+
+### 16. `max_topics` is now binding — STILL BINDING under BERTopic 2026-08-31
 
 The `2026-08-31` run produced exactly **120** topics, which is
 `emergence.topics.max_topics`. More clusters passed `min_topic_size` and the
@@ -386,7 +494,32 @@ silent drop, but the cap is now deciding how much of the corpus is described
 rather than acting as a safety limit. Raise it, or raise the threshold, at the
 next sweep — and treat 120 as a number that was hit rather than chosen.
 
-### 18. Two runs on one UTC day share a run_id and the second overwrites the first — NEW 2026-08-31
+**Not resolved by the clustering switch — still binding, by a little.** The
+verification run on 2026-08-31 logged:
+
+```
+Keeping the 120 largest of 124 topics (emergence.topics.max_topics)
+```
+
+So the cap still decides the last four. Better than the previous run, which hit
+it exactly with more clusters behind it, but not fixed.
+
+**An offline sweep said 118 and was wrong**, which is worth recording because
+of *why* — see issue 20. The sweep and the pipeline embedded the same 5,184
+documents with the same model and got vectors agreeing to a cosine of
+0.9999998; that was enough to move the cluster count from 118 to 124. Trust the
+pipeline's own log line over any reproduction of it, including this file's.
+
+The direction of `n_neighbors` is unchanged and still matters: 163 raw clusters
+at 5 and 139 at 10, both well over the cap. Lowering it makes this much worse.
+
+**Suggested fix:** raise `max_topics` to ~200. It was set as a safety limit
+against a runaway clustering pass, and at 124 it is doing something else. The
+argument for leaving it is that nothing downstream reads more than the
+shortlist — but Stage 4 percentile-ranks *within* the topic set, so the cap
+silently changes every index it computes.
+
+### 18. ~~Two runs on one UTC day share a run_id and the second overwrites the first~~ — FIXED 2026-08-31
 
 Found while merging `main` into the fix branch, and it had already destroyed
 something.
@@ -407,12 +540,19 @@ the merge, so the documented baseline survives. The scheduled run's output is
 still recoverable from its workflow artefact and corpus release if anyone wants
 it; it was collected with the pre-fix code, so nothing here depends on it.
 
-**Fix, not yet applied.** Make a colliding run ID impossible to write silently.
-Either refuse to start when `data/outputs/<run_id>/` already exists unless an
-explicit `--overwrite` is passed, or resolve the default ID to
-`date -u +%Y-%m-%dT%H%M` so two runs on one day cannot collide. The first is
-better: it makes the collision an error rather than changing what a run is
-called, and a run ID people can type is worth keeping.
+**Fixed 2026-08-31** by the second option — the owner's call. `default_run_id()`
+now resolves to `%Y-%m-%dT%H%M` (`2026-08-31T0947`), and `scan.yml` calls that
+function instead of its own `date`, so the workflow and the CLI cannot drift
+into two formats. `T`, not a space or a colon, so the id stays usable unquoted
+as a directory name (Windows included), a `topic_id` prefix, a shell argument
+and a workflow artefact name.
+
+The refuse-to-overwrite option was the one this file argued for, and it was
+rejected for a concrete reason: `--skip-collect` re-analysis is *meant* to
+rewrite a run's outputs in place — it is the documented fast loop for tuning —
+so a guard would fire on the normal case and have to be suppressed every time.
+An explicit `--run-id` is therefore still taken verbatim and still overwrites.
+What is fixed is the *silent* collision, which only ever arose from the default.
 
 This is the same failure shape as issue 5 — a real event that the record showed
 as normal — and the same remedy: make the machine say what happened.
@@ -423,6 +563,29 @@ as normal — and the same remedy: make the machine say what happened.
 x 18 frames at a measured 32-36 s per request. The headroom is real but no
 longer generous, and both the arXiv fix (issue 14) and any increase to
 `window_chunks` spend it. Measure before adding requests.
+
+**Updated 2026-08-31 — timeout raised to 300 minutes.** Three additions landed
+together, each small and together not, against that 164-minute baseline:
+
+| Addition | Cost |
+|---|---|
+| Installing torch and the ML stack | +3-5 min, cold pip cache only |
+| BGE embedding the corpus | +10-15 min, cold vector cache only |
+| UMAP + HDBSCAN over the forming corpus | +1-3 min |
+| arXiv's adaptive backoff at its 20 s ceiling | up to +25 min, worst case |
+
+~212 minutes in the worst case, which 240 does not comfortably hold. Both
+caches — pip, and the DuckDB `vectors` table — make the two embedding-related
+rows near-free after the first run, so the steady state is closer to 180.
+
+The measured cost of BGE embedding here was **~7 documents/second on one
+contended core**, or roughly 18 minutes for 7,501 documents. An Actions runner
+should do better, but budget on that number rather than a hoped-for one.
+
+**Cheapest lever if a run starts running long**, in order: lower
+`collection.sources.arxiv.max_request_delay_seconds`; make sure the corpus
+release is being restored, so the vector cache is warm; then reconsider GDELT's
+`window_chunks`, which is still the single biggest consumer.
 
 ### 1. The ranking has never been validated — do this before trusting anything
 
@@ -440,7 +603,7 @@ The crucial distinction the runbook draws: **a miss caused by the scan frame
 cannot be fixed by re-weighting.** Trying is the standard way to overfit a
 method like this into uselessness.
 
-### 2. The asset-leverage axis is compressed and barely discriminates
+### 2. The asset-leverage axis is compressed and barely discriminates — STILL OPEN; the expected fix was tried 2026-08-31 and did not work
 
 Across all 15 topics it spans 0.03–0.10. Rank-normalisation means it still
 contributes its configured 25% of the *ordering*, but the underlying signal is
@@ -454,7 +617,27 @@ cosine is near zero and only the lexicon match carries signal.
 then re-sweep the clustering threshold — the whole similarity scale changes.
 This is the highest-value single change available.
 
-**Second-order fix:** expand the lexicons in
+**Done 2026-08-31.** `embeddings.backend` is now `bge`, and
+`emergence.topics.method` is now `bertopic` over a seeded UMAP + HDBSCAN pair.
+The clustering switch was asked for alongside the backend and reverses this
+repo's previous argument for average linkage — see the calibration log entry
+below and the decision log for why that trade was made the other way round.
+
+**Measured on the verification run, and the axis did not widen.** Top 15 by
+rank: 0.044–0.233 (span 0.189, span/mean 1.86) under `hashing`, against
+0.369–0.501 (span 0.132, span/mean **0.30**) under BGE. The values moved up and
+the relative spread got six times *narrower*. BGE cosines have a high floor —
+unrelated text still scores ~0.35 — so everything resembles everything.
+
+The diagnosis was right about the cause and wrong about the cure. Stage 5
+percentile-ranks the axis before weighting, so it still contributes its 25% of
+the ordering; what a narrow spread costs is signal-to-noise, since the gaps
+deciding the order shrink relative to the level.
+
+Keep BGE regardless — it is what made the clustering work (largest topic 54% →
+5.2%). It simply is not what fixes this.
+
+**The second-order fix is now the main one:** expand the lexicons in
 `data/strategy/asset_inventory.yaml`. They currently carry 7–11 entries each;
 more entries, and more of the phrasing the literature actually uses, would
 help under either backend.
@@ -603,13 +786,25 @@ rather than from the data.
 This is the largest piece of unbuilt work and is a genuine option for the rest
 of the sprint. See Day 4 below.
 
-### 8. Every `bge` threshold is a guess
+### 8. Every `bge` threshold is a guess — PARTLY ADDRESSED 2026-08-31
 
 `similarity_thresholds.leader.bge: 0.62` and
 `similarity_thresholds.agglomerative.bge: 0.45` have never been swept — only
 the `hashing` values have, and the agglomerative one only against an
 OpenAlex-only corpus. Run `python -m src.calibrate threshold` after switching
 backends, before trusting any score computed under it.
+
+**Partly overtaken 2026-08-31.** The active method is now `bertopic`, where
+HDBSCAN takes no cosine cut-off, so no clustering threshold is read at all.
+`similarity_thresholds.bertopic.bge` is measured (see the calibration log) and
+is used for one thing only: attaching GDELT documents to the nearest finished
+topic.
+
+**Still open** for the two methods that do cluster on a cosine. Both
+`agglomerative.bge: 0.45` and `leader.bge: 0.62` remain unswept guesses, and
+`agglomerative` is the fallback whenever the ML stack is missing — so a
+torch-less run is still clustering at a number nobody has measured. Sweep it
+with `python -m src.calibrate threshold` before trusting one.
 
 ### 9. ~~Two Stage 3/5 outputs are computed but never persisted~~ — FIXED 2026-08-31
 
@@ -697,6 +892,152 @@ not a replacement.
 ## Calibration log
 
 Append to this. Every entry should say what changed, why, and what moved.
+
+### 2026-08-31 — BGE embeddings and BERTopic clustering; both defaults changed
+
+**What changed.** `embeddings.backend` `hashing` → `bge`.
+`emergence.topics.method` `agglomerative` → `bertopic`, over an explicitly
+seeded UMAP + HDBSCAN pair. New `emergence.topics.bertopic` block holding every
+hyperparameter. New `similarity_thresholds.bertopic.{bge,hashing}`.
+
+**Why, and who decided.** The owner asked for both, and for the priority behind
+them: *a single horizon scan snapshot should be as accurate and useful as a
+self-contained run as it can be; its usefulness as a reference point for future
+runs is absolutely secondary.* That reverses the argument this repo previously
+made for average linkage, which rested entirely on week-over-week
+comparability. Recorded in the decision log, because it is a standing
+tie-breaker and not a one-off.
+
+**Measured on** the 2026-08-30 corpus restored from release
+`corpus-20260831-064857` — 7,501 documents, of which 5,184 are from forming
+sources. The verification run's own outputs are committed at
+`data/outputs/verify-bertopic/` — shortlist, evidence cards, topics.csv and the
+peer-review notebook — so every number below can be checked rather than taken
+on trust. It is a Stages 0 and 2-5 re-analysis (`--skip-collect`) of a restored
+corpus, not a collection run, and is named to make that obvious.
+
+**Read the evidence cards there before trusting the topics.** Nobody has. That
+is the check that caught both clustering artefacts last time, and it has not
+been done for this method. Embedded with `BAAI/bge-base-en-v1.5` (768 dimensions) in 780 s at
+~10 documents/second on one contended core.
+
+**`n_neighbors` sweep**, seed 42, `min_topic_size` 8, `max_topics` 120. `raw`
+is clusters before the cap; `largest` is a share of assigned documents:
+
+| n_neighbors | raw | kept | assigned | largest |
+|---|---|---|---|---|
+| 5 | 163 | 115 | 67.3% | 6.5% |
+| 10 | 139 | 114 | 70.7% | 5.5% |
+| **15** | **118** | **112** | **75.0%** | **5.2%** |
+| 20 | 99 | 94 | 78.2% | 11.8% |
+| 30 | 93 | 90 | 77.1% | 11.6% |
+| 50 | 86 | 83 | 72.6% | 12.9% |
+
+15 is the inflection and is what is set. Below it the corpus fragments badly —
+163 and 139 clusters against a cap of 120. At 20 and above a single
+~480-document quantum cluster forms and the largest share more than doubles.
+
+**These are sweep numbers, and the pipeline does not reproduce them exactly.**
+The verification run over the same 5,184 documents at the same settings formed
+**124** clusters, not 118, and `max_topics` bound (issue 16). The two encodings
+agree to a cosine of 0.9999998; that was enough. Read the shape of this table,
+not its individual counts, and take the pipeline's own log line as the number
+for any given run. See issue 20.
+
+**Seed sweep**, `n_neighbors` 15:
+
+| seed | topics | assigned | largest |
+|---|---|---|---|
+| 0 | 115 | 73.5% | 5.3% |
+| 1 | 112 | 73.4% | 5.3% |
+| 7 | 105 | 77.3% | 11.8% |
+| **42** | **112** | **75.0%** | **5.2%** |
+| 1234 | 107 | 76.4% | 12.1% |
+
+**42 is recorded because it was chosen, not because it was the library
+default.** It has the smallest largest-cluster share and the highest assigned
+share among the seeds that avoid the big cluster. Chosen on those structural
+criteria and not on which shortlist read best — that would be fitting the
+instrument to the answer it exists to produce.
+
+**Attachment threshold.** Under `bertopic` the clustering threshold does not
+cluster anything — HDBSCAN takes no cosine cut-off — and is read for exactly
+one purpose: attaching GDELT documents to the nearest finished topic, at
+`attachment_threshold_ratio` (0.6) of its value. Measured over 2,317 GDELT
+documents against the 112 centroids: min 0.406, 10th 0.529, median 0.617, 90th
+0.729, max 0.902.
+
+The first guess of 0.75 was **wrong and would have gone unnoticed**: it gives
+an operative 0.45, below even the observed minimum, and attached 99.5% of
+GDELT — the "has stopped discriminating" failure the runbook warns about, which
+looks exactly like a working attention signal from the outside. Set to 0.90,
+operative 0.54, attaching 86%. The distribution is unimodal with no natural
+cut, so this trims the worst ~14% by judgement rather than finding a boundary.
+
+**What moved.** Measured on the verification run (`verify-bertopic`, Stages
+0 and 2-5 over the restored corpus): 120 topics formed from 5,184 forming
+documents, **4,030 assigned (78%)**, 1,121 left as HDBSCAN outliers, 114 topics
+surviving the distinct-vocabulary drop, of which 25 weak, 33 strong and 6 in
+Horizon 3.
+
+Against the previous `hashing` + `agglomerative` baseline, the largest topic
+went from **1,497 documents (54% of everything assigned)** to **5.2%**, and
+assigned share from 56% to 78%. Labels are
+legible without reading the members: "geographical indication / gi / trade /
+agreement", "service delivery / government / digital / public service",
+"watermark / image / attack / dnn", "artificial intelligence / patent /
+inventorship / ai". The catch-all that dominated every previous run is gone.
+
+**What is NOT yet known, and must not be assumed.**
+
+- ~~Whether the asset-leverage axis widens.~~ **Measured on the verification
+  run, and it does not.** See below — this was the stated point of the BGE
+  switch and it did not deliver it.
+- **Whether the shortlist is better.** No ranking here has ever been validated
+  against a known past opportunity (issue 1). Cleaner topics are not a
+  validated ranking, and this entry is not evidence for one.
+- **Nothing here is comparable with any earlier run.** Different vector space,
+  different clustering method, different topic ids.
+- **The topic set is deterministic but not robust.** Re-embedding the same
+  corpus at a different batch size moved the cluster count by 6. See issue 20
+  before comparing any two runs' topic counts.
+- **27 of the 114 topics fall below `min_docs_per_topic` (20)** and are
+  suppressed rather than scored, which is the intended behaviour but is a
+  larger share than the previous run had.
+
+---
+
+**The asset-leverage axis did NOT widen — the expected win did not happen.**
+Top 15 by rank, the same comparison issue 2 was written from:
+
+| run | asset leverage | span | span / mean |
+|---|---|---:|---:|
+| `2026-08-31` (hashing + agglomerative) | 0.044–0.233 | 0.189 | **1.86** |
+| `verify-bertopic` (bge + bertopic) | 0.369–0.501 | 0.132 | **0.30** |
+
+The values moved *up* — the floor goes from 0.04 to 0.37 — but the spread got
+**six times narrower in relative terms**. BGE cosines have a high floor: two
+unrelated pieces of text still score ~0.35, so everything resembles everything
+and the axis separates less, not more. Strategic fit shows the same pattern
+(span 0.366 → 0.276 on the shortlist).
+
+**Why this is not a disaster, and not nothing.** Stage 5 percentile-ranks each
+axis before weighting (`percentile_rank` in `stage5_synthesis.py`), so asset
+leverage still contributes its configured 25% of the *ordering* whatever its
+raw scale — a compressed axis that orders correctly still ranks correctly. What
+a narrow spread costs is signal-to-noise: the gaps deciding the order are now
+smaller relative to the level, so the ordering is more easily moved by noise.
+
+**So issue 2 is not fixed by the backend switch, and the second-order fix
+becomes the main one:** expand the lexicons in
+`data/strategy/asset_inventory.yaml`, which carry only 7–11 entries each. The
+diagnosis in issue 2 — that `hashing` matched vocabulary rather than meaning —
+was probably right about the *cause* and wrong about the *cure*.
+
+There is still a good reason to keep BGE: it is what makes the clustering work
+(largest topic 54% → 5.2%). It just is not what fixes Stage 3.
+
+---
 
 ### 2026-08-31 — the fresh baseline itself (run 33345343027)
 
@@ -931,8 +1272,11 @@ Design choices worth not relitigating. Fuller reasoning is in `CLAUDE.md`.
 | Decision | Reason |
 |---|---|
 | DuckDB, not SQLite | Every stage aggregates; `BasicInfraSuggestion.md` specifies it. Single-writer, hence the Actions concurrency group |
-| `hashing` embeddings by default | The pipeline must run and be testable with no torch and no model download. `bge` is a config switch, and the intended destination |
-| Agglomerative clustering, not BERTopic | BERTopic finds better topics but shifts between runs unless carefully seeded. Week-over-week comparability matters more while weights are unsettled |
+| ~~`hashing` embeddings by default~~ → **`bge` since 2026-08-31** | `hashing` matches vocabulary, not meaning, which is why the asset-leverage axis barely discriminated (issue 2). `hashing` stays supported and is what the tests and any torch-less machine run on — the pipeline must remain runnable with no torch and no model download |
+| ~~Agglomerative clustering, not BERTopic~~ → **BERTopic since 2026-08-31** | Reversed on the owner's instruction. The old reason was week-over-week comparability; the owner's stated priority is that a single scan be as accurate and useful **on its own** as it can be, with its value as a reference point for later runs explicitly secondary. Every argument for average linkage was an argument about the second thing |
+| A single snapshot beats cross-run comparability, where they conflict | The standing tie-breaker behind the row above, and worth applying beyond it. Where a choice trades accuracy *within* a run against stability *across* runs, take the accuracy. Cross-run comparison was already fragile — a changed corpus or config snapshot invalidates it — and `docs/method.md` has always said not to compare scores across runs without checking both |
+| Every BERTopic hyperparameter in config, none left to a library default | A default is a hyperparameter nobody wrote down. The seed especially: unseeded UMAP makes two runs of one corpus disagree about what the topics are, so `config.py` refuses a non-integer `random_state` rather than letting an unreproducible run start |
+| Agglomerative kept as the no-torch fallback, not deleted | A contributor without the ML stack must still be able to run and test the pipeline. It is also what the plain CI job exercises, which keeps that guarantee from rotting |
 | Direct logistic fit, not logit linearisation | Linearisation reports an early-exponential topic as *saturated*, inverting the horizon band for exactly the technologies a horizon scan exists to find |
 | GDELT excluded from topic formation | 70-character multilingual headlines at 44% of the corpus produced topics like "brainrot / ai art". It is an attention proxy, and good at that |
 | Time series from full-window sources only | GDELT's rolling 24-month window put 5,025 of 7,378 documents in one slice, making flat topics read as bursting for eight straight years |

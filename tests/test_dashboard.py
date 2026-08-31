@@ -129,6 +129,13 @@ def _fixture_config(tmp_path):
     config["storage"]["duckdb_path"] = str(tmp_path / "fixture.duckdb")
     config["dashboard"]["max_points"] = 1000
     config["synthesis"]["shortlist_size"] = 2  # only the first two topics are "shortlisted"
+    # Pinned, not inherited. The shipped config runs `bge` + `bertopic`, which
+    # would download a ~400 MB model and need torch — and the suite is offline
+    # by design, so CI never depends on a third-party service being up. Pinning
+    # also keeps this test testing what it says it tests: a default that
+    # changes underneath it would silently change what is being exercised.
+    config["embeddings"]["backend"] = "hashing"
+    config["emergence"]["topics"]["method"] = "agglomerative"
     return config
 
 

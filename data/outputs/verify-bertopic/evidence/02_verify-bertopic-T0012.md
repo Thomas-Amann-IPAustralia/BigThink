@@ -1,0 +1,86 @@
+# 2. automated decision-making / administrative / government / accountability
+
+`verify-bertopic-T0012` · 80 documents · 2018–2026
+
+**H1 — established (0-3 yrs): sustains the current system**  
+**strong signal — high volume, high growth (already visible to everyone)**
+
+## Scores
+
+| Measure | Score | What it means |
+|---|---:|---|
+| Composite rank score | 0.911 | Weighted emergence + fit + leverage |
+| Emergence (Rotolo) | 0.669 | Weighted five-attribute score |
+| — novelty | 0.163 | Distance from where the field already was |
+| — growth | 0.183 | CAGR blended with burst intensity |
+| — coherence | 0.828 | How tightly the documents cluster |
+| — impact | 0.721 | Citation percentile within source |
+| — uncertainty | 0.744 | Dispersion of actors and evidence types |
+| Strategic fit | 0.781 | Closeness to published strategy |
+| Asset leverage | 0.463 | What IP Australia would bring |
+| Opportunity index | 0.725 | **Relative only — not a market size** |
+
+- **Closest strategic objective:** SI-3 AI and Automated Decision Making in IP administration
+- **Closest agency asset:** AS-EXAMINATION Examination workforce and AI/ADM trials
+- **DISR critical technology:** CT-AI Artificial intelligence
+- **Growth:** +10.9% per year · maturity 0.91
+- **Burst periods:** 2023
+
+## Defining terms
+
+`automated decision-making`, `decision-making`, `automated`, `administrative`, `government`, `administrative decision-making`, `administrative law`, `automated decision`, `decision`, `accountability`
+
+## Trajectory
+
+```
+   2018     3 ███
+   2019     4 ████
+   2020     7 ███████
+   2021     8 ████████
+   2022     4 ████
+   2023    19 ████████████████████  ← burst
+   2024     7 ███████
+   2025     8 ████████
+   2026     8 ████████
+```
+
+## Evidence
+
+The documents nearest this topic's centre. Every score above derives from this set — if the documents do not look like a coherent theme, the topic is an artefact and should be discarded.
+
+- [Situating the Rule of Law in the Context of Automated Decision-Making](https://doi.org/10.1007/978-3-031-30142-1_2)  
+  <sub>crossref · 2023 · The Rule of Law and Automated Decision-Making · 2 citations</sub>
+- [Automated Decision-making](https://doi.org/10.1017/9781009319232.007)  
+  <sub>crossref · 2025 · Smart Court · 1 citations</sub>
+- [Automated Decision-Making and the Law](https://doi.org/10.1007/978-3-031-48125-3_3)  
+  <sub>crossref · 2023 · Law, Governance and Technology Series</sub>
+- [Understanding Automated Decision-Making in the Public Sector: A Classification of Automated, Administrative Decision-Making](https://doi.org/10.1007/978-3-030-92644-1_3)  
+  <sub>crossref · 2022 · Progress in IS · 21 citations</sub>
+- [Confronting the Legal Challenges of Governmental Automated Decision-Making](https://doi.org/10.1007/978-3-031-48125-3_5)  
+  <sub>crossref · 2023 · Law, Governance and Technology Series</sub>
+- [The Rule of Law and Automated Decision-Making](https://doi.org/10.1007/978-3-031-30142-1)  
+  <sub>crossref · 2023 · book · 5 citations</sub>
+- [Identifying Challenges of Governmental Automated Decision-Making](https://doi.org/10.1007/978-3-031-48125-3_4)  
+  <sub>crossref · 2023 · Law, Governance and Technology Series</sub>
+- [Automated decision-making in public administration: Changing the decision space between public officials and citizens](https://doi.org/10.1016/j.giq.2025.102061)  
+  <sub>crossref · 2025 · Government Information Quarterly · 10 citations</sub>
+
+## Synthesis prompts
+
+This is where the pipeline stops and judgement starts. The scores above rank candidates; they do not decide anything.
+
+**Doblin Ten Types** — where could the innovation actually sit? Doblin's research found breakthroughs usually combine several types, and that product-only innovation returns the least. A regulator can innovate in process, channel and engagement, not just in what it offers.
+
+- *Configuration*: Profit model, Network, Structure, Process
+- *Offering*: Product performance, Product system
+- *Experience*: Service, Channel, Brand, Customer engagement
+
+**Seven Questions** — for the sense-making session:
+
+1. What are the sources of confidence in this reading, and of doubt?
+2. If this is true, what would have to change about how IP Australia works?
+3. Who wins and who loses if this trend continues?
+4. What would have to happen for this to become urgent within 12 months?
+5. What is already being done, by us or by others?
+6. What would we need to know to decide, and how could we find it out cheaply?
+7. If we do nothing, what is the cost in three years?
