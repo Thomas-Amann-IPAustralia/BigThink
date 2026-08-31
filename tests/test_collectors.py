@@ -363,3 +363,157 @@ def test_a_wider_span_reaches_further_back():
     from src.collectors.gdelt import _windows
 
     assert _windows(24, 4)[0][0] < _windows(12, 4)[0][0]
+
+
+# --- arXiv rate-limit containment (PROJECT_STATE issue 14) ----------------
+# The 2026-08-31 run took 28 HTTP 429s from export.arxiv.org and lost six of
+# nine frames: `_collect_year` called `fetch_text` outside any try, so an
+# exhausted retry budget propagated out of `collect()` and took every remaining
+# year of that frame with it. These pin both halves of the fix.
+
+
+_ATOM = """<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <id>http://arxiv.org/abs/{year}.00001</id>
+    <title>Quantum error correction in {year}</title>
+    <summary>An abstract for {year}.</summary>
+    <published>{year}-03-04T00:00:00Z</published>
+    <category term="quant-ph"/>
+    <author><name>A Researcher</name></author>
+  </entry>
+</feed>
+"""
+
+
+def _arxiv(fetch_text, **settings):
+    """An ArxivCollector whose HTTP layer is replaced by *fetch_text*."""
+    from src.collectors.arxiv import ArxivCollector
+
+    config = {
+        "pipeline": {"contact_email": "x@example.org"},
+        "storage": {"raw_dir": "data/raw", "keep_raw_payloads": False},
+        "collection": {"sources": {"arxiv": {"max_results_per_year": 30, **settings}}},
+    }
+    collector = ArxivCollector(config, "test-run")
+    collector.fetch_text = fetch_text  # type: ignore[method-assign]
+    collector.request_delay = 0.0      # no real sleeping in tests
+    collector.begin_frame()
+    return collector
+
+
+def _rate_limited(*failing_years):
+    """A fake fetch_text that 429s for *failing_years* and serves the rest."""
+    def fetch_text(url, params=None):
+        year = int((params or {})["search_query"].split("submittedDate:[")[1][:4])
+        if year in failing_years:
+            raise RetryableError(
+                f"HTTP 429 fetching {url}", context={"status_code": 429, "url": url}
+            )
+        return _ATOM.format(year=year)
+    return fetch_text
+
+
+def test_a_rate_limited_year_does_not_take_the_rest_of_the_frame():
+    """The actual 2026-08-31 defect: one 429 cost every later year."""
+    c = _arxiv(_rate_limited(2019, 2020))
+    docs = list(c.collect("quantum", {"key": "ct_quantum"}, 2018, 2022))
+
+    years = sorted(d["year"] for d in docs)
+    assert years == [2018, 2021, 2022], (
+        "years after the failure must still be collected — losing 2019 is a hole "
+        "in a growth curve, losing 2021 and 2022 is losing the frame"
+    )
+
+
+def test_a_lost_year_is_recorded_as_an_incident():
+    """Silence is what let four GDELT frames log `success` with zero records."""
+    c = _arxiv(_rate_limited(2019))
+    list(c.collect("quantum", {"key": "ct_quantum"}, 2018, 2020))
+
+    assert len(c.incidents) == 1
+    assert "2019" in c.incidents[0] and "429" in c.incidents[0]
+
+
+def test_a_frame_that_loses_every_year_yields_nothing_and_says_so():
+    """Stage 1 reads `incidents` to decide `failed` vs `success`."""
+    c = _arxiv(_rate_limited(2018, 2019, 2020))
+    assert list(c.collect("quantum", {"key": "ct_quantum"}, 2018, 2020)) == []
+    assert len(c.incidents) == 3
+
+
+def test_a_429_widens_the_request_delay_for_the_rest_of_the_run():
+    """Per-year containment alone just spends the retry budget 81 times over."""
+    c = _arxiv(_rate_limited(2019), rate_limit_backoff_factor=2.0,
+               max_request_delay_seconds=20.0)
+    c.request_delay = 3.0
+    list(c.collect("quantum", {"key": "ct_quantum"}, 2018, 2020))
+
+    assert c.request_delay == 6.0
+
+
+def test_the_widened_delay_is_capped():
+    """Run time is the binding constraint; the backoff must not eat the timeout."""
+    c = _arxiv(_rate_limited(*range(2018, 2027)), rate_limit_backoff_factor=2.0,
+               max_request_delay_seconds=10.0)
+    c.request_delay = 3.0
+    list(c.collect("quantum", {"key": "ct_quantum"}, 2018, 2026))
+
+    assert c.request_delay == 10.0
+
+
+def test_the_widened_delay_persists_across_frames():
+    """One instance serves every frame, and the throttle is per IP, not per query.
+
+    The 2026-08-31 run lost frames 4 through 9 to a limit that frames 1 through
+    3 had already discovered. A delay that reset per frame would rediscover it
+    nine times and act on it none.
+    """
+    failing = {2019}
+    def fetch_text(url, params=None):
+        year = int((params or {})["search_query"].split("submittedDate:[")[1][:4])
+        if year in failing:
+            raise RetryableError(
+                f"HTTP 429 fetching {url}", context={"status_code": 429, "url": url}
+            )
+        return _ATOM.format(year=year)
+
+    c = _arxiv(fetch_text, rate_limit_backoff_factor=2.0)
+    c.request_delay = 3.0
+    list(c.collect("quantum", {"key": "frame_one"}, 2018, 2020))
+    assert c.request_delay == 6.0
+
+    failing.clear()   # frame two sees a healthy arXiv...
+    c.begin_frame()   # ...and begin_frame clears incidents, not the measured delay
+    list(c.collect("quantum", {"key": "frame_two"}, 2018, 2020))
+    assert c.incidents == []
+    assert c.request_delay == 6.0, (
+        "the delay must not fall back — a source that has just rate-limited us "
+        "is not evidence that it has stopped"
+    )
+
+
+def test_a_healthy_run_never_widens_the_delay():
+    """The adaptive delay must cost nothing when arXiv is behaving."""
+    c = _arxiv(_rate_limited())
+    c.request_delay = 3.0
+    docs = list(c.collect("quantum", {"key": "ct_quantum"}, 2018, 2020))
+
+    assert len(docs) == 3
+    assert c.request_delay == 3.0
+
+
+def test_a_non_rate_limit_failure_is_contained_but_does_not_widen_the_delay():
+    """A 500 is not evidence about our request rate."""
+    def fetch_text(url, params=None):
+        year = int((params or {})["search_query"].split("submittedDate:[")[1][:4])
+        if year == 2019:
+            raise RetryableError("HTTP 503", context={"status_code": 503, "url": url})
+        return _ATOM.format(year=year)
+
+    c = _arxiv(fetch_text)
+    c.request_delay = 3.0
+    docs = list(c.collect("quantum", {"key": "ct_quantum"}, 2018, 2020))
+
+    assert sorted(d["year"] for d in docs) == [2018, 2020]
+    assert c.incidents and c.request_delay == 3.0

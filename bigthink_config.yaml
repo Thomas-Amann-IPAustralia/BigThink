@@ -141,8 +141,21 @@ collection:
       # source can support a growth curve.
       max_results_per_query: 270      # spread across the scan window
       max_results_per_year: 30        # explicit per-year quota; overrides the split
-      # arXiv asks for >=3 s between requests. Honour it.
+      # arXiv asks for >=3 s between requests. Honour it — but treat it as a
+      # floor rather than the real limit. The 2026-08-31 run took 28 HTTP 429s
+      # at this delay from a shared Actions IP and lost six of nine frames.
       request_delay_seconds: 3.0
+      # After each 429 the delay is multiplied by this and kept there for the
+      # rest of the run, up to the ceiling below (src/collectors/arxiv.py).
+      # Measured rather than configured: what a shared IP actually gets is not
+      # what the published limit says, and it varies with arXiv's load, so a
+      # single hand-set number is either too slow every week or too fast on the
+      # week it matters. Costs nothing when arXiv is healthy.
+      rate_limit_backoff_factor: 1.5
+      # 81 year-requests (9 frames x 2018-2026) is ~4 min at 3 s and ~27 at
+      # 20 s. Run time is the binding constraint now (PROJECT_STATE issue 17),
+      # so this is the number to lower if the job starts running long.
+      max_request_delay_seconds: 20.0
     crossref:
       enabled: true
       rows_per_query: 100

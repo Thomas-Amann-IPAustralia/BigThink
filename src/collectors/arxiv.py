@@ -7,8 +7,23 @@ indicator. For any Horizon 3 question about computational technology, arXiv is
 where the signal appears first.
 
 Atom XML, not JSON, so this collector parses rather than deserialises.
-arXiv's terms ask for at least three seconds between requests; that is set as
-`request_delay` in config and honoured by the base class, not negotiated.
+
+RATE LIMITING. arXiv's terms ask for at least three seconds between requests,
+and `request_delay_seconds` honours that. It is a floor, not the actual limit:
+export.arxiv.org evidently enforces something stricter under load, and from a
+shared GitHub Actions IP the 2026-08-31 run took 28 HTTP 429s and lost six of
+nine frames outright. Two mechanisms below, and they solve different halves of
+that:
+
+  * `_collect_year` contains a failure to one year (see there). A frame that
+    lost 2024 is worth far more than a frame that lost everything, and losing
+    the frame is what actually happened.
+  * `_note_rate_limit` widens the delay for the rest of the run whenever a 429
+    arrives. Published limits do not describe what a shared IP actually gets,
+    so the delay is measured rather than configured: it costs nothing when
+    arXiv is healthy and climbs only when arXiv says to. Without it, per-year
+    containment alone just spends the retry budget 81 times over — nine frames
+    by nine years — against a server that is refusing all of them.
 
 SAMPLING (this is a methodological point, not an implementation detail).
 The obvious way to query arXiv is to sort by submission date descending and
@@ -29,6 +44,7 @@ import xml.etree.ElementTree as ET
 from typing import Any, Iterator
 
 from src.collectors.base import Collector, build_document, register
+from src.errors import BigThinkError, RetryableError
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +63,52 @@ class ArxivCollector(Collector):
     def __init__(self, config: dict[str, Any], run_id: str) -> None:
         super().__init__(config, run_id)
         self.request_delay = float(self.settings.get("request_delay_seconds", 3.0))
+        # Ceiling on the adaptive delay. One instance serves every frame, so
+        # this budget is spent across the whole run: nine arXiv frames over the
+        # 2018-2026 window is 81 year-requests, which is ~4 minutes at 3 s and
+        # ~27 at 20 s. Affordable against a 240-minute job that currently takes
+        # 164 (PROJECT_STATE issue 17) — and far cheaper than the alternative,
+        # which is losing the source and re-running the scan.
+        self._max_request_delay = float(
+            self.settings.get("max_request_delay_seconds", 20.0)
+        )
+        self._rate_limit_backoff = float(
+            self.settings.get("rate_limit_backoff_factor", 1.5)
+        )
+        self._rate_limit_hits = 0
+
+    # -- adaptive throttling ---------------------------------------------
+    def _note_rate_limit(self, exc: BigThinkError) -> bool:
+        """Widen the inter-request delay after a 429. True if this was one.
+
+        Deliberately one-way: the delay climbs and never falls back over the
+        run. A source that has just rate-limited us is not evidence that it has
+        stopped, and the cost of being wrong is asymmetric — a slightly slow
+        frame against a lost one.
+
+        Kept on the collector instance, which Stage 1 reuses across frames, so
+        a frame that hits the limit slows the frames after it too. That is the
+        point: the throttle is per IP, not per query, and the 2026-08-31 run
+        lost frames 4 through 9 to a limit that frames 1 through 3 had already
+        discovered.
+        """
+        if not isinstance(exc, RetryableError):
+            return False
+        if exc.context.get("status_code") != 429:
+            return False
+
+        self._rate_limit_hits += 1
+        previous = self.request_delay
+        self.request_delay = min(
+            self.request_delay * self._rate_limit_backoff, self._max_request_delay
+        )
+        if self.request_delay > previous:
+            logger.warning(
+                "arXiv rate-limited this runner (%d time(s) so far); widening the "
+                "request delay %.1fs -> %.1fs for the rest of the run.",
+                self._rate_limit_hits, previous, self.request_delay,
+            )
+        return True
 
     def collect(
         self, query: str, frame: dict[str, Any], start_year: int, end_year: int
@@ -80,7 +142,30 @@ class ArxivCollector(Collector):
                 "sortBy": "submittedDate",
                 "sortOrder": "descending",
             }
-            xml_text = self.fetch_text(API_URL, params)
+            try:
+                xml_text = self.fetch_text(API_URL, params)
+            except BigThinkError as exc:
+                # One year, not the frame. `fetch_text` is called outside any
+                # try until now, so an exhausted retry budget propagated out of
+                # `collect()` and took every remaining year of the frame with
+                # it — which is how the 2026-08-31 run turned 28 rate-limit
+                # responses into six lost frames and 1,339 lost documents.
+                #
+                # The same reasoning as GDELT's per-window catch, and the same
+                # reason it cannot simply raise: `collect` is a generator drained
+                # with `list()`, so raising after the first yield discards the
+                # documents already produced. A partial frame is worth keeping;
+                # a silent one is not, so the loss is recorded as an incident
+                # and Stage 1 logs the frame `partial` rather than `success`.
+                self._note_rate_limit(exc)
+                self.note_incident(f"{year}: {exc}")
+                logger.warning(
+                    "arXiv unavailable for %r (%d): %s — continuing with the "
+                    "remaining years. This frame's growth curve will have a hole.",
+                    frame.get("key", query), year, exc,
+                )
+                return
+
             try:
                 root = ET.fromstring(xml_text)
             except ET.ParseError as exc:
