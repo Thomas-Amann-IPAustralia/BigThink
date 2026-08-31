@@ -1,0 +1,79 @@
+<a class="skip" href="#stage">Skip to content</a>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="mark" aria-hidden="true"></span>
+    <span class="brandtext"><b>IPAVentures</b> <span class="sub">horizon scan</span></span>
+  </div>
+
+  <nav class="tabs" role="tablist" aria-label="Views">
+    <button class="tab" role="tab" id="tab-method" aria-controls="view-method" data-view="method">Method</button>
+    <button class="tab" role="tab" id="tab-map" aria-controls="view-map" data-view="map">Map</button>
+    <button class="tab" role="tab" id="tab-topics" aria-controls="view-topics" data-view="topics">Topics</button>
+    <button class="tab" role="tab" id="tab-scores" aria-controls="view-scores" data-view="scores">Scores</button>
+    <button class="tab" role="tab" id="tab-data" aria-controls="view-data" data-view="data">Data</button>
+  </nav>
+
+  <div class="topmeta">
+    <span class="pill" id="runPill"></span>
+    <button class="iconbtn" id="themeBtn" type="button" title="Switch between light and dark"
+            aria-label="Switch between light and dark">◐</button>
+  </div>
+</header>
+
+<main class="stage" id="stage">
+
+  <!-- ------------------------------------------------------------ Method -->
+  <section class="view" id="view-method" role="tabpanel" aria-labelledby="tab-method" tabindex="-1">
+    <div class="scroller"><div class="page" id="methodPage"></div></div>
+  </section>
+
+  <!-- --------------------------------------------------------------- Map -->
+  <section class="view" id="view-map" role="tabpanel" aria-labelledby="tab-map" tabindex="-1">
+    <div class="workbench">
+      <aside class="rail" id="mapRail" aria-label="Map controls"></aside>
+
+      <div class="plot" id="plot">
+        <canvas id="cv" aria-label="Point cloud of the corpus. Every control and every
+          figure it shows is also available in the Topics and Data views."></canvas>
+        <div class="tooltip" id="tooltip" role="status"></div>
+        <div class="overlay tl" id="mapFidelity"></div>
+        <div class="overlay bl" id="mapStats"></div>
+        <div class="overlay br" id="mapAxisNote"></div>
+        <div class="maptools">
+          <button class="iconbtn" id="zoomIn" type="button" title="Zoom in" aria-label="Zoom in">+</button>
+          <button class="iconbtn" id="zoomOut" type="button" title="Zoom out" aria-label="Zoom out">−</button>
+          <button class="iconbtn" id="zoomFit" type="button" title="Fit the visible points" aria-label="Fit the visible points">⤢</button>
+        </div>
+      </div>
+
+      <aside class="inspector" id="inspector" aria-live="polite" aria-label="Details"></aside>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------------------ Topics -->
+  <section class="view" id="view-topics" role="tabpanel" aria-labelledby="tab-topics" tabindex="-1">
+    <div class="toolbar" id="topicsToolbar"></div>
+    <div class="scroller"><div class="page wide" id="topicsPage"></div></div>
+  </section>
+
+  <!-- ------------------------------------------------------------ Scores -->
+  <section class="view" id="view-scores" role="tabpanel" aria-labelledby="tab-scores" tabindex="-1">
+    <div class="toolbar" id="scoresToolbar"></div>
+    <div class="workbench">
+      <div class="plot" id="scorePlot">
+        <canvas id="scoreCv" aria-label="Scatter plot of one score against another."></canvas>
+        <div class="tooltip" id="scoreTooltip" role="status"></div>
+        <div class="overlay bl" id="scoreStats"></div>
+      </div>
+      <aside class="inspector" id="scoreInspector" aria-live="polite" aria-label="Topic details"></aside>
+    </div>
+  </section>
+
+  <!-- -------------------------------------------------------------- Data -->
+  <section class="view" id="view-data" role="tabpanel" aria-labelledby="tab-data" tabindex="-1">
+    <div class="toolbar" id="dataToolbar"></div>
+    <div class="scroller"><div class="page wide" id="dataPage"></div></div>
+  </section>
+
+</main>

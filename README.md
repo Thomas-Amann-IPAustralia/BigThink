@@ -279,7 +279,9 @@ src/
   stage3_scoring.py            Stage 3
   stage4_opportunity_index.py  Stage 4
   stage5_synthesis.py          Stage 5 (invokes 3 and 4)
-  report.py                    GitHub Pages site
+  report.py                    GitHub Pages site: the ranked shortlist
+  dashboard.py                 GitHub Pages site: the five-view explorer
+  dashboard_assets/            Its CSS, page shell and JS, inlined at build time
   notebook.py                  Peer-review notebook for a finished run
 data/
   strategy/                    The four YAML inputs above (committed)
@@ -288,6 +290,8 @@ data/
                                horizon-scan-<run_id>.ipynb (committed)
   bigthink.duckdb              Everything the pipeline knows (gitignored)
 docs/
+  index.html                   Published: the ranked shortlist (generated)
+  dashboard.html               Published: the interactive explorer (generated)
   method.md                    What every number means
   runbook-add-source.md        Adding a query or a source
   runbook-calibration.md       Tuning the weights, and validating them

@@ -1,28 +1,52 @@
 """
-src/dashboard.py — build the interactive point-cloud explorer.
+src/dashboard.py — build the interactive explorer published to GitHub Pages.
 
-Renders docs/dashboard.html: every collected document laid out as a 2D map,
-coloured by topic, horizon, signal class, source or STEEPV category, with
-filters, search and a details panel wired to the same evidence this run's
-report and notebook already carry. Self-contained, like src/report.py — one
-HTML file with the data and every line of JS inlined, no CDN, no build step,
-because it is served from GitHub Pages and a page that silently fails to
-render behind a corporate proxy is worse than a plain one.
+Renders docs/dashboard.html: a five-view analytical tool over one finished run.
+
+    Method   docs/method.md made interactive and grounded in this run's numbers
+    Map      every collected document as a 2D point cloud, with a fidelity readout
+    Topics   every topic and every score, sortable, filterable, expandable
+    Scores   any score against any other, with the meaningful pairs preset
+    Data     the run's tables, browsable and exportable
+
+Self-contained, like src/report.py — one HTML file with the data and every
+line of CSS and JS inlined, no CDN and no build step, because it is served
+from GitHub Pages and a page that silently fails to render behind a corporate
+proxy is worse than a plain one.
+
+WHY THE ASSETS LIVE IN src/dashboard_assets/ RATHER THAN IN THIS FILE. The
+published page is still one self-contained file — the assets are read and
+inlined at build time. What moved is the *source*: a few thousand lines of CSS
+and JS inside a Python string cannot be linted, folded, or diffed usefully, and
+this page is now the main way anyone reads a run. The "no CDN" decision is
+about what the browser fetches, and that is unchanged.
 
 WHERE THE POINTS COME FROM. Stage 2 embeds every document to cluster it, but
-only persists the vectors when the backend is cacheable (`bge`; `hashing`,
-the default, is cheap enough that persisting it would cost more in database
-writes than it saves — see src/embeddings.py). So this module re-embeds the
-corpus with the same embedder and the same cache the stages use, rather than
-reading stored vectors that usually are not there. For `hashing` this is a
-tokenise-and-hash pass, milliseconds for a whole corpus; for `bge` it reads
-back the vectors Stage 2 already cached. Topic membership itself — which
-this module does not recompute — comes straight from `topic_documents`.
+only persists the vectors when the backend is cacheable (`bge`; `hashing` is
+cheap enough that persisting it would cost more in database writes than it
+saves — see src/embeddings.py). So this module re-embeds the corpus with the
+same embedder and the same cache the stages use, rather than reading stored
+vectors that usually are not there. Topic membership itself — which this
+module does not recompute — comes straight from `topic_documents`.
 
-WHAT THE MAP DOES NOT MEAN. UMAP and PCA both produce axes with no inherent
-meaning: proximity is evidence of similar language, the axes themselves are
-not a dimension of anything. The same caution this project applies to the
-opportunity index applies here, and the page says so.
+WHAT THE MAP DOES NOT MEAN, AND HOW THE PAGE PROVES IT. UMAP and PCA both
+produce axes with no inherent meaning, and both distort: a 384-dimensional
+neighbourhood cannot survive being flattened to two intact. The honest
+response is not a disclaimer, it is a measurement, so this module computes
+and ships four of them —
+
+    trustworthiness   are the neighbours you can see real?
+    continuity        are the real neighbours visible?
+    neighbour purity  per topic, in 384-D and in 2D, so a topic the map tears
+                      apart says so on its own row
+    the k nearest high-dimensional neighbours of every plotted point, so a
+                      reader can select a document and watch where its true
+                      neighbours actually landed
+
+The projection also follows the clustering configuration by default
+(`dashboard.projection.follow_clustering`), so the map is a 2-component view of
+the same manifold BERTopic clustered in rather than an unrelated second
+opinion.
 
 Run:
     python -m src.dashboard --run-id 2026-08-31
@@ -56,9 +80,32 @@ from src.embeddings import build_embedder, encode_with_cache
 
 logger = logging.getLogger(__name__)
 
+ASSET_DIR = Path(__file__).resolve().parent / "dashboard_assets"
+
+#: Concatenated in this order into one <script>. core.js defines the BT
+#: namespace and every view attaches to it, so the order is load-bearing:
+#: core first, boot last.
+_JS_ASSETS = (
+    "core.js",
+    "method.js",
+    "map.js",
+    "topics.js",
+    "scores.js",
+    "data.js",
+    "boot.js",
+)
+
+
 def _round(value: Any, places: int = 4) -> float | None:
     try:
         return round(float(value), places)
+    except (TypeError, ValueError):
+        return None
+
+
+def _int(value: Any) -> int | None:
+    try:
+        return int(value)
     except (TypeError, ValueError):
         return None
 
@@ -81,32 +128,234 @@ def _pca_2d(vectors: np.ndarray) -> np.ndarray:
     return centered @ vt[:2].T
 
 
-def project_2d(vectors: np.ndarray, config: dict[str, Any]) -> tuple[np.ndarray, str]:
-    """Reduce *vectors* to 2D. Returns (coords, method actually used)."""
-    projection = get(config, "dashboard", "projection", default={}) or {}
+def projection_params(config: dict[str, Any]) -> dict[str, Any]:
+    """The UMAP settings the map will use, and where each one came from.
+
+    WHY THIS FOLLOWS THE CLUSTERING BY DEFAULT. Under `bertopic` the clusters
+    were found by HDBSCAN in a UMAP space built with a particular neighbourhood
+    size, metric and seed. Projecting the map with *different* settings answers
+    a different question, and the disagreement shows up as a topic scattered
+    across the picture for no reason a reader can see. Following the clustering
+    configuration makes the map a 2-component view of the manifold the topics
+    were actually found in. `follow_clustering: false` restores an independent
+    projection, which is a legitimate thing to want — it is a second opinion on
+    whether the clusters survive a different neighbourhood size — but it is not
+    the right default for a page whose job is to show what the run decided.
+    """
+    projection = dict(get(config, "dashboard", "projection", default={}) or {})
     method = str(projection.get("method", "umap"))
+    follow = bool(projection.get("follow_clustering", True))
+    clustering = str(get(config, "emergence", "topics", "method", default="") or "")
+    bertopic = get(config, "emergence", "topics", "bertopic", default={}) or {}
+
+    params = {
+        "n_neighbors": int(projection.get("n_neighbors", 15)),
+        "min_dist": float(projection.get("min_dist", 0.1)),
+        "metric": str(projection.get("metric", "cosine")),
+        "random_state": int(projection.get("random_state", 42)),
+    }
+    followed: list[str] = []
+    if follow and clustering == "bertopic":
+        for key in ("n_neighbors", "metric", "random_state"):
+            value = bertopic.get(key)
+            if value is None:
+                continue
+            cast = str(value) if key == "metric" else int(value)
+            if params[key] != cast:
+                followed.append(key)
+            params[key] = cast
+    return {
+        "method": method,
+        "follow_clustering": follow,
+        "clustering_method": clustering,
+        # min_dist is deliberately never followed: the clustering runs it at 0.0
+        # to pack clusters as tightly as HDBSCAN likes, which on a screen draws
+        # every topic as an indistinguishable dot.
+        "followed": followed,
+        **params,
+    }
+
+
+def project_2d(
+    vectors: np.ndarray, config: dict[str, Any]
+) -> tuple[np.ndarray, str, dict[str, Any]]:
+    """Reduce *vectors* to 2D. Returns (coords, method actually used, params)."""
+    params = projection_params(config)
     n = vectors.shape[0]
 
-    if method == "umap" and n >= 4:
+    if params["method"] == "umap" and n >= 4:
         try:
             import umap  # noqa: PLC0415 - optional dependency, imported lazily
 
             reducer = umap.UMAP(
-                n_neighbors=max(2, min(int(projection.get("n_neighbors", 15)), n - 1)),
-                min_dist=float(projection.get("min_dist", 0.1)),
-                metric=str(projection.get("metric", "cosine")),
-                random_state=int(projection.get("random_state", 42)),
+                n_neighbors=max(2, min(params["n_neighbors"], n - 1)),
+                min_dist=params["min_dist"],
+                metric=params["metric"],
+                random_state=params["random_state"],
                 n_components=2,
             )
             coords = reducer.fit_transform(np.asarray(vectors, dtype=np.float64))
-            return np.asarray(coords, dtype=np.float64), "umap"
+            return np.asarray(coords, dtype=np.float64), "umap", params
         except ImportError:
             logger.warning(
                 "umap-learn not installed; falling back to a PCA projection. "
                 "pip install umap-learn (or requirements.txt) for the intended point cloud."
             )
 
-    return _pca_2d(np.asarray(vectors, dtype=np.float64)), "pca"
+    return _pca_2d(np.asarray(vectors, dtype=np.float64)), "pca", params
+
+
+# ---------------------------------------------------------------------------
+# Projection fidelity
+#
+# A 2D picture of a 384-dimensional space is a lossy compression, and the loss
+# is not uniform: some topics survive it intact and some are torn in half. None
+# of that is visible in the picture itself, which is exactly why it has to be
+# measured and printed next to it.
+# ---------------------------------------------------------------------------
+
+
+def _unit(vectors: np.ndarray) -> np.ndarray:
+    v = np.asarray(vectors, dtype=np.float32)
+    norms = np.linalg.norm(v, axis=1, keepdims=True)
+    return v / np.maximum(norms, 1e-12)
+
+
+def knn_indices(
+    vectors: np.ndarray, k: int, metric: str = "cosine", chunk: int = 512
+) -> np.ndarray:
+    """Exact k nearest neighbours per row, self first. Shape (n, k + 1).
+
+    Chunked over rows because the full similarity matrix for a 25,000-document
+    corpus is 2.5 GB and this has to run on a free GitHub Actions runner.
+    Exact rather than approximate: the whole point of the number it feeds is
+    that a reader can trust it, and an ANN index would make the fidelity
+    measurement itself an approximation of unknown quality.
+    """
+    n = vectors.shape[0]
+    k = max(1, min(k, n - 1))
+    out = np.empty((n, k + 1), dtype=np.int32)
+    data = _unit(vectors) if metric == "cosine" else np.asarray(vectors, dtype=np.float32)
+
+    squared = np.square(data).sum(axis=1) if metric != "cosine" else None
+    for start in range(0, n, chunk):
+        block = data[start : start + chunk]
+        if metric == "cosine":
+            score = block @ data.T  # higher is nearer
+        else:
+            # Ranking-equivalent to minus the squared euclidean distance:
+            # -(|a|^2 - 2ab + |b|^2), with |a|^2 dropped because it is constant
+            # along a row and cannot change that row's ordering. |b|^2 varies
+            # per candidate and must stay — dropping it would rank a distant
+            # large vector as a near neighbour.
+            score = 2.0 * (block @ data.T) - squared[None, :]
+        part = np.argpartition(-score, kth=k, axis=1)[:, : k + 1]
+        rows = np.arange(part.shape[0])[:, None]
+        order = np.argsort(-score[rows, part], axis=1, kind="stable")
+        out[start : start + chunk] = part[rows, order]
+    return out
+
+
+def _rank_matrix(distance: np.ndarray) -> np.ndarray:
+    """Rank of every column from every row: 0 is the row itself, 1 its nearest."""
+    order = np.argsort(distance, axis=1, kind="stable")
+    ranks = np.empty_like(order)
+    rows = np.arange(distance.shape[0])[:, None]
+    ranks[rows, order] = np.arange(distance.shape[1])[None, :]
+    return ranks
+
+
+def trustworthiness_continuity(
+    vectors: np.ndarray, coords: np.ndarray, k: int
+) -> tuple[float, float]:
+    """Venna & Kaski's paired measures of how much the projection lies.
+
+    Trustworthiness penalises points drawn *close together* that are far apart
+    in the real space — the neighbours you can see that are not real, which is
+    the error that invents a cluster. Continuity penalises the opposite — real
+    neighbours the projection has pushed apart, which is the error that tears a
+    real topic in half. Both are needed: a projection can score well on one by
+    failing the other.
+
+    Both are O(n^2) in memory, so the caller samples.
+    """
+    n = vectors.shape[0]
+    k = max(1, min(k, (n - 1) // 3))
+    if n < 5 or 2 * n - 3 * k - 1 <= 0:
+        return float("nan"), float("nan")
+
+    unit = _unit(vectors).astype(np.float64)
+    d_high = 1.0 - unit @ unit.T
+    np.fill_diagonal(d_high, -1.0)  # keep self strictly first
+    low = np.asarray(coords, dtype=np.float64)
+    d_low = np.square(low).sum(1)[:, None] - 2 * low @ low.T + np.square(low).sum(1)[None, :]
+    np.fill_diagonal(d_low, -1.0)
+
+    rank_high, rank_low = _rank_matrix(d_high), _rank_matrix(d_low)
+    order_high = np.argsort(d_high, axis=1, kind="stable")[:, 1 : k + 1]
+    order_low = np.argsort(d_low, axis=1, kind="stable")[:, 1 : k + 1]
+    norm = 2.0 / (n * k * (2 * n - 3 * k - 1))
+
+    trust = 1.0 - norm * np.clip(
+        np.take_along_axis(rank_high, order_low, axis=1) - k, 0, None
+    ).sum()
+    cont = 1.0 - norm * np.clip(
+        np.take_along_axis(rank_low, order_high, axis=1) - k, 0, None
+    ).sum()
+    return float(trust), float(cont)
+
+
+def neighbour_purity(neighbours: np.ndarray, labels: np.ndarray) -> np.ndarray:
+    """Per point, the share of its k nearest neighbours carrying its own label.
+
+    Run over the same points in 384-D and in 2D, the pair answers the question
+    a reader actually has about a scattered-looking topic: is it scattered
+    because the topic is incoherent, or because the projection tore it up?
+    """
+    nn = neighbours[:, 1:]
+    return (labels[nn] == labels[:, None]).mean(axis=1)
+
+
+def _convex_hull(points: np.ndarray) -> list[list[float]]:
+    """Monotone-chain hull. Numpy only — scipy is not a dependency here."""
+    if len(points) < 3:
+        return [[float(x), float(y)] for x, y in points]
+    pts = np.unique(points, axis=0)
+    pts = pts[np.lexsort((pts[:, 1], pts[:, 0]))]
+    if len(pts) < 3:
+        return [[float(x), float(y)] for x, y in pts]
+
+    def half(seq: np.ndarray) -> list[np.ndarray]:
+        out: list[np.ndarray] = []
+        for p in seq:
+            while len(out) >= 2:
+                (ax, ay), (bx, by) = out[-2], out[-1]
+                if (bx - ax) * (p[1] - ay) - (by - ay) * (p[0] - ax) > 0:
+                    break
+                out.pop()
+            out.append(p)
+        return out
+
+    hull = half(pts)[:-1] + half(pts[::-1])[:-1]
+    # Four places, matching the plotted coordinates: every hull vertex is one
+    # of the points, and rounding it to a coarser grid would draw the outline
+    # fractionally off its own cluster.
+    return [[round(float(p[0]), 4), round(float(p[1]), 4)] for p in hull]
+
+
+def topic_hull(coords: np.ndarray, trim: float = 0.1) -> list[list[float]]:
+    """A hull around a topic's members, after trimming the furthest *trim*.
+
+    Untrimmed, one stray member — and average-linkage clustering produces them —
+    stretches the hull across the whole map and the shape stops meaning
+    anything. Trimming to the densest 90% draws where the topic actually is.
+    """
+    if len(coords) < 3:
+        return _convex_hull(coords)
+    centre = np.median(coords, axis=0)
+    dist = np.linalg.norm(coords - centre, axis=1)
+    keep = coords[dist <= np.quantile(dist, 1.0 - trim)]
+    return _convex_hull(keep if len(keep) >= 3 else coords)
 
 
 # ---------------------------------------------------------------------------
@@ -150,6 +399,152 @@ def _select_points(
     return sorted(int(i) for i in keep)
 
 
+def _method_facts(config: dict[str, Any], backend: str) -> dict[str, Any]:
+    """Every threshold and weight the page explains, read from the live config.
+
+    The Method view states numbers — the Rotolo weights, the horizon
+    cut-points, the critical-technology threshold. Hardcoding any of them in
+    the page would let it drift into describing a pipeline that no longer
+    exists, which is worse than not describing it at all.
+    """
+    topics_cfg = get(config, "emergence", "topics", default={}) or {}
+    thresholds = get(topics_cfg, "similarity_thresholds", default={}) or {}
+    method = str(topics_cfg.get("method", "agglomerative"))
+    ct_thresholds = (
+        get(config, "scoring", "strategic_fit", "critical_tech_match", "thresholds", default={})
+        or {}
+    )
+    ct_threshold = ct_thresholds.get(backend)
+
+    return {
+        "time_slice": get(config, "emergence", "time_slice", default="year"),
+        "clustering_method": method,
+        "bertopic": get(topics_cfg, "bertopic", default={}) or {},
+        "similarity_threshold": _round((thresholds.get(method) or {}).get(backend)),
+        "attachment_threshold_ratio": _round(topics_cfg.get("attachment_threshold_ratio")),
+        "min_topic_size": _int(topics_cfg.get("min_topic_size")),
+        "max_topics": _int(topics_cfg.get("max_topics")),
+        "min_docs_per_topic": _int(get(config, "emergence", "min_docs_per_topic", default=None)),
+        "min_slices_for_growth": _int(
+            get(config, "emergence", "min_slices_for_growth", default=None)
+        ),
+        "forming_sources": list(topics_cfg.get("forming_sources") or []),
+        "burst": get(config, "emergence", "burst", default={}) or {},
+        "rotolo_weights": get(config, "emergence", "rotolo_weights", default={}) or {},
+        "three_horizons": get(config, "emergence", "three_horizons", default={}) or {},
+        "weak_signal": get(config, "emergence", "weak_signal", default={}) or {},
+        "strategic_fit": get(config, "scoring", "strategic_fit", default={}) or {},
+        "asset_leverage": get(config, "scoring", "asset_leverage", default={}) or {},
+        "critical_tech_threshold": _round(ct_threshold),
+        # A blank cut-off is not a missing value to paper over — it is the
+        # configured instruction to match nothing, and the page has to say so
+        # rather than print an empty cell. See docs/method.md, Stage 3.
+        "critical_tech_matching": ct_threshold is not None,
+        "index_components": get(config, "opportunity_index", "components", default={}) or {},
+        "index_min_documents": _int(
+            get(config, "opportunity_index", "min_documents", default=None)
+        ),
+        "rank_weights": get(config, "synthesis", "rank_weights", default={}) or {},
+        "shortlist_size": _int(get(config, "synthesis", "shortlist_size", default=15)),
+        "evidence_documents_per_topic": _int(
+            get(config, "synthesis", "evidence_documents_per_topic", default=8)
+        ),
+    }
+
+
+def _collection_rows(conn: Any, run_id: str) -> list[dict[str, Any]]:
+    """Per-source collection outcome, one row per source rather than per status.
+
+    A source that succeeded on nine frames and failed on three is one story,
+    not two rows a reader has to add up themselves.
+    """
+    by_source: dict[str, dict[str, Any]] = {}
+    for row in db.collection_summary(conn, run_id):
+        entry = by_source.setdefault(
+            str(row["source"]),
+            {"source": str(row["source"]), "records": 0, "queries": 0, "status": {}},
+        )
+        entry["records"] += int(row.get("records") or 0)
+        entry["queries"] += int(row.get("queries") or 0)
+        entry["status"][str(row["status"])] = int(row.get("queries") or 0)
+
+    out = []
+    for entry in by_source.values():
+        status = entry["status"]
+        # Worst outcome wins the summary badge: a source that partly failed
+        # must not read as clean because most of its frames were fine.
+        for level in ("failed", "skipped", "partial", "success"):
+            if status.get(level):
+                entry["worst"] = level
+                break
+        else:
+            entry["worst"] = "success"
+        out.append(entry)
+    return sorted(out, key=lambda r: -r["records"])
+
+
+def _corpus_profile(documents: list[dict[str, Any]]) -> dict[str, Any]:
+    """Counts the Method view charts: by year, by source, by STEEPV, and crossed.
+
+    Computed over the whole corpus, not the plotted sample, because Stage 1 is
+    what this describes and downsampling happens later.
+    """
+    years = sorted({int(d["year"]) for d in documents if d.get("year")})
+    sources = sorted({str(d["source"]) for d in documents if d.get("source")})
+    steepv = sorted({str(d["steepv"]) for d in documents if d.get("steepv")})
+    year_index = {y: i for i, y in enumerate(years)}
+    source_index = {s: i for i, s in enumerate(sources)}
+
+    grid = [[0] * len(sources) for _ in years]
+    by_steepv: dict[str, int] = {s: 0 for s in steepv}
+    by_source: dict[str, int] = {s: 0 for s in sources}
+    for d in documents:
+        if d.get("source"):
+            by_source[str(d["source"])] += 1
+        if d.get("steepv"):
+            by_steepv[str(d["steepv"])] += 1
+        if d.get("year") and d.get("source"):
+            grid[year_index[int(d["year"])]][source_index[str(d["source"])]] += 1
+
+    return {
+        "years": years,
+        "sources": sources,
+        "steepv": steepv,
+        "by_year_source": grid,
+        "by_source": by_source,
+        "by_steepv": by_steepv,
+    }
+
+
+def _strategy_rows(conn: Any) -> dict[str, list[dict[str, Any]]]:
+    """The Stage 0 reference set, grouped by type, for the Method view.
+
+    Truncated deliberately: the full text of fourteen objectives would double
+    the page for something a reader can read in the YAML. What matters here is
+    that the set is visible and countable.
+    """
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for ref in db.fetch_strategy_refs(conn):
+        grouped.setdefault(str(ref["ref_type"]), []).append({
+            "code": ref.get("code") or "",
+            "label": ref.get("label") or ref["ref_id"],
+            "weight": _round(ref.get("weight"), 2),
+            "lexicon": [str(t) for t in (ref.get("lexicon") or [])][:12],
+            "text": (str(ref.get("text") or "").strip())[:400],
+        })
+    return grouped
+
+
+def _shorten(label: str, words: int = 3) -> str:
+    """A map-sized version of a c-TF-IDF label.
+
+    Labels are slash-joined term lists, which are informative in a table and
+    unreadable printed over a point cloud.
+    """
+    parts = [p.strip() for p in str(label).split("/") if p.strip()]
+    return " · ".join(parts[:words]) if parts else str(label)
+
+
 def build_dashboard(config: dict[str, Any], run_id: str) -> dict[str, Any]:
     """Assemble the JSON payload the dashboard page embeds."""
     conn = db.init_db(resolve_path(config, "storage", "duckdb_path"))
@@ -164,6 +559,12 @@ def build_dashboard(config: dict[str, Any], run_id: str) -> dict[str, Any]:
             raise SystemExit(f"No ranked topics for run_id={run_id!r}. Run Stage 5 first.")
 
         membership = db.fetch_run_topic_documents(conn, run_id)
+        collection = _collection_rows(conn, run_id)
+        strategy = _strategy_rows(conn)
+        corpus = _corpus_profile(documents)
+        timeseries = {
+            t["topic_id"]: db.fetch_topic_timeseries(conn, t["topic_id"]) for t in ranked_topics
+        }
 
         # Same embedding recipe as Stage 2 (src/stage2_emergence.py): fit IDF
         # over the whole corpus, then encode with the cache. Deterministic —
@@ -193,48 +594,11 @@ def build_dashboard(config: dict[str, Any], run_id: str) -> dict[str, Any]:
     documents = [documents[i] for i in keep]
     vectors = vectors[keep]
 
-    coords, projection_method = project_2d(vectors, config)
+    coords, projection_method, projection_used = project_2d(vectors, config)
 
     repo_url = _repo_url(config)
     shortlist_size = int(get(config, "synthesis", "shortlist_size", default=15))
     topic_index = {t["topic_id"]: i for i, t in enumerate(ranked_topics)}
-
-    topics_out = []
-    for t in ranked_topics:
-        terms = [str(term) for term, _weight in (t.get("terms") or [])][:5]
-        evidence_url = None
-        rank = t.get("rank")
-        if rank and int(rank) <= shortlist_size:
-            evidence_url = (
-                f"{repo_url}/blob/main/data/outputs/{run_id}/evidence/"
-                f"{int(rank):02d}_{t['topic_id']}.md"
-            )
-        topics_out.append({
-            "id": t["topic_id"],
-            "label": t.get("label") or t["topic_id"],
-            "terms": terms,
-            "horizon": t.get("horizon"),
-            "signal_class": t.get("signal_class"),
-            "rank": rank,
-            "document_count": t.get("document_count"),
-            "emergence_score": _round(t.get("emergence_score")),
-            "strategic_fit": _round(t.get("strategic_fit")),
-            "asset_leverage": _round(t.get("asset_leverage")),
-            "opportunity_index": (
-                None if t.get("index_suppressed") else _round(t.get("opportunity_index"))
-            ),
-            "index_suppressed": bool(t.get("index_suppressed")),
-            "composite_rank_score": _round(t.get("composite_rank_score")),
-            "best_objective": t.get("best_objective"),
-            "best_asset": t.get("best_asset"),
-            "critical_tech": t.get("critical_tech"),
-            "fit_quadrant": t.get("fit_quadrant") or "watch",
-            "cagr": _round(t.get("cagr"), 4),
-            "maturity": _round(t.get("maturity"), 3),
-            "first_slice": t.get("first_slice"),
-            "last_slice": t.get("last_slice"),
-            "evidence_url": evidence_url,
-        })
 
     sources = sorted({d["source"] for d in documents if d.get("source")})
     source_index = {s: i for i, s in enumerate(sources)}
@@ -260,6 +624,92 @@ def build_dashboard(config: dict[str, Any], run_id: str) -> dict[str, Any]:
         url_col.append(raw_url if raw_url.startswith(("http://", "https://")) else "")
         venue_col.append((doc.get("venue") or "").strip()[:120])
 
+    point_topics = np.asarray(topic_col, dtype=np.int32)
+    fidelity = compute_fidelity(vectors, coords, point_topics, config)
+
+    topics_out = []
+    for i, t in enumerate(ranked_topics):
+        member_idx = np.flatnonzero(point_topics == i)
+        rank = t.get("rank")
+        evidence_url = (
+            f"{repo_url}/blob/main/data/outputs/{run_id}/evidence/"
+            f"{int(rank):02d}_{t['topic_id']}.md"
+            if rank and int(rank) <= shortlist_size else None
+        )
+        members = sorted(
+            (
+                {"i": int(j), "sim": sim_col[int(j)]}
+                for j in member_idx
+            ),
+            key=lambda m: -(m["sim"] if m["sim"] is not None else 0.0),
+        )
+        series = timeseries.get(t["topic_id"], [])
+        topics_out.append({
+            "id": t["topic_id"],
+            "label": t.get("label") or t["topic_id"],
+            "short": _shorten(t.get("label") or t["topic_id"]),
+            "terms": [str(term) for term, _weight in (t.get("terms") or [])][:12],
+            "horizon": t.get("horizon"),
+            "signal_class": t.get("signal_class"),
+            "rank": rank,
+            "document_count": t.get("document_count"),
+            "plotted_count": int(member_idx.size),
+            "emergence_score": _round(t.get("emergence_score")),
+            "novelty": _round(t.get("novelty")),
+            "growth": _round(t.get("growth")),
+            "coherence": _round(t.get("coherence")),
+            "impact": _round(t.get("impact")),
+            "uncertainty": _round(t.get("uncertainty")),
+            "burst_weight": _round(t.get("burst_weight"), 3),
+            "burst_slices": [str(s) for s in (t.get("burst_slices") or [])],
+            "strategic_fit": _round(t.get("strategic_fit")),
+            "best_objective": t.get("best_objective"),
+            "best_objective_sim": _round(t.get("best_objective_sim")),
+            "asset_leverage": _round(t.get("asset_leverage")),
+            "best_asset": t.get("best_asset"),
+            "opportunity_index": (
+                None if t.get("index_suppressed") else _round(t.get("opportunity_index"))
+            ),
+            "index_components": t.get("index_components") or {},
+            "index_suppressed": bool(t.get("index_suppressed")),
+            "composite_rank_score": _round(t.get("composite_rank_score")),
+            "critical_tech": t.get("critical_tech"),
+            "fit_quadrant": t.get("fit_quadrant") or "watch",
+            "cagr": _round(t.get("cagr"), 4),
+            "maturity": _round(t.get("maturity"), 3),
+            "avg_proportion": _round(t.get("avg_proportion"), 5),
+            "first_slice": t.get("first_slice"),
+            "last_slice": t.get("last_slice"),
+            "evidence_url": evidence_url,
+            "docs": members[:40],
+            "timeseries": [
+                {
+                    "slice": str(s["time_slice"]),
+                    "n": int(s.get("doc_count") or 0),
+                    "p": _round(s.get("proportion"), 5),
+                    "burst": bool(s.get("in_burst")),
+                }
+                for s in series
+            ],
+            "hull": (
+                topic_hull(coords[member_idx]) if member_idx.size >= 3 else []
+            ),
+            "cx": _round(float(np.median(coords[member_idx, 0])), 3) if member_idx.size else None,
+            "cy": _round(float(np.median(coords[member_idx, 1])), 3) if member_idx.size else None,
+            # How far the topic reaches on the map, so the page can put a label
+            # clear of its points rather than over them. The 90th percentile
+            # rather than the maximum, for the same reason topic_hull() trims.
+            "spread": (
+                _round(float(np.quantile(
+                    np.linalg.norm(coords[member_idx] - np.median(coords[member_idx], axis=0), axis=1),
+                    0.9,
+                )), 3)
+                if member_idx.size >= 3 else 0.0
+            ),
+            "map_purity": fidelity["topic_map_purity"].get(i),
+            "space_purity": fidelity["topic_space_purity"].get(i),
+        })
+
     years = [y for y in year_col if y]
 
     return {
@@ -267,7 +717,11 @@ def build_dashboard(config: dict[str, Any], run_id: str) -> dict[str, Any]:
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="minutes"),
         "repo_url": repo_url,
         "backend": embedder.name,
+        "dimensions": int(vectors.shape[1]),
         "projection_method": projection_method,
+        "projection": {**projection_used, "resolved": projection_method},
+        "fidelity": fidelity["summary"],
+        "neighbours": fidelity["neighbours"],
         "shortlist_size": shortlist_size,
         "documents_total": total_documents,
         "documents_plotted": len(documents),
@@ -276,6 +730,10 @@ def build_dashboard(config: dict[str, Any], run_id: str) -> dict[str, Any]:
         "year_max": max(years) if years else None,
         "sources": sources,
         "steepv": steepv_cats,
+        "method": _method_facts(config, embedder.name),
+        "collection": collection,
+        "corpus": corpus,
+        "strategy": strategy,
         "topics": topics_out,
         "points": {
             "x": xs, "y": ys,
@@ -287,722 +745,116 @@ def build_dashboard(config: dict[str, Any], run_id: str) -> dict[str, Any]:
     }
 
 
+def compute_fidelity(
+    vectors: np.ndarray,
+    coords: np.ndarray,
+    point_topics: np.ndarray,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    """Measure how much the 2D map distorts the space the topics were found in.
+
+    Returns the page-level summary, the per-topic purity pair, and the k
+    nearest high-dimensional neighbours of every plotted point so the page can
+    draw them. Degrades to an empty result rather than failing the build: a
+    dashboard without a fidelity readout is worth having, and this is the
+    expensive part of the module.
+    """
+    cfg = get(config, "dashboard", "fidelity", default={}) or {}
+    empty = {
+        "summary": {"computed": False, "reason": "dashboard.fidelity.enabled is false"},
+        "topic_map_purity": {},
+        "topic_space_purity": {},
+        "neighbours": {"k": 0, "idx": []},
+    }
+    if not bool(cfg.get("enabled", True)):
+        return empty
+
+    n = int(vectors.shape[0])
+    cap = int(cfg.get("max_points", 15000))
+    if n > cap:
+        logger.info(
+            "Dashboard: %d points exceeds dashboard.fidelity.max_points=%d; "
+            "skipping the projection fidelity measurement.", n, cap,
+        )
+        return {
+            **empty,
+            "summary": {
+                "computed": False,
+                "reason": f"{n:,} plotted points exceeds the {cap:,}-point budget",
+            },
+        }
+    if n < 20:
+        return {**empty, "summary": {"computed": False, "reason": "too few points to measure"}}
+
+    k = max(2, min(int(cfg.get("k", 15)), n - 2))
+    link_k = max(1, min(int(cfg.get("neighbour_links", 8)), n - 1))
+    sample_size = max(50, min(int(cfg.get("sample", 2500)), n))
+
+    space_nn = knn_indices(vectors, max(k, link_k), metric="cosine")
+    map_nn = knn_indices(np.asarray(coords, dtype=np.float32), k, metric="euclidean")
+
+    space_purity = neighbour_purity(space_nn[:, : k + 1], point_topics)
+    map_purity = neighbour_purity(map_nn[:, : k + 1], point_topics)
+
+    per_topic_map: dict[int, float] = {}
+    per_topic_space: dict[int, float] = {}
+    for topic in np.unique(point_topics):
+        if topic < 0:
+            continue
+        members = point_topics == topic
+        per_topic_map[int(topic)] = round(float(map_purity[members].mean()), 3)
+        per_topic_space[int(topic)] = round(float(space_purity[members].mean()), 3)
+
+    # Trustworthiness and continuity need the full rank matrix, which is
+    # quadratic in memory, so they run on a seeded sample. Reported with the
+    # sample size attached rather than presented as an exact figure.
+    rng = np.random.default_rng(42)
+    idx = (
+        np.sort(rng.choice(n, size=sample_size, replace=False))
+        if sample_size < n else np.arange(n)
+    )
+    trust, cont = trustworthiness_continuity(vectors[idx], np.asarray(coords)[idx], k)
+
+    assigned = point_topics >= 0
+    return {
+        "summary": {
+            "computed": True,
+            "k": k,
+            "sample": int(idx.size),
+            "points": n,
+            "trustworthiness": None if np.isnan(trust) else round(trust, 3),
+            "continuity": None if np.isnan(cont) else round(cont, 3),
+            "space_purity": (
+                round(float(space_purity[assigned].mean()), 3) if assigned.any() else None
+            ),
+            "map_purity": (
+                round(float(map_purity[assigned].mean()), 3) if assigned.any() else None
+            ),
+        },
+        "topic_map_purity": per_topic_map,
+        "topic_space_purity": per_topic_space,
+        # Flattened, self excluded: the page reshapes it. A nested array of
+        # arrays costs about 40% more bytes for the same numbers.
+        "neighbours": {
+            "k": link_k,
+            "idx": space_nn[:, 1 : link_k + 1].astype(int).ravel().tolist(),
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # HTML rendering
 # ---------------------------------------------------------------------------
 
-_CSS = """
-:root {
-  --bg: #fbfbfa; --fg: #16150f; --muted: #56544c; --line: #e2e0d8;
-  --card: #ffffff; --accent: #1c4f8f; --canvas-bg: #f2f1ea;
-  --h1: #7a5c00; --h2: #1c6b52; --h3: #7a2d6b;
-  --weak: #7a2d6b; --strong: #1c4f8f; --latent: #56544c; --noise: #8a8880;
-  --unassigned: #a3a196;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #14150f; --fg: #f2f1ea; --muted: #a3a196; --line: #2f3128;
-    --card: #1c1e17; --accent: #86b3ec; --canvas-bg: #10110c;
-    --h1: #e0bc55; --h2: #6fc9a6; --h3: #d78fc4;
-    --weak: #d78fc4; --strong: #86b3ec; --latent: #a3a196; --noise: #75736b;
-    --unassigned: #55544c;
-  }
-}
-* { box-sizing: border-box; }
-html, body { height: 100%; }
-body {
-  margin: 0; background: var(--bg); color: var(--fg);
-  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  display: flex; flex-direction: column;
-}
-a { color: var(--accent); }
-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; }
-button, select, input { font: inherit; color: inherit; }
-header.top {
-  padding: 14px 20px; border-bottom: 1px solid var(--line);
-  display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
-}
-header.top h1 { font-size: 18px; margin: 0; letter-spacing: -0.01em; }
-header.top .meta { color: var(--muted); font-size: 12.5px; }
-header.top .nav { margin-left: auto; font-size: 13px; display: flex; gap: 14px; }
-.callout {
-  margin: 10px 20px 0; padding: 10px 14px; font-size: 12.5px; color: var(--muted);
-  background: var(--card); border: 1px solid var(--line); border-left: 3px solid var(--accent);
-  border-radius: 6px;
-}
-.callout strong { color: var(--fg); }
-.app { flex: 1; display: flex; min-height: 0; }
-aside.controls {
-  width: 250px; flex: 0 0 250px; overflow-y: auto; padding: 14px 16px;
-  border-right: 1px solid var(--line); font-size: 13px;
-}
-aside.controls h2 {
-  font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
-  color: var(--muted); margin: 18px 0 8px;
-}
-aside.controls h2:first-child { margin-top: 0; }
-.field { margin-bottom: 8px; }
-.field label { display: block; margin-bottom: 3px; color: var(--muted); font-size: 12px; }
-select, input[type="text"], input[type="number"] {
-  width: 100%; padding: 5px 7px; background: var(--card); color: var(--fg);
-  border: 1px solid var(--line); border-radius: 5px;
-}
-input[type="range"] { width: 100%; }
-.chk { display: flex; align-items: center; gap: 6px; margin: 3px 0; cursor: pointer; }
-.chk input { accent-color: var(--accent); }
-.chk .swatch { width: 10px; height: 10px; border-radius: 3px; flex: 0 0 auto; }
-.chk .count { margin-left: auto; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
-.legend-list { max-height: 220px; overflow-y: auto; }
-button.btn {
-  width: 100%; padding: 6px 8px; margin-top: 4px; background: var(--card);
-  border: 1px solid var(--line); border-radius: 5px; cursor: pointer; font-size: 12.5px;
-}
-button.btn:hover { border-color: var(--accent); color: var(--accent); }
-.years { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
-.years input[type="number"] { width: 64px; }
-main.canvas-wrap { flex: 1; position: relative; min-width: 0; background: var(--canvas-bg); }
-canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
-canvas.dragging { cursor: grabbing; }
-.stats-badge {
-  position: absolute; left: 12px; bottom: 12px; background: var(--card);
-  border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px;
-  font-size: 11.5px; color: var(--muted); pointer-events: none;
-}
-.stats-badge strong { color: var(--fg); }
-.axis-note {
-  position: absolute; right: 12px; bottom: 12px; max-width: 260px; text-align: right;
-  font-size: 11px; color: var(--muted); background: var(--card); border: 1px solid var(--line);
-  border-radius: 6px; padding: 6px 10px; pointer-events: none;
-}
-.tooltip {
-  position: absolute; pointer-events: none; max-width: 280px; background: var(--card);
-  border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; font-size: 12px;
-  box-shadow: 0 4px 14px rgba(0,0,0,0.18); display: none; z-index: 5;
-}
-.tooltip .t-title { font-weight: 600; margin-bottom: 3px; }
-.tooltip .t-meta { color: var(--muted); font-size: 11px; }
-aside.details {
-  width: 320px; flex: 0 0 320px; overflow-y: auto; padding: 16px 18px;
-  border-left: 1px solid var(--line); font-size: 13px;
-}
-aside.details.empty { display: flex; align-items: center; justify-content: center; color: var(--muted); }
-aside.details h3 { font-size: 15px; margin: 0 0 4px; }
-aside.details .close { float: right; background: none; border: none; color: var(--muted);
-  cursor: pointer; font-size: 16px; line-height: 1; }
-aside.details dl { margin: 10px 0; }
-aside.details dt { color: var(--muted); font-size: 11px; text-transform: uppercase;
-  letter-spacing: 0.04em; margin-top: 8px; }
-aside.details dd { margin: 2px 0 0; }
-.tag { font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 10px;
-       border: 1px solid currentColor; white-space: nowrap; }
-.H1 { color: var(--h1); } .H2 { color: var(--h2); } .H3 { color: var(--h3); }
-.weak { color: var(--weak); } .strong { color: var(--strong); }
-.latent { color: var(--latent); } .noise { color: var(--noise); }
-@media (max-width: 900px) {
-  .app { flex-direction: column; }
-  aside.controls, aside.details { width: auto; flex: none; max-height: 40vh; border: none;
-    border-bottom: 1px solid var(--line); }
-  main.canvas-wrap { min-height: 50vh; }
-}
-"""
 
-_JS = r"""
-(function () {
-  "use strict";
-  var D = window.__DASHBOARD_DATA__;
-  var P = D.points;
-  var N = P.x.length;
-
-  var HORIZON_COLOR = { H1: "#c9971a", H2: "#1c9a72", H3: "#b04fa0", "": "#8a8880" };
-  var SIGNAL_COLOR = { weak: "#b04fa0", strong: "#3d7fc9", latent: "#8a8880", noise: "#5f5d54" };
-  var UNASSIGNED = "#8a888066";
-
-  function goldenColor(i, alpha) {
-    var hue = (i * 137.508) % 360;
-    return "hsla(" + hue.toFixed(1) + ",65%,52%," + (alpha == null ? 1 : alpha) + ")";
-  }
-
-  var topicColors = D.topics.map(function (_, i) { return goldenColor(i); });
-  var sourceColors = D.sources.map(function (_, i) { return goldenColor(i * 2.3); });
-  var steepvColors = D.steepv.map(function (_, i) { return goldenColor(i * 3.7); });
-
-  // --- DOM ------------------------------------------------------------
-  var canvas = document.getElementById("cv");
-  var ctx = canvas.getContext("2d");
-  var tooltip = document.getElementById("tooltip");
-  var details = document.getElementById("details");
-  var statsBadge = document.getElementById("statsBadge");
-  var legendList = document.getElementById("legendList");
-  var colorBySel = document.getElementById("colorBy");
-  var topicSearch = document.getElementById("topicSearch");
-  var topicOptions = document.getElementById("topicOptions");
-  var searchInput = document.getElementById("searchInput");
-  var sourceFilters = document.getElementById("sourceFilters");
-  var horizonFilters = document.getElementById("horizonFilters");
-  var yearMinInput = document.getElementById("yearMin");
-  var yearMaxInput = document.getElementById("yearMax");
-  var shortlistOnly = document.getElementById("shortlistOnly");
-  var showUnassigned = document.getElementById("showUnassigned");
-  var pointSizeInput = document.getElementById("pointSize");
-  var resetFiltersBtn = document.getElementById("resetFilters");
-  var resetViewBtn = document.getElementById("resetView");
-
-  // --- state ------------------------------------------------------------
-  var state = {
-    colorBy: "topic",
-    sources: new Set(D.sources),
-    horizons: new Set(["H1", "H2", "H3", ""]),
-    yearMin: D.year_min, yearMax: D.year_max,
-    search: "",
-    shortlistOnly: false,
-    showUnassigned: true,
-    topicFocus: -1,
-    pointSize: 2.2,
-  };
-
-  var visible = new Uint8Array(N);
-  var visibleIdx = [];
-  var colorGroups = null; // color string -> Int32Array
-
-  // --- camera -------------------------------------------------------
-  var cam = { scale: 1, tx: 0, ty: 0 };
-  var extent = computeExtent();
-
-  function computeExtent() {
-    var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    for (var i = 0; i < N; i++) {
-      var x = P.x[i], y = P.y[i];
-      if (x < minX) minX = x; if (x > maxX) maxX = x;
-      if (y < minY) minY = y; if (y > maxY) maxY = y;
-    }
-    if (!isFinite(minX)) { minX = -1; maxX = 1; minY = -1; maxY = 1; }
-    return { minX: minX, maxX: maxX, minY: minY, maxY: maxY };
-  }
-
-  function fitCamera(idxList) {
-    var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    var list = idxList && idxList.length ? idxList : null;
-    var count = list ? list.length : N;
-    for (var k = 0; k < count; k++) {
-      var i = list ? list[k] : k;
-      var x = P.x[i], y = P.y[i];
-      if (x < minX) minX = x; if (x > maxX) maxX = x;
-      if (y < minY) minY = y; if (y > maxY) maxY = y;
-    }
-    if (!isFinite(minX)) { minX = extent.minX; maxX = extent.maxX; minY = extent.minY; maxY = extent.maxY; }
-    var w = Math.max(maxX - minX, 1e-6), h = Math.max(maxY - minY, 1e-6);
-    var pad = 1.15;
-    var rect = canvas.getBoundingClientRect();
-    var sx = rect.width / (w * pad), sy = rect.height / (h * pad);
-    cam.scale = Math.max(0.02, Math.min(sx, sy));
-    var cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
-    cam.tx = rect.width / 2 - cx * cam.scale;
-    cam.ty = rect.height / 2 + cy * cam.scale; // y flipped on screen
-  }
-
-  function screenToData(sx, sy) {
-    return [(sx - cam.tx) / cam.scale, -(sy - cam.ty) / cam.scale];
-  }
-
-  // --- sizing ---------------------------------------------------------
-  function resize() {
-    var rect = canvas.parentElement.getBoundingClientRect();
-    var dpr = window.devicePixelRatio || 1;
-    canvas.width = Math.max(1, Math.round(rect.width * dpr));
-    canvas.height = Math.max(1, Math.round(rect.height * dpr));
-    canvas.style.width = rect.width + "px";
-    canvas.style.height = rect.height + "px";
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    draw();
-  }
-
-  // --- filtering --------------------------------------------------------
-  function recomputeVisible() {
-    var q = state.search.trim().toLowerCase();
-    var shortlistTopicIdx = null;
-    if (state.shortlistOnly) {
-      shortlistTopicIdx = new Set();
-      D.topics.forEach(function (t, i) { if (t.rank && t.rank <= D.shortlist_size) shortlistTopicIdx.add(i); });
-    }
-    visibleIdx = [];
-    for (var i = 0; i < N; i++) {
-      var ti = P.topic[i];
-      if (ti === -1) {
-        if (!state.showUnassigned || state.shortlistOnly) { visible[i] = 0; continue; }
-      } else if (shortlistTopicIdx && !shortlistTopicIdx.has(ti)) {
-        visible[i] = 0; continue;
-      }
-      var src = D.sources[P.source[i]];
-      if (!state.sources.has(src)) { visible[i] = 0; continue; }
-      var hz = ti === -1 ? "" : (D.topics[ti].horizon || "");
-      if (!state.horizons.has(hz)) { visible[i] = 0; continue; }
-      var yr = P.year[i];
-      if (state.yearMin != null && yr != null && yr < state.yearMin) { visible[i] = 0; continue; }
-      if (state.yearMax != null && yr != null && yr > state.yearMax) { visible[i] = 0; continue; }
-      if (q && P.title[i].toLowerCase().indexOf(q) === -1) { visible[i] = 0; continue; }
-      visible[i] = 1;
-      visibleIdx.push(i);
-    }
-    regroupColors();
-    updateStats();
-    draw();
-  }
-
-  function colorFor(i) {
-    var ti = P.topic[i];
-    switch (state.colorBy) {
-      case "topic": return ti === -1 ? UNASSIGNED : topicColors[ti];
-      case "horizon": return HORIZON_COLOR[ti === -1 ? "" : (D.topics[ti].horizon || "")] || UNASSIGNED;
-      case "signal": return SIGNAL_COLOR[ti === -1 ? "" : (D.topics[ti].signal_class || "")] || UNASSIGNED;
-      case "source": return sourceColors[P.source[i]] || UNASSIGNED;
-      case "steepv": return P.steepv[i] === -1 ? UNASSIGNED : steepvColors[P.steepv[i]];
-    }
-    return UNASSIGNED;
-  }
-
-  function regroupColors() {
-    var groups = {};
-    for (var k = 0; k < visibleIdx.length; k++) {
-      var i = visibleIdx[k];
-      var c = colorFor(i);
-      (groups[c] || (groups[c] = [])).push(i);
-    }
-    colorGroups = groups;
-    buildLegend();
-  }
-
-  function legendCategories() {
-    if (state.colorBy === "topic") {
-      return D.topics.map(function (t, i) { return { key: i, label: t.label, color: topicColors[i] }; })
-        .concat([{ key: -1, label: "(unassigned)", color: UNASSIGNED }]);
-    }
-    if (state.colorBy === "horizon") {
-      return [
-        { key: "H1", label: "H1 — established", color: HORIZON_COLOR.H1 },
-        { key: "H2", label: "H2 — transitional", color: HORIZON_COLOR.H2 },
-        { key: "H3", label: "H3 — paradigm shift", color: HORIZON_COLOR.H3 },
-        { key: "", label: "(unassigned)", color: HORIZON_COLOR[""] },
-      ];
-    }
-    if (state.colorBy === "signal") {
-      return [
-        { key: "weak", label: "weak — the horizon-scanning target", color: SIGNAL_COLOR.weak },
-        { key: "strong", label: "strong — already visible", color: SIGNAL_COLOR.strong },
-        { key: "latent", label: "latent — established, static", color: SIGNAL_COLOR.latent },
-        { key: "noise", label: "noise", color: SIGNAL_COLOR.noise },
-        { key: "", label: "(unassigned)", color: UNASSIGNED },
-      ];
-    }
-    if (state.colorBy === "source") {
-      return D.sources.map(function (s, i) { return { key: s, label: s, color: sourceColors[i] }; });
-    }
-    return D.steepv.map(function (s, i) { return { key: s, label: s, color: steepvColors[i] }; });
-  }
-
-  function buildLegend() {
-    var cats = legendCategories();
-    var counts = {};
-    for (var k = 0; k < visibleIdx.length; k++) {
-      var i = visibleIdx[k];
-      var key;
-      if (state.colorBy === "topic") key = P.topic[i];
-      else if (state.colorBy === "horizon") key = P.topic[i] === -1 ? "" : (D.topics[P.topic[i]].horizon || "");
-      else if (state.colorBy === "signal") key = P.topic[i] === -1 ? "" : (D.topics[P.topic[i]].signal_class || "");
-      else if (state.colorBy === "source") key = D.sources[P.source[i]];
-      else key = P.steepv[i] === -1 ? null : D.steepv[P.steepv[i]];
-      counts[key] = (counts[key] || 0) + 1;
-    }
-    legendList.innerHTML = "";
-    cats.sort(function (a, b) { return (counts[b.key] || 0) - (counts[a.key] || 0); });
-    cats.slice(0, 60).forEach(function (c) {
-      var clickable = state.colorBy === "topic" && c.key !== -1;
-      var row = document.createElement("div");
-      row.className = "chk";
-      row.style.cursor = clickable ? "pointer" : "default";
-      var sw = document.createElement("span");
-      sw.className = "swatch";
-      sw.style.background = c.color;
-      var label = document.createElement("span");
-      label.textContent = c.label;
-      label.style.overflow = "hidden";
-      label.style.textOverflow = "ellipsis";
-      label.style.whiteSpace = "nowrap";
-      var count = document.createElement("span");
-      count.className = "count";
-      count.textContent = (counts[c.key] || 0).toLocaleString();
-      row.appendChild(sw); row.appendChild(label); row.appendChild(count);
-      if (clickable) {
-        row.addEventListener("click", function () { focusTopic(c.key); });
-      }
-      legendList.appendChild(row);
-    });
-  }
-
-  function updateStats() {
-    statsBadge.innerHTML = "<strong>" + visibleIdx.length.toLocaleString() + "</strong> of " +
-      N.toLocaleString() + " documents shown &middot; " + D.topics_total + " topics &middot; run " +
-      D.run_id;
-  }
-
-  // --- drawing ------------------------------------------------------
-  var raf = null;
-  function draw() {
-    if (raf) return;
-    raf = requestAnimationFrame(function () {
-      raf = null;
-      var rect = canvas.getBoundingClientRect();
-      ctx.clearRect(0, 0, rect.width, rect.height);
-      var r = state.pointSize;
-      var focused = state.topicFocus !== -1;
-      for (var color in colorGroups) {
-        ctx.fillStyle = color;
-        var idxs = colorGroups[color];
-        for (var k = 0; k < idxs.length; k++) {
-          var i = idxs[k];
-          var sx = P.x[i] * cam.scale + cam.tx;
-          var sy = -P.y[i] * cam.scale + cam.ty;
-          if (sx < -4 || sy < -4 || sx > rect.width + 4 || sy > rect.height + 4) continue;
-          ctx.globalAlpha = focused && P.topic[i] !== state.topicFocus ? 0.12 : 0.85;
-          ctx.fillRect(sx - r, sy - r, r * 2, r * 2);
-        }
-      }
-      ctx.globalAlpha = 1;
-      if (selectedIdx !== -1 && visible[selectedIdx]) {
-        var hx = P.x[selectedIdx] * cam.scale + cam.tx;
-        var hy = -P.y[selectedIdx] * cam.scale + cam.ty;
-        ctx.strokeStyle = "#1c4f8f"; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.arc(hx, hy, r + 4, 0, Math.PI * 2); ctx.stroke();
-      }
-    });
-  }
-
-  // --- spatial index for hover/click ------------------------------------
-  var GRID = 48;
-  var grid = null;
-  function buildGrid() {
-    grid = {};
-    var cw = (extent.maxX - extent.minX) / GRID || 1;
-    var ch = (extent.maxY - extent.minY) / GRID || 1;
-    for (var k = 0; k < visibleIdx.length; k++) {
-      var i = visibleIdx[k];
-      var cx = Math.floor((P.x[i] - extent.minX) / cw);
-      var cy = Math.floor((P.y[i] - extent.minY) / ch);
-      var key = cx + "," + cy;
-      (grid[key] || (grid[key] = [])).push(i);
-    }
-    grid._cw = cw; grid._ch = ch;
-  }
-
-  function nearestPoint(sx, sy) {
-    if (!grid) return -1;
-    var d = screenToData(sx, sy);
-    var cx = Math.floor((d[0] - extent.minX) / grid._cw);
-    var cy = Math.floor((d[1] - extent.minY) / grid._ch);
-    var best = -1, bestDist = Infinity;
-    var pxThreshold = 8 / cam.scale;
-    for (var dx = -1; dx <= 1; dx++) {
-      for (var dy = -1; dy <= 1; dy++) {
-        var cell = grid[(cx + dx) + "," + (cy + dy)];
-        if (!cell) continue;
-        for (var k = 0; k < cell.length; k++) {
-          var i = cell[k];
-          var ddx = P.x[i] - d[0], ddy = P.y[i] - d[1];
-          var dist = ddx * ddx + ddy * ddy;
-          if (dist < bestDist) { bestDist = dist; best = i; }
-        }
-      }
-    }
-    return bestDist <= pxThreshold * pxThreshold ? best : -1;
-  }
-
-  // --- interaction: pan / zoom -------------------------------------------
-  var dragging = false, lastX = 0, lastY = 0, moved = false;
-  canvas.addEventListener("pointerdown", function (e) {
-    dragging = true; moved = false; lastX = e.clientX; lastY = e.clientY;
-    canvas.setPointerCapture(e.pointerId);
-    canvas.classList.add("dragging");
-  });
-  canvas.addEventListener("pointermove", function (e) {
-    var rect = canvas.getBoundingClientRect();
-    var sx = e.clientX - rect.left, sy = e.clientY - rect.top;
-    if (dragging) {
-      var dx = e.clientX - lastX, dy = e.clientY - lastY;
-      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) moved = true;
-      cam.tx += dx; cam.ty += dy;
-      lastX = e.clientX; lastY = e.clientY;
-      hideTooltip();
-      draw();
-      return;
-    }
-    var hit = nearestPoint(sx, sy);
-    if (hit === -1) { hideTooltip(); return; }
-    showTooltip(hit, e.clientX, e.clientY);
-  });
-  window.addEventListener("pointerup", function (e) {
-    if (!dragging) return;
-    dragging = false;
-    canvas.classList.remove("dragging");
-    if (!moved) {
-      var rect = canvas.getBoundingClientRect();
-      var hit = nearestPoint(e.clientX - rect.left, e.clientY - rect.top);
-      selectPoint(hit);
-    }
-  });
-  canvas.addEventListener("wheel", function (e) {
-    e.preventDefault();
-    var rect = canvas.getBoundingClientRect();
-    var sx = e.clientX - rect.left, sy = e.clientY - rect.top;
-    var before = screenToData(sx, sy);
-    var factor = Math.exp(-e.deltaY * 0.0015);
-    cam.scale = Math.max(0.005, Math.min(cam.scale * factor, 400));
-    var afterSx = before[0] * cam.scale + cam.tx;
-    var afterSy = -before[1] * cam.scale + cam.ty;
-    cam.tx += sx - afterSx; cam.ty += sy - afterSy;
-    hideTooltip();
-    draw();
-  }, { passive: false });
-  canvas.addEventListener("dblclick", function (e) {
-    var rect = canvas.getBoundingClientRect();
-    var hit = nearestPoint(e.clientX - rect.left, e.clientY - rect.top);
-    if (hit !== -1 && P.topic[hit] !== -1) focusTopic(P.topic[hit]);
-  });
-
-  function showTooltip(i, clientX, clientY) {
-    var ti = P.topic[i];
-    var topicLabel = ti === -1 ? "(unassigned — no topic near enough)" : D.topics[ti].label;
-    tooltip.innerHTML = "";
-    var title = document.createElement("div");
-    title.className = "t-title"; title.textContent = P.title[i];
-    var meta1 = document.createElement("div");
-    meta1.className = "t-meta";
-    meta1.textContent = (D.sources[P.source[i]] || "") + (P.year[i] ? " · " + P.year[i] : "") +
-      (P.venue[i] ? " · " + P.venue[i] : "");
-    var meta2 = document.createElement("div");
-    meta2.className = "t-meta"; meta2.textContent = "Topic: " + topicLabel;
-    tooltip.appendChild(title); tooltip.appendChild(meta1); tooltip.appendChild(meta2);
-    tooltip.style.display = "block";
-    var wrapRect = canvas.parentElement.getBoundingClientRect();
-    var left = clientX - wrapRect.left + 14, top = clientY - wrapRect.top + 14;
-    if (left + 280 > wrapRect.width) left = clientX - wrapRect.left - 294;
-    tooltip.style.left = left + "px"; tooltip.style.top = top + "px";
-  }
-  function hideTooltip() { tooltip.style.display = "none"; }
-
-  var selectedIdx = -1;
-  function selectPoint(i) {
-    selectedIdx = i;
-    if (i === -1) { showDetailsEmpty(); draw(); return; }
-    showDetailsForPoint(i);
-    draw();
-  }
-
-  function fmtScore(v) { return v == null ? "—" : v.toFixed(2); }
-
-  function showDetailsEmpty() {
-    details.classList.add("empty");
-    details.innerHTML = "Click a point to see its details, or select a topic to zoom in.";
-  }
-
-  function el(tag, cls, text) {
-    var e = document.createElement(tag);
-    if (cls) e.className = cls;
-    if (text != null) e.textContent = text;
-    return e;
-  }
-
-  function showDetailsForPoint(i) {
-    details.classList.remove("empty");
-    details.innerHTML = "";
-    var closeBtn = el("button", "close", "×");
-    closeBtn.addEventListener("click", function () { selectPoint(-1); });
-    details.appendChild(closeBtn);
-    details.appendChild(el("h3", null, P.title[i]));
-    var meta = el("div", "t-meta");
-    meta.style.color = "var(--muted)";
-    meta.textContent = (D.sources[P.source[i]] || "") + (P.year[i] ? " · " + P.year[i] : "") +
-      (P.citation[i] ? " · " + P.citation[i] + " citations" : "");
-    details.appendChild(meta);
-    if (P.venue[i]) details.appendChild(el("div", "t-meta", P.venue[i]));
-    if (P.url[i]) {
-      var link = el("a", null, "Open source →");
-      link.href = P.url[i]; link.target = "_blank"; link.rel = "noopener noreferrer";
-      link.style.display = "inline-block"; link.style.marginTop = "8px";
-      details.appendChild(link);
-    }
-    var ti = P.topic[i];
-    if (ti === -1) {
-      var note = el("dl");
-      note.appendChild(el("dt", null, "Topic"));
-      note.appendChild(el("dd", null, "Unassigned — too dissimilar from every detected topic " +
-        "(mostly GDELT attention signal, which does not form topics). Still plotted, since it " +
-        "is real corpus content."));
-      details.appendChild(note);
-      return;
-    }
-    if (P.similarity[i] != null) {
-      var simP = el("div", "t-meta", "Similarity to topic: " + P.similarity[i].toFixed(2));
-      details.appendChild(simP);
-    }
-    appendTopicSummary(D.topics[ti]);
-  }
-
-  function appendTopicSummary(t) {
-    var dl = el("dl");
-    function row(label, value) {
-      dl.appendChild(el("dt", null, label));
-      var dd = el("dd", null, value);
-      dl.appendChild(dd);
-    }
-    var head = el("h3", null, t.label);
-    details.appendChild(head);
-    var tags = el("div");
-    if (t.horizon) { var h = el("span", "tag " + t.horizon, t.horizon); tags.appendChild(h); tags.appendChild(document.createTextNode(" ")); }
-    if (t.signal_class) { var s = el("span", "tag " + t.signal_class, t.signal_class); tags.appendChild(s); }
-    details.appendChild(tags);
-    row("Rank", t.rank ? ("#" + t.rank + " of " + D.topics_total) : "unranked");
-    row("Documents", t.document_count);
-    row("Emergence score", fmtScore(t.emergence_score));
-    row("Strategic fit", fmtScore(t.strategic_fit));
-    row("Asset leverage", fmtScore(t.asset_leverage));
-    row("Opportunity index", t.index_suppressed ? "suppressed (too few documents)" : fmtScore(t.opportunity_index));
-    row("2×2 placement", t.fit_quadrant);
-    row("Closest objective", t.best_objective || "—");
-    row("Closest asset", t.best_asset || "—");
-    if (t.critical_tech) row("DISR critical technology", t.critical_tech);
-    row("Span", (t.first_slice || "?") + "–" + (t.last_slice || "?"));
-    row("Top terms", t.terms.join(", "));
-    details.appendChild(dl);
-    var btn = el("button", "btn", "Zoom to this topic");
-    btn.addEventListener("click", function () { focusTopic(D.topics.indexOf(t)); });
-    details.appendChild(btn);
-    if (t.evidence_url) {
-      var ev = el("a", null, "Read the evidence card on GitHub →");
-      ev.href = t.evidence_url; ev.target = "_blank"; ev.rel = "noopener noreferrer";
-      ev.style.display = "inline-block"; ev.style.marginTop = "8px";
-      details.appendChild(ev);
-    }
-  }
-
-  function idxsForTopic(topicIdx) {
-    var out = [];
-    for (var i = 0; i < N; i++) if (P.topic[i] === topicIdx) out.push(i);
-    return out;
-  }
-
-  function focusTopic(topicIdx) {
-    state.topicFocus = topicIdx;
-    topicSearch.value = topicIdx === -1 ? "" : D.topics[topicIdx].label;
-    fitCamera(topicIdx === -1 ? null : idxsForTopic(topicIdx));
-    draw();
-    if (topicIdx !== -1) {
-      details.classList.remove("empty");
-      details.innerHTML = "";
-      appendTopicSummary(D.topics[topicIdx]);
-    }
-  }
-
-  // --- controls -----------------------------------------------------
-  colorBySel.addEventListener("change", function () { state.colorBy = colorBySel.value; regroupColors(); draw(); });
-
-  D.sources.forEach(function (s) {
-    var row = el("label", "chk");
-    var cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = true;
-    cb.addEventListener("change", function () {
-      if (cb.checked) state.sources.add(s); else state.sources.delete(s);
-      recomputeVisible(); buildGrid();
-    });
-    var sw = el("span", "swatch"); sw.style.background = sourceColors[D.sources.indexOf(s)];
-    row.appendChild(cb); row.appendChild(sw); row.appendChild(document.createTextNode(s));
-    sourceFilters.appendChild(row);
-  });
-
-  [["H1", "H1"], ["H2", "H2"], ["H3", "H3"], ["", "unassigned"]].forEach(function (pair) {
-    var row = el("label", "chk");
-    var cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = true;
-    cb.addEventListener("change", function () {
-      if (cb.checked) state.horizons.add(pair[0]); else state.horizons.delete(pair[0]);
-      recomputeVisible(); buildGrid();
-    });
-    row.appendChild(cb); row.appendChild(document.createTextNode(pair[1]));
-    horizonFilters.appendChild(row);
-  });
-
-  D.topics.forEach(function (t) {
-    var opt = document.createElement("option");
-    opt.value = t.label;
-    topicOptions.appendChild(opt);
-  });
-  topicSearch.addEventListener("change", function () {
-    var val = topicSearch.value;
-    var idx = D.topics.findIndex(function (t) { return t.label === val; });
-    focusTopic(idx === -1 ? -1 : idx);
-  });
-
-  var searchDebounce = null;
-  searchInput.addEventListener("input", function () {
-    clearTimeout(searchDebounce);
-    searchDebounce = setTimeout(function () {
-      state.search = searchInput.value;
-      recomputeVisible(); buildGrid();
-    }, 150);
-  });
-
-  yearMinInput.value = D.year_min || ""; yearMaxInput.value = D.year_max || "";
-  yearMinInput.min = D.year_min || ""; yearMinInput.max = D.year_max || "";
-  yearMaxInput.min = D.year_min || ""; yearMaxInput.max = D.year_max || "";
-  [yearMinInput, yearMaxInput].forEach(function (inp) {
-    inp.addEventListener("change", function () {
-      state.yearMin = yearMinInput.value ? parseInt(yearMinInput.value, 10) : null;
-      state.yearMax = yearMaxInput.value ? parseInt(yearMaxInput.value, 10) : null;
-      recomputeVisible(); buildGrid();
-    });
-  });
-
-  shortlistOnly.addEventListener("change", function () {
-    state.shortlistOnly = shortlistOnly.checked;
-    recomputeVisible(); buildGrid();
-  });
-  showUnassigned.addEventListener("change", function () {
-    state.showUnassigned = showUnassigned.checked;
-    recomputeVisible(); buildGrid();
-  });
-  pointSizeInput.addEventListener("input", function () {
-    state.pointSize = parseFloat(pointSizeInput.value);
-    draw();
-  });
-
-  resetFiltersBtn.addEventListener("click", function () {
-    state.sources = new Set(D.sources);
-    state.horizons = new Set(["H1", "H2", "H3", ""]);
-    state.yearMin = D.year_min; state.yearMax = D.year_max;
-    state.search = ""; state.shortlistOnly = false; state.showUnassigned = true;
-    state.topicFocus = -1;
-    searchInput.value = ""; topicSearch.value = "";
-    shortlistOnly.checked = false; showUnassigned.checked = true;
-    yearMinInput.value = D.year_min || ""; yearMaxInput.value = D.year_max || "";
-    sourceFilters.querySelectorAll("input").forEach(function (c) { c.checked = true; });
-    horizonFilters.querySelectorAll("input").forEach(function (c) { c.checked = true; });
-    details.classList.add("empty"); showDetailsEmpty();
-    selectedIdx = -1;
-    recomputeVisible(); buildGrid();
-    fitCamera(null);
-    draw();
-  });
-  resetViewBtn.addEventListener("click", function () {
-    fitCamera(state.topicFocus !== -1 ? idxsForTopic(state.topicFocus) : null);
-    draw();
-  });
-
-  // --- boot -----------------------------------------------------------
-  showDetailsEmpty();
-  window.addEventListener("resize", resize);
-  recomputeVisible();
-  buildGrid();
-  resize();
-  fitCamera(null);
-  draw();
-})();
-"""
+def _asset(name: str) -> str:
+    path = ASSET_DIR / name
+    if not path.is_file():
+        raise SystemExit(
+            f"Missing dashboard asset {path}. The published page inlines these, "
+            "so a checkout without src/dashboard_assets/ cannot build it."
+        )
+    return path.read_text(encoding="utf-8")
 
 
 def _escape_for_script(payload: dict[str, Any]) -> str:
@@ -1018,102 +870,33 @@ def _escape_for_script(payload: dict[str, Any]) -> str:
     return json.dumps(payload, separators=(",", ":")).replace("</", "<\\/")
 
 
+#: Stamps data-theme before first paint, so a reader whose stored choice or
+#: system preference is dark never sees a white flash. The stylesheet defines
+#: only one dark selector on the strength of this always running.
+_THEME_SNIPPET = (
+    "<script>(function(){var t=null;try{t=localStorage.getItem('bigthink-theme')}"
+    "catch(e){}document.documentElement.setAttribute('data-theme',"
+    "t==='dark'||t==='light'?t:(window.matchMedia&&"
+    "window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'))})();</script>"
+)
+
+
 def render_html(data: dict[str, Any]) -> str:
-    stats = (
-        f'{data["documents_plotted"]:,} of {data["documents_total"]:,} documents · '
-        f'{data["topics_total"]} topics · projection <code>{data["projection_method"]}</code> · '
-        f'embedding backend <code>{data["backend"]}</code>'
-    )
-    repo_url = data["repo_url"]
-    run_id = data["run_id"]
-    parts: list[str] = []
-    add = parts.append
-
-    add(PAGE_HEAD)
-    add("<title>IPAVentures horizon scan — explorer</title>")
-    add(f"<style>{_CSS}</style>")
-    add("</head>")
-    add("<body>")
-    add('<header class="top">')
-    add("<h1>IPAVentures horizon scan — explorer</h1>")
-    add(f'<span class="meta">run <code>{run_id}</code> · {stats}</span>')
-    add('<span class="nav">')
-    add('<a href="index.html">&larr; ranked shortlist</a>')
-    add(f'<a href="{repo_url}/blob/main/docs/method.md" target="_blank" rel="noopener noreferrer">what the numbers mean</a>')
-    add(
-        f'<a href="{repo_url}/tree/main/data/outputs/{run_id}" target="_blank" '
-        'rel="noopener noreferrer">this run\'s outputs</a>'
-    )
-    add("</span></header>")
-    add(
-        '<div class="callout"><strong>This is a map of language, not of importance.</strong> '
-        "Position comes from a 2D projection of each document's text — nearby points used "
-        "similar words, distant ones did not. The axes themselves carry no unit and no "
-        "direction means anything. Colour and the details panel carry the real scores; this "
-        "view exists to help you find and zoom into clusters, not to read distance as a "
-        "number. Candidates, not conclusions — see the ranked report for the caveats on every "
-        "score.</div>"
-    )
-    add('<div class="app">')
-
-    add('<aside class="controls">')
-    add("<h2>Colour by</h2>")
-    add(
-        '<select id="colorBy">'
-        '<option value="topic">Topic</option>'
-        '<option value="horizon">Horizon</option>'
-        '<option value="signal">Signal class</option>'
-        '<option value="source">Source</option>'
-        '<option value="steepv">STEEPV category</option>'
-        "</select>"
-    )
-    add('<div id="legendList" class="legend-list"></div>')
-
-    add("<h2>Find a topic</h2>")
-    add('<div class="field"><input id="topicSearch" type="text" list="topicOptions" '
-        'placeholder="Type a topic label…"><datalist id="topicOptions"></datalist></div>')
-
-    add("<h2>Search titles</h2>")
-    add('<div class="field"><input id="searchInput" type="text" placeholder="e.g. geographical indication"></div>')
-
-    add("<h2>Year</h2>")
-    add(
-        '<div class="years"><input id="yearMin" type="number"> to '
-        '<input id="yearMax" type="number"></div>'
-    )
-
-    add("<h2>Source</h2>")
-    add('<div id="sourceFilters"></div>')
-
-    add("<h2>Horizon</h2>")
-    add('<div id="horizonFilters"></div>')
-
-    add("<h2>Other filters</h2>")
-    add('<label class="chk"><input id="shortlistOnly" type="checkbox"> Shortlisted topics only</label>')
-    add('<label class="chk"><input id="showUnassigned" type="checkbox" checked> Show unassigned documents</label>')
-
-    add("<h2>Display</h2>")
-    add('<div class="field"><label>Point size</label>'
-        '<input id="pointSize" type="range" min="0.8" max="6" step="0.2" value="2.2"></div>')
-
-    add('<button id="resetFilters" class="btn">Reset filters</button>')
-    add('<button id="resetView" class="btn">Reset view</button>')
-    add("</aside>")
-
-    add('<main class="canvas-wrap">')
-    add('<canvas id="cv"></canvas>')
-    add('<div id="tooltip" class="tooltip"></div>')
-    add('<div id="statsBadge" class="stats-badge"></div>')
-    add('<div class="axis-note">Drag to pan · scroll to zoom · double-click a point to zoom to '
-        "its topic. Axes have no unit.</div>")
-    add("</main>")
-
-    add('<aside id="details" class="details"></aside>')
-    add("</div>")
-
-    add(f"<script>window.__DASHBOARD_DATA__ = {_escape_for_script(data)};</script>")
-    add(f"<script>{_JS}</script>")
-    add(PAGE_TAIL)
+    """One self-contained page: the payload, the stylesheet and every view."""
+    parts: list[str] = [
+        PAGE_HEAD,
+        "<title>IPAVentures horizon scan — explorer</title>",
+        f"<style>{_asset('dashboard.css')}</style>",
+        _THEME_SNIPPET,
+        "</head>",
+        '<body>',
+        _asset("shell.html"),
+        f"<script>window.__DASHBOARD_DATA__ = {_escape_for_script(data)};</script>",
+        "<script>\n(function () {\n\"use strict\";\n",
+        "\n".join(_asset(name) for name in _JS_ASSETS),
+        "\n})();\n</script>",
+        PAGE_TAIL,
+    ]
     return "\n".join(parts)
 
 
@@ -1135,16 +918,23 @@ def run(config: dict[str, Any], run_id: str) -> Path:
     # GitHub Pages runs Jekyll by default, which skips files and directories
     # beginning with an underscore. Nothing here needs Jekyll.
     (docs_dir / ".nojekyll").write_text("", encoding="utf-8")
+
+    fidelity = data["fidelity"]
     logger.info(
-        "Wrote %s (%d of %d documents, %d topics, projection=%s)",
+        "Wrote %s (%d of %d documents, %d topics, projection=%s%s)",
         out, data["documents_plotted"], data["documents_total"],
         data["topics_total"], data["projection_method"],
+        (
+            f", trustworthiness={fidelity['trustworthiness']}"
+            f", continuity={fidelity['continuity']}"
+            if fidelity.get("computed") else ", fidelity not measured"
+        ),
     )
     return out
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Build the interactive point-cloud dashboard.")
+    parser = argparse.ArgumentParser(description="Build the interactive dashboard.")
     parser.add_argument("--config", default=None)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--log-level", default="INFO")
