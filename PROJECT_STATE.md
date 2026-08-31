@@ -336,6 +336,37 @@ silent drop, but the cap is now deciding how much of the corpus is described
 rather than acting as a safety limit. Raise it, or raise the threshold, at the
 next sweep — and treat 120 as a number that was hit rather than chosen.
 
+### 18. Two runs on one UTC day share a run_id and the second overwrites the first — NEW 2026-08-31
+
+Found while merging `main` into the fix branch, and it had already destroyed
+something.
+
+`scan.yml` resolves an unset run ID with `date -u +%Y-%m-%d`. The first
+`2026-08-30` baseline ran at 12:11 UTC; the weekly scheduled run fired at 21:47
+UTC **the same UTC day**, resolved to the same `2026-08-30`, and rewrote
+`data/outputs/2026-08-30/` in place — shortlist, evidence cards, notebook,
+`topics.csv` and `summary.json`. On `main` that directory now describes a
+7,501-document run generated at 23:05, not the 7,219-document run at 13:18 that
+this file, the calibration log and every analysis of the baseline refer to.
+
+Nothing warned. The commit reads `scan: results for 2026-08-30`, exactly like
+the commit it replaced, and `git` saw a normal modification.
+
+**Resolved for this branch** by taking our copy of `data/outputs/2026-08-30/` in
+the merge, so the documented baseline survives. The scheduled run's output is
+still recoverable from its workflow artefact and corpus release if anyone wants
+it; it was collected with the pre-fix code, so nothing here depends on it.
+
+**Fix, not yet applied.** Make a colliding run ID impossible to write silently.
+Either refuse to start when `data/outputs/<run_id>/` already exists unless an
+explicit `--overwrite` is passed, or resolve the default ID to
+`date -u +%Y-%m-%dT%H%M` so two runs on one day cannot collide. The first is
+better: it makes the collision an error rather than changing what a run is
+called, and a run ID people can type is worth keeping.
+
+This is the same failure shape as issue 5 — a real event that the record showed
+as normal — and the same remedy: make the machine say what happened.
+
 ### 17. Run time is now the binding constraint — NEW 2026-08-31
 
 164 minutes against a 240-minute timeout, up from 67. GDELT dominates: 4 windows
