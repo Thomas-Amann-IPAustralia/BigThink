@@ -548,6 +548,17 @@ def _run_inner(conn: Any, config: dict[str, Any], run_id: str) -> dict[str, Any]
             STAGE, "every cluster was discarded for having too little distinct vocabulary."
         )
 
+    # `topics.topic_id` is a bare PRIMARY KEY (not scoped by run_id, unlike
+    # topic_scores), and every clustering method numbers its output fresh
+    # from T0000. Two Stage 2 runs against the same accumulated database —
+    # exactly what `--skip-collect` is for — would otherwise both try to
+    # insert "T0000" and the second collides with the first's still-present
+    # row, since replace_topics only deletes rows for its own run_id.
+    # Qualifying by run_id here, once topic_id is final, makes it unique
+    # everywhere it is stored or displayed without changing any query.
+    for topic in found:
+        topic.topic_id = f"{run_id}-{topic.topic_id}"
+
     # Map cluster membership back to corpus indices, then attach the documents
     # that were held out of clustering.
     for topic in found:

@@ -7,6 +7,7 @@ from collections import Counter
 import numpy as np
 import pytest
 
+from src import db
 from src.config import load_config
 from src.stage2_emergence import (
     _normalised_entropy,
@@ -19,6 +20,7 @@ from src.stage2_emergence import (
     fit_logistic_maturity,
     topic_series,
 )
+from src.stage2_emergence import run as run_stage2
 
 
 @pytest.fixture(scope="module")
@@ -198,3 +200,58 @@ def test_novelty_is_distance_from_the_early_corpus():
     # A missing centroid returns neutral rather than a misleading extreme.
     assert compute_novelty(None, early) == 0.5
     assert compute_novelty(np.zeros(2), early) == 0.5
+
+
+# --- topic_id uniqueness across runs ---------------------------------------
+
+
+def test_running_stage_two_twice_against_one_database_does_not_collide(tmp_path):
+    """`--skip-collect` re-analyses an already-accumulated database — the
+    documented fast loop for tuning (CLAUDE.md). That means Stage 2 running a
+    second time against a database that already holds a prior run's topics.
+
+    `topics.topic_id` is a bare PRIMARY KEY, not scoped by run_id the way
+    topic_scores is, and every clustering method numbers its output fresh
+    from T0000 regardless of run_id. Without qualifying the id, a second run
+    always collides with the first run's still-present T0000 row —
+    replace_topics only deletes rows for its own run_id — and raises a
+    duckdb ConstraintException instead of producing a second analysis.
+    """
+    config = load_config()
+    config["storage"]["duckdb_path"] = str(tmp_path / "fixture.duckdb")
+
+    texts = (
+        ["Quantum error correction with surface codes for fault tolerant qubits"] * 10
+        + ["Trade mark examination practice and opposition procedures at the office"] * 10
+    )
+    conn = db.init_db(config["storage"]["duckdb_path"])
+    try:
+        documents = []
+        for i, text in enumerate(texts):
+            year = 2020 + (i % 2)
+            documents.append({
+                "doc_id": f"doc-{i}", "source": "crossref", "native_id": f"10.0/{i}",
+                "title": text, "abstract": text, "published_date": f"{year}-01-01",
+                "year": year, "time_slice": str(year), "url": f"https://example.invalid/{i}",
+                "venue": "Test Journal", "authors": [], "institutions": [], "concepts": [],
+                "citation_count": 0, "steepv": "Technological", "scan_frame_key": "frame",
+                "tone": None, "raw_path": None, "collected_at": db.now(), "run_id": "collect-1",
+            })
+        db.upsert_documents(conn, documents)
+    finally:
+        conn.close()
+
+    run_stage2(config, "analysis-a")
+    run_stage2(config, "analysis-b")  # must not raise a primary-key collision
+
+    conn = db.init_db(config["storage"]["duckdb_path"])
+    try:
+        topics_a = db.fetch_topics(conn, "analysis-a")
+        topics_b = db.fetch_topics(conn, "analysis-b")
+    finally:
+        conn.close()
+
+    assert topics_a and topics_b
+    ids_a = {t["topic_id"] for t in topics_a}
+    ids_b = {t["topic_id"] for t in topics_b}
+    assert ids_a.isdisjoint(ids_b)
