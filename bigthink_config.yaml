@@ -308,11 +308,46 @@ emergence:
       # forces UMAP single-threaded (hence the "n_jobs overridden to 1"
       # warning), which is the price of a checkable result.
       #
-      # 42 is the swept choice, not a library default left in place: seeds
-      # 0, 1, 7, 42 and 1234 were compared on the corpus above and 42 is
-      # recorded here because it was chosen, not because it was first.
+      # 42 is the swept choice, not a library default left in place. Seeds
+      # 0, 1, 7, 42 and 1234 on the corpus above, at n_neighbors 15:
+      #
+      #   seed   topics   assigned   largest cluster (of assigned)
+      #      0      115      73.5%    5.3%
+      #      1      112      73.4%    5.3%
+      #      7      105      77.3%   11.8%
+      #     42      112      75.0%    5.2%
+      #   1234      107      76.4%   12.1%
+      #
+      # 42 has the smallest largest-cluster share and the highest assigned
+      # share among the seeds that avoid the big cluster. Chosen on those
+      # structural criteria — never on which shortlist read best, which would
+      # be fitting the instrument to the answer it is meant to produce.
+      #
+      # THE SPREAD IS NOT SMALL and that is an open finding, not a settled one:
+      # two of five seeds form a ~480-document quantum cluster and three do
+      # not. See PROJECT_STATE.md issue 20.
       random_state: 42
       # UMAP: the manifold HDBSCAN then clusters in.
+      #
+      # n_neighbors swept at seed 42 on the corpus above. `raw` is clusters
+      # before max_topics; `largest` is a share of assigned documents:
+      #
+      #   n_neighbors   raw   kept   assigned   largest
+      #             5   163    115      67.3%      6.5%
+      #            10   139    114      70.7%      5.5%
+      #            15   118    112      75.0%      5.2%   <- chosen
+      #            20    99     94      78.2%     11.8%
+      #            30    93     90      77.1%     11.6%
+      #            50    86     83      72.6%     12.9%
+      #
+      # 15 is the inflection. Below it the corpus fragments and max_topics
+      # binds (163 and 139 clusters against a cap of 120, so the cap rather
+      # than the data decides what is described). At 20 and above a single
+      # ~480-document quantum cluster forms and the largest share more than
+      # doubles. 15 gives the most topics that survive without the cap binding,
+      # the smallest largest cluster, and labels that read cleanly:
+      # "geographical indication / gi / trade / agreement",
+      # "service delivery / government / digital / public service".
       n_neighbors: 15        # local vs global structure
       n_components: 5        # dimensions to reduce to before clustering
       min_dist: 0.0          # pack points tightly — density clustering wants it
@@ -332,8 +367,26 @@ emergence:
       # `attachment_threshold_ratio` of the value below. So it sets what counts
       # as "this news article is about that topic", nothing more.
       bertopic:
-        # PENDING MEASUREMENT — see the 2026-08-31 calibration log entry.
-        bge: 0.75
+        # Measured on the 2026-08-30 corpus under `bge` (2,317 GDELT documents
+        # against 112 BERTopic centroids). NOTE THE ARITHMETIC: this value is
+        # multiplied by attachment_threshold_ratio below, so the operative
+        # number is 0.90 x 0.6 = 0.54, and that is what to compare against the
+        # distribution. It attaches 86% of the GDELT corpus.
+        #
+        # BGE cosines do not start at zero — an unrelated pair still scores
+        # ~0.5 — so the whole distribution is shifted up and compressed:
+        # min 0.406, 10th 0.529, median 0.617, 90th 0.729, max 0.902. The
+        # earlier guess of 0.75 gave an operative 0.45, below even the observed
+        # minimum, and attached 99.5% of GDELT — i.e. it had stopped
+        # discriminating entirely, which is the exact failure mode
+        # docs/runbook-calibration.md warns about.
+        #
+        # The distribution is unimodal with no natural cut, so this is a
+        # judgement about how much of the tail to exclude, not a boundary that
+        # was discovered. 0.54 trims the worst ~14%. Re-run
+        # `python -m src.calibrate attachment` on a fresh corpus before trusting
+        # the attention component of the Stage 4 index.
+        bge: 0.90
         # For a bertopic run on the cheap backend — supported, but the scale is
         # lexical, so it is a different number entirely.
         hashing: 0.30
