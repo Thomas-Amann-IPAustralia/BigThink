@@ -1,3 +1,8 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>IPAVentures Horizon Scan</title>
 <style>
 :root {
@@ -58,6 +63,8 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0
 footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
          color: var(--muted); font-size: 13px; }
 </style>
+</head>
+<body>
 <div class="wrap">
 <h1>IPAVentures horizon scan</h1>
 <p class="sub"><a href="dashboard.html"><strong>Explore the corpus as an interactive map →</strong></a> every collected document plotted and searchable, coloured by topic, horizon or source, with the same evidence as the table below.</p>
@@ -116,3 +123,5 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
 <p class="sub">The pipeline surfaces candidates; judgement does the rest.</p><ol><li><strong>Discard the artefacts.</strong> Open the evidence cards. Any topic whose documents are not a coherent theme is a clustering artefact. Expect some.</li><li><strong>Run the sense-making session</strong> over the survivors — Seven Questions each, with Doblin Ten Types to widen the framing past “new product”. Both prompts are on every card.</li><li><strong>Validate the weights.</strong> Pick an opportunity IP Australia already pursued and check whether this pipeline would have surfaced it. Until then the ranking is a hypothesis about ranking.</li></ol>
 <footer>Evidence cards and the full topic table are in <code>data/outputs/2026-08-31/</code>, alongside <code>horizon-scan-2026-08-31.ipynb</code> — a notebook that walks this run stage by stage and re-derives every number above from its stored inputs. That is the one to open if you want to argue with the method rather than the shortlist. Method: <code>docs/method.md</code>. Scan frame: <code>data/strategy/scan_frame.yaml</code> — the scan cannot find what the frame does not ask for.</footer>
 </div>
+</body>
+</html>

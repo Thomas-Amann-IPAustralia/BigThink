@@ -70,6 +70,12 @@ RESEARCH_SOURCES = frozenset({"openalex", "crossref", "arxiv"})
 ATTENTION_SOURCES = frozenset({"gdelt"})
 PATENT_SOURCES = frozenset({"patentsview"})
 
+#: Tone for a topic the news never covered. The midpoint of the rescaled
+#: -10..+10 tone range, i.e. "no evidence either way" — NOT 0.0, which on that
+#: scale means uniformly maximally negative coverage. See the comment at the
+#: call site and PROJECT_STATE.md issue 25.
+_NO_TONE_SIGNAL = 0.5
+
 
 # ---------------------------------------------------------------------------
 # Components
@@ -169,8 +175,18 @@ def _run_inner(conn: Any, config: dict[str, Any], run_id: str) -> list[dict[str,
     raw: dict[str, list[float]] = {k: [] for k in weights}
     have_data: dict[str, bool] = {k: False for k in weights}
 
+    # One query for the run, not one per topic. `fetch_topic_documents` is
+    # per-topic and joins `documents` each time; at 120 topics that was 120
+    # joins over the whole corpus to compute five numbers.
+    documents_by_id = {d["doc_id"]: d for d in db.fetch_documents(conn)}
+    members_by_topic: dict[str, list[dict[str, Any]]] = {}
+    for row in db.fetch_run_topic_documents(conn, run_id):
+        document = documents_by_id.get(row["doc_id"])
+        if document is not None:
+            members_by_topic.setdefault(row["topic_id"], []).append(document)
+
     for topic in topics:
-        docs = db.fetch_topic_documents(conn, topic["topic_id"], limit=100000)
+        docs = members_by_topic.get(topic["topic_id"], [])
         by_source: dict[str, list[dict[str, Any]]] = {}
         for doc in docs:
             by_source.setdefault(doc["source"], []).append(doc)
@@ -194,8 +210,21 @@ def _run_inner(conn: Any, config: dict[str, Any], run_id: str) -> list[dict[str,
             "attention": float(attention),
             # GDELT tone runs roughly -10..+10; rescale to [0, 1] so the
             # percentile step is not dominated by sign.
+            #
+            # A topic with NO news coverage gets the neutral midpoint, not zero.
+            # Zero is a real value on this scale — it is what uniformly maximally
+            # negative coverage scores — so handing it to every topic the news
+            # never mentioned ranked them below topics with genuinely hostile
+            # coverage, on a component carrying 10% of the index. GDELT forms no
+            # topics and only attaches at a fraction of the clustering threshold,
+            # so that was most research-only topics.
+            #
+            # Same answer `stage2_emergence.citation_percentiles` already gives
+            # for a source that reports no citations: there is no signal here, so
+            # say so with a neutral value rather than a confident wrong one.
+            # PROJECT_STATE.md issue 25.
             "attention_tone": float(np.clip((np.mean(tones) + 10.0) / 20.0, 0.0, 1.0))
-            if tones else 0.0,
+            if tones else _NO_TONE_SIGNAL,
             "policy_salience": policy_salience(topic["terms"], corpus_tokens, corpus_size),
             "patent_activity": float(patents),
         }
@@ -203,7 +232,7 @@ def _run_inner(conn: Any, config: dict[str, Any], run_id: str) -> list[dict[str,
             raw[key].append(values.get(key, 0.0))
 
         if research:
-            have_data["research_growth"] = have_data.get("research_growth", False) or True
+            have_data["research_growth"] = True
         if attention:
             have_data["attention"] = True
         if tones:

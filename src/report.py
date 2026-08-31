@@ -1,10 +1,16 @@
 """
 src/report.py — build the GitHub Pages site from a run's outputs.
 
-Renders docs/index.html: the ranked shortlist, both 2x2 views, and links to
-the evidence cards. Self-contained (no external CSS or JS) because the site is
-served from GitHub Pages with no build step, and because a horizon-scan report
-that silently fails to render behind a corporate proxy is worse than a plain one.
+Renders docs/index.html: the ranked shortlist, the fit x leverage 2x2, the
+horizon and signal distributions, and a link from every shortlisted row to its
+evidence card. Self-contained (no external CSS or JS) because the site is served
+from GitHub Pages with no build step, and because a horizon-scan report that
+silently fails to render behind a corporate proxy is worse than a plain one.
+
+Evidence links point at GitHub rather than at a relative path: only `docs/` is
+served by Pages, and the cards live under `data/outputs/`. Reading them is the
+one check this project says finds clustering artefacts, so the shortlist should
+not make a reader go and find them by hand.
 
 Run:
     python -m src.report --run-id 2026-08-29
@@ -22,7 +28,15 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from src import db
-from src.config import REPO_ROOT, get, load_config, resolve_path
+from src.config import (
+    PAGE_HEAD,
+    PAGE_TAIL,
+    REPO_ROOT,
+    get,
+    load_config,
+    repo_url,
+    resolve_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -104,17 +118,33 @@ def _num(value: Any, places: int = 2, dash: str = "—") -> str:
         return dash
 
 
+def _evidence_url(repo: str, run_id: str, row: dict[str, Any]) -> str:
+    """GitHub URL of a shortlisted topic's evidence card.
+
+    Mirrors the filename Stage 5 writes (`<rank:02d>_<topic_id>.md`) and the
+    scheme the dashboard already uses. Both read from the same run directory.
+    """
+    return (
+        f"{repo}/blob/main/data/outputs/{run_id}/evidence/"
+        f"{int(row['rank']):02d}_{row['topic_id']}.md"
+    )
+
+
 def build_html(
     rows: Sequence[dict[str, Any]],
     shortlist: Sequence[dict[str, Any]],
     run_id: str,
     stats: dict[str, Any],
+    repo: str = "https://github.com/Thomas-Amann-IPAustralia/BigThink",
 ) -> str:
     parts: list[str] = []
     add = parts.append
 
+    add(PAGE_HEAD)
     add("<title>IPAVentures Horizon Scan</title>")
     add(f"<style>{_CSS}</style>")
+    add("</head>")
+    add("<body>")
     add('<div class="wrap">')
     add("<h1>IPAVentures horizon scan</h1>")
     add(
@@ -141,7 +171,8 @@ def build_html(
     # --- shortlist --------------------------------------------------------
     add("<h2>Ranked shortlist</h2>")
     add('<p class="sub">Ordered by the composite of emergence, strategic fit and '
-        "asset leverage.</p>")
+        "asset leverage. <strong>Each topic links to its evidence card</strong> — "
+        "read those before believing a row.</p>")
     add('<div class="scroll"><table><thead><tr>'
         "<th>#</th><th>Topic</th><th>Horizon</th><th>Signal</th>"
         '<th class="num">Emergence</th><th class="num">Fit</th>'
@@ -153,7 +184,8 @@ def build_html(
         index = "—" if row.get("index_suppressed") else _num(row.get("opportunity_index"))
         add(
             f'<tr><td class="num">{row["rank"]}</td>'
-            f'<td><strong>{_e(row.get("label") or row["topic_id"])}</strong></td>'
+            f'<td><a href="{_e(_evidence_url(repo, run_id, row))}"><strong>'
+            f'{_e(row.get("label") or row["topic_id"])}</strong></a></td>'
             f'<td><span class="tag {_e(horizon)}" title="{_e(HORIZON_BLURB.get(horizon, ""))}">'
             f'{_e(horizon)}</span></td>'
             f'<td><span class="tag {_e(signal)}">{_e(signal)}</span></td>'
@@ -238,6 +270,7 @@ def build_html(
         "what the frame does not ask for.</footer>"
     )
     add("</div>")
+    add(PAGE_TAIL)
     return "\n".join(parts)
 
 
@@ -267,7 +300,8 @@ def run(config: dict[str, Any], run_id: str) -> Path:
 
     index = docs_dir / "index.html"
     index.write_text(
-        build_html(rows, rows[:shortlist_size], run_id, stats), encoding="utf-8"
+        build_html(rows, rows[:shortlist_size], run_id, stats, repo_url(config)),
+        encoding="utf-8",
     )
     # GitHub Pages runs Jekyll by default, which skips files and directories
     # beginning with an underscore. Nothing here needs Jekyll.

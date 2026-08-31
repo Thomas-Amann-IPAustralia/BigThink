@@ -41,7 +41,14 @@ from typing import Any, Sequence
 import numpy as np
 
 from src import db
-from src.config import get, load_config, resolve_path, snapshot_config
+from src.config import (
+    critical_tech_match_threshold,
+    critical_tech_match_weights,
+    get,
+    load_config,
+    resolve_path,
+    snapshot_config,
+)
 from src.embeddings import build_embedder, encode_with_cache, normalise_tokens
 from src.errors import insufficient_data_error
 
@@ -144,28 +151,66 @@ def _ref_label(ref: dict[str, Any]) -> str:
     return f"{code} {ref['label']}" if code else str(ref["label"])
 
 
+def critical_technology_scores(
+    topic_vector: np.ndarray,
+    topic_terms: Sequence[tuple[str, float]],
+    refs: Sequence[dict[str, Any]],
+    ref_vectors: np.ndarray,
+    *,
+    embedding_weight: float = 0.7,
+    lexicon_weight: float = 0.3,
+) -> list[float]:
+    """Blended score of a topic against each DISR critical-technology field.
+
+    Split out from the match itself so `python -m src.calibrate critical-tech`
+    can sweep a cut-off over the same numbers the pipeline compares against,
+    rather than reimplementing the blend and drifting away from it.
+    """
+    if not refs or ref_vectors.size == 0:
+        return []
+    similarities = ref_vectors @ topic_vector
+    return [
+        embedding_weight * float(max(similarities[i], 0.0))
+        + lexicon_weight * lexicon_overlap(topic_terms, ref.get("lexicon", []))
+        for i, ref in enumerate(refs)
+    ]
+
+
 def match_critical_technology(
     topic_vector: np.ndarray,
     topic_terms: Sequence[tuple[str, float]],
     refs: Sequence[dict[str, Any]],
     ref_vectors: np.ndarray,
     *,
-    threshold: float = 0.25,
+    threshold: float | None,
+    embedding_weight: float = 0.7,
+    lexicon_weight: float = 0.3,
 ) -> str | None:
     """Return the best-matching DISR critical technology field, or None.
 
     A binary flag rather than a continuous score: the DISR list is a policy
     designation, and a topic either falls in a national-interest field or it
     does not. The threshold keeps weak matches from collecting the bonus.
+
+    `threshold=None` means the active embedding backend has no swept cut-off,
+    and the answer is then None for every topic — no match, no bonus. That is
+    deliberate and it is the whole point of making the parameter required.
+    A cut-off carried over from another vector space does not degrade
+    gracefully: 0.25 was a bare Python default here until 2026-08-31, and on
+    the only run ever produced under the shipped `bge` + `bertopic` default it
+    matched 114 of 114 topics. Every evidence card printed a national-interest
+    designation that meant nothing, and every topic collected the bonus.
+    Reporting no match is a smaller error than reporting a false one, and
+    unlike a false one it is visible. See PROJECT_STATE.md issue 21.
     """
-    if not refs or ref_vectors.size == 0:
+    if threshold is None:
         return None
-    similarities = ref_vectors @ topic_vector
-    scores = [
-        0.7 * float(max(similarities[i], 0.0))
-        + 0.3 * lexicon_overlap(topic_terms, ref.get("lexicon", []))
-        for i, ref in enumerate(refs)
-    ]
+    scores = critical_technology_scores(
+        topic_vector, topic_terms, refs, ref_vectors,
+        embedding_weight=embedding_weight, lexicon_weight=lexicon_weight,
+    )
+    if not scores:
+        return None
     best = int(np.argmax(scores))
     return _ref_label(refs[best]) if scores[best] >= threshold else None
 
@@ -188,6 +233,10 @@ def run(config: dict[str, Any], run_id: str) -> list[dict[str, Any]]:
                 f"mean fit {np.mean([s['strategic_fit'] for s in scores]):.3f}, "
                 f"mean leverage {np.mean([s['asset_leverage'] for s in scores]):.3f}, "
                 f"{sum(1 for s in scores if s['critical_tech'])} critical-tech matches"
+                + (
+                    " (matching DISABLED — no swept threshold for this backend)"
+                    if critical_tech_match_threshold(config) is None else ""
+                )
             ),
         )
         return scores
@@ -215,9 +264,11 @@ def _run_inner(conn: Any, config: dict[str, Any], run_id: str) -> list[dict[str,
     critical_refs = [r for r in refs if r["ref_type"] == "critical_tech"]
     asset_refs = [r for r in refs if r["ref_type"] == "asset"]
 
-    # The embedder must be fitted on the same corpus Stage 2 used, or the IDF
-    # weights differ and topic/reference vectors are not comparable. Fitting on
-    # documents + reference texts keeps both in one space.
+    # Fitted on documents + reference texts so that topic vectors and reference
+    # vectors share one IDF, which is what makes the cosine between them mean
+    # anything. Note this is NOT the same fit Stage 2 used (documents alone), and
+    # it does not need to be: nothing here is compared against a Stage 2 vector.
+    # Everything Stage 3 scores, it encodes itself, within this one space.
     documents = db.fetch_documents(conn)
     from src.collectors.base import document_text
 
@@ -248,6 +299,24 @@ def _run_inner(conn: Any, config: dict[str, Any], run_id: str) -> list[dict[str,
     lev_cfg = get(config, "scoring", "asset_leverage", default={}) or {}
     bonus = float(fit_cfg.get("critical_tech_bonus", 0.10))
 
+    ct_threshold = critical_tech_match_threshold(config)
+    ct_embedding_weight, ct_lexicon_weight = critical_tech_match_weights(config)
+    if ct_threshold is None:
+        # Said once, loudly, rather than left to be inferred from a column of
+        # dashes. The alternative — reusing the `hashing` cut-off under `bge` —
+        # is what produced a 100% match rate on verify-bertopic (issue 21).
+        logger.warning(
+            "No critical-technology match threshold is configured for the active "
+            "embedding backend %r, so NO topic will be matched to a DISR field and "
+            "none will receive the %.2f critical_tech_bonus. This is deliberate: a "
+            "cut-off swept under one backend does not transfer to another. Sweep it "
+            "with `python -m src.calibrate critical-tech` and set "
+            "scoring.strategic_fit.critical_tech_match.thresholds.%s.",
+            str(get(config, "embeddings", "backend", default="hashing")),
+            bonus,
+            str(get(config, "embeddings", "backend", default="hashing")),
+        )
+
     scores: list[dict[str, Any]] = []
     for i, topic in enumerate(topics):
         terms = [(str(t), float(w)) for t, w in topic["terms"]]
@@ -258,7 +327,12 @@ def _run_inner(conn: Any, config: dict[str, Any], run_id: str) -> list[dict[str,
             embedding_weight=float(fit_cfg.get("embedding_weight", 0.7)),
             lexicon_weight=float(fit_cfg.get("lexicon_weight", 0.3)),
         )
-        critical = match_critical_technology(vector, terms, critical_refs, critical_vectors)
+        critical = match_critical_technology(
+            vector, terms, critical_refs, critical_vectors,
+            threshold=ct_threshold,
+            embedding_weight=ct_embedding_weight,
+            lexicon_weight=ct_lexicon_weight,
+        )
         if critical:
             fit = float(np.clip(fit + bonus, 0.0, 1.0))
 

@@ -517,3 +517,78 @@ def test_a_non_rate_limit_failure_is_contained_but_does_not_widen_the_delay():
 
     assert sorted(d["year"] for d in docs) == [2018, 2020]
     assert c.incidents and c.request_delay == 3.0
+
+
+# --- a raising collector must not discard what it already yielded ---------
+#
+# `collect` is a generator drained by Stage 1. Draining it with `list()` meant
+# an exception after the first yield threw away every document already
+# produced: OpenAlex pages five deep, so a budget exhaustion on page 3 lost
+# pages 1 and 2 and the frame was logged `skipped` with zero records — true of
+# the log, false of what happened. PROJECT_STATE.md issue 24.
+
+
+class _RaisesAfterYieldingCollector(Collector):
+    """Yields two documents, then hits its daily quota. OpenAlex, in miniature."""
+
+    name = "fake_raises_after_yielding"
+
+    def collect(self, query, frame, start_year, end_year):
+        yield build_document(source=self.name, native_id="1", title="page one")
+        yield build_document(source=self.name, native_id="2", title="page two")
+        raise PermanentError("Insufficient budget. Resets at midnight UTC.")
+
+
+def test_a_permanent_error_mid_frame_keeps_the_documents_already_collected():
+    from src.stage1_collect import _drain
+
+    collector = _collector(_RaisesAfterYieldingCollector)
+    collector.begin_frame()
+
+    docs, failure = _drain(collector, "q", {"key": "f"}, 2018, 2026)
+
+    assert [d["title"] for d in docs] == ["page one", "page two"], (
+        "documents produced before the failure must survive it"
+    )
+    assert failure is not None
+    exc, kind = failure
+    assert kind == "permanent"
+    assert "Insufficient budget" in str(exc)
+
+    # `list()` is what the stage used to do, and it is what loses them.
+    collector.begin_frame()
+    with pytest.raises(PermanentError):
+        list(collector.collect("q", {"key": "f"}, 2018, 2026))
+
+
+def test_drain_classifies_each_failure_kind():
+    """The kind decides whether the source is retired or only this frame fails."""
+    from src.stage1_collect import _drain
+
+    class _Retryable(Collector):
+        name = "fake_retryable"
+
+        def collect(self, query, frame, start_year, end_year):
+            yield build_document(source=self.name, native_id="1", title="kept")
+            raise RetryableError("HTTP 503")
+
+    class _Unexpected(Collector):
+        name = "fake_unexpected"
+
+        def collect(self, query, frame, start_year, end_year):
+            raise KeyError("schema changed under us")
+            yield  # pragma: no cover - unreachable, keeps this a generator
+
+    docs, (_, kind) = _drain(_collector(_Retryable), "q", {"key": "f"}, 2018, 2026)
+    assert kind == "retryable" and len(docs) == 1
+
+    docs, (_, kind) = _drain(_collector(_Unexpected), "q", {"key": "f"}, 2018, 2026)
+    assert kind == "unexpected" and docs == []
+
+
+def test_a_clean_collector_drains_with_no_failure():
+    from src.stage1_collect import _drain
+
+    docs, failure = _drain(_collector(_PartialCollector), "q", {"key": "f"}, 2018, 2026)
+    assert failure is None
+    assert len(docs) == 1

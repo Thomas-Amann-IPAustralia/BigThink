@@ -16,9 +16,17 @@ Why two:
 
 The backends are NOT interchangeable mid-project. Cosine values from hashing
 are lexical-overlap-ish; cosine values from BGE are semantic. Thresholds
-calibrated on one do not transfer to the other. `backend` is therefore part of
-the vector cache key, and switching it invalidates the cache rather than
+calibrated on one do not transfer to the other. The vector cache is therefore
+keyed on `Embedder.cache_key`, and switching backend invalidates it rather than
 silently mixing vector spaces.
+
+`cache_key` names the MODEL, not just the backend — `bge:BAAI/bge-base-en-v1.5`,
+not `bge`. Until 2026-08-31 it was the backend name alone, so changing
+`embeddings.bge_model` served back vectors from the previous model for every
+document already cached: two vector spaces in one corpus, silently, which is
+the exact thing the paragraph above promises cannot happen (PROJECT_STATE.md
+issue 31). The cost of correcting it is one re-embed of the stored corpus on
+the next run, which the `scan.yml` timeout already budgets for.
 
 `bge` has been the configured default since 2026-08-31, and every threshold
 under it was re-calibrated then (see PROJECT_STATE.md). `hashing` is not
@@ -122,7 +130,16 @@ def normalise_tokens(text: str) -> list[str]:
 
 
 def content_hash(text: str, backend: str) -> str:
-    """Cache key for a piece of text under a given backend."""
+    """Cache key for a piece of text under a given embedder.
+
+    `backend` here is the embedder's `cache_key`, not its `name`: two different
+    sentence-transformers models are two different vector spaces, and mixing
+    them is exactly the failure this cache exists to prevent. Keying on the
+    backend name alone meant changing `embeddings.bge_model` served back
+    vectors from the previous model for every document already cached — the
+    one thing this module's docstring promises does not happen.
+    PROJECT_STATE.md issue 31.
+    """
     return hashlib.sha256(f"{backend}\x00{text}".encode("utf-8")).hexdigest()
 
 
@@ -148,6 +165,18 @@ class Embedder:
     def fit(self, texts: Sequence[str]) -> "Embedder":
         """Optional corpus-fitting step (IDF). Default: no-op."""
         return self
+
+    @property
+    def cache_key(self) -> str:
+        """Identifies the vector space, for the DuckDB `vectors` cache.
+
+        Distinct from `name`, which identifies the *backend*. A backend can
+        have more than one vector space — `bge` is whichever model
+        `embeddings.bge_model` names — and vectors from two models are not
+        comparable. Anything that changes the numbers `encode` returns for the
+        same text belongs in here.
+        """
+        return self.name
 
 
 class HashingEmbedder(Embedder):
@@ -251,6 +280,12 @@ class BGEEmbedder(Embedder):
         self.batch_size = batch_size
         self.dimensions = int(self._model.get_sentence_embedding_dimension())
 
+    @property
+    def cache_key(self) -> str:
+        # The model, not just "bge". `embeddings.bge_model` is configurable and
+        # two models are two vector spaces; a shared key silently mixed them.
+        return f"{self.name}:{self.model_name}"
+
     def encode(self, texts: Sequence[str]) -> np.ndarray:
         vectors = self._model.encode(
             list(texts),
@@ -332,14 +367,15 @@ def encode_with_cache(
 
     from src import db  # local import keeps this module importable without duckdb
 
-    hashes = [content_hash(t, embedder.name) for t in texts]
-    cached = db.get_cached_vectors(conn, embedder.name, list(dict.fromkeys(hashes)))
+    key = embedder.cache_key
+    hashes = [content_hash(t, key) for t in texts]
+    cached = db.get_cached_vectors(conn, key, list(dict.fromkeys(hashes)))
 
     missing_idx = [i for i, h in enumerate(hashes) if h not in cached]
     if missing_idx:
         fresh = embedder.encode([texts[i] for i in missing_idx])
         new_vectors = {hashes[i]: fresh[row] for row, i in enumerate(missing_idx)}
-        db.store_vectors(conn, embedder.name, embedder.dimensions, new_vectors)
+        db.store_vectors(conn, key, embedder.dimensions, new_vectors)
         cached.update({h: list(v) for h, v in new_vectors.items()})
 
     return np.array([cached[h] for h in hashes], dtype=np.float64)

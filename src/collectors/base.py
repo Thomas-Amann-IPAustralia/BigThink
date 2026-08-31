@@ -73,6 +73,13 @@ def parse_date(value: Any) -> date | None:
     m = re.match(r"^(\d{4})(\d{2})(\d{2})T", text)
     if m:
         return _safe_date(*(int(g) for g in m.groups()))
+    # Each format is tried against a prefix of the text long enough to hold it
+    # and no longer, so a trailing timezone or fractional seconds does not turn
+    # a parseable date into a ValueError. `%Y`, `%m` and `%d` each expand to at
+    # most 4, 2 and 2 characters against a 2-character directive, so a format's
+    # rendered length never exceeds len(fmt) + 2 per date directive; +6 covers
+    # the three of them. Every format below is date-first, so the prefix always
+    # starts at the year.
     for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%SZ", "%Y/%m/%d", "%Y-%m", "%Y"):
         try:
             return datetime.strptime(text[: len(fmt) + 6], fmt).date()

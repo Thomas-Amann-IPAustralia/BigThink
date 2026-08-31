@@ -95,6 +95,48 @@ def enabled_sources(config: dict[str, Any]) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+def _drain(
+    collector: Any,
+    query: str,
+    frame: dict[str, Any],
+    start_year: int,
+    end_year: int,
+) -> tuple[list[dict[str, Any]], tuple[Exception, str] | None]:
+    """Consume a collector's generator, keeping whatever it produced before failing.
+
+    Returns (documents, (exception, kind) or None), where kind is
+    "permanent" | "retryable" | "unexpected".
+
+    `collect` is a generator. Draining it with `list()` — as this stage did
+    until 2026-08-31 — means an exception raised after the first yield discards
+    every document already produced, because `list()` propagates rather than
+    returning what it has. OpenAlex pages five deep, so a budget exhaustion on
+    page 3 threw away pages 1 and 2 and the frame was logged `skipped` with
+    zero records: true of the log, false of what happened.
+
+    This is the same failure mode GDELT's per-window catch and arXiv's per-year
+    catch already exist to avoid — *"a partial window is worth keeping"*. The
+    retirement path never got the same treatment. See PROJECT_STATE.md issue 24.
+
+    Iterating by hand rather than with `list()` is the whole fix: a partial
+    frame survives, and the caller decides between `partial` and `failed` from
+    whether anything did.
+    """
+    documents: list[dict[str, Any]] = []
+    iterator = collector.collect(query, frame, start_year, end_year)
+    while True:
+        try:
+            documents.append(next(iterator))
+        except StopIteration:
+            return documents, None
+        except PermanentError as exc:
+            return documents, (exc, "permanent")
+        except BigThinkError as exc:
+            return documents, (exc, "retryable")
+        except Exception as exc:  # unexpected: reported, never swallowed
+            return documents, (exc, "unexpected")
+
+
 def run(
     config: dict[str, Any],
     run_id: str,
@@ -105,7 +147,32 @@ def run(
     """Execute Stage 1. Returns {'fetched': n, 'new': n, 'failed_pairs': n}."""
     conn = db.init_db(resolve_path(config, "storage", "duckdb_path"))
     entry_id = db.log_stage_start(conn, run_id, STAGE, snapshot_config(config))
+    # Every other stage wraps its body like this. Stage 1 did not until
+    # 2026-08-31, so anything raising between log_stage_start and the end — a
+    # malformed scan frame, an empty --sources filter, a DuckDB error — left a
+    # `pipeline_runs` row stuck at 'running' forever and leaked the connection
+    # holding DuckDB's exclusive file lock. `pipeline_runs` is this project's
+    # observability surface and the notebook resolves a run's config from its
+    # most recent row, so a stuck row is not merely untidy.
+    # PROJECT_STATE.md issue 27.
+    try:
+        totals = _run_inner(conn, config, run_id, entry_id, only_sources, only_frames)
+    except Exception as exc:
+        db.log_stage_finish(conn, entry_id, "failed", message=str(exc))
+        raise
+    finally:
+        conn.close()
+    return totals
 
+
+def _run_inner(
+    conn: Any,
+    config: dict[str, Any],
+    run_id: str,
+    entry_id: int,
+    only_sources: Iterable[str] | None,
+    only_frames: Iterable[str] | None,
+) -> dict[str, int]:
     frames = load_scan_frame(config)
     if only_frames:
         wanted = set(only_frames)
@@ -165,31 +232,38 @@ def run(
                 continue
 
             collector.begin_frame()
-            try:
-                docs = list(collector.collect(query, frame, start_year, end_year))
-            except PermanentError as exc:
-                # Missing credentials, 403, exhausted quota, malformed schema:
-                # this source cannot succeed again this run. Retire it and keep
-                # scanning with the others.
+            docs, failure = _drain(collector, query, frame, start_year, end_year)
+
+            if failure is not None:
+                exc, kind = failure
+                if kind == "permanent":
+                    # Missing credentials, 403, exhausted quota, malformed
+                    # schema: this source cannot succeed again this run. Retire
+                    # it and keep scanning with the others.
+                    logger.warning(
+                        "[%s/%s] retiring source for this run: %s", frame_key, source, exc
+                    )
+                    retired[source] = str(exc)[:200]
+                elif kind == "unexpected":
+                    logger.exception(
+                        "[%s/%s] unexpected error", frame_key, source, exc_info=exc
+                    )
+                else:
+                    logger.warning("[%s/%s] failed: %s", frame_key, source, exc)
+
+                if not docs:
+                    status = "skipped" if kind == "permanent" else "failed"
+                    db.log_collection(conn, run_id, source, frame_key, status, 0, str(exc))
+                    totals["failed_pairs"] += 1
+                    continue
+                # Documents survived the failure. Keep them, and say so — the
+                # frame is `partial`, which is exactly what happened, rather
+                # than `skipped` with a record count of zero.
+                collector.note_incident(f"{type(exc).__name__}: {exc}")
                 logger.warning(
-                    "[%s/%s] retiring source for this run: %s", frame_key, source, exc
+                    "[%s/%s] keeping %d document(s) collected before the failure.",
+                    frame_key, source, len(docs),
                 )
-                retired[source] = str(exc)[:200]
-                db.log_collection(conn, run_id, source, frame_key, "skipped", 0, str(exc))
-                totals["failed_pairs"] += 1
-                continue
-            except BigThinkError as exc:
-                logger.warning("[%s/%s] failed: %s", frame_key, source, exc)
-                db.log_collection(conn, run_id, source, frame_key, "failed", 0, str(exc))
-                totals["failed_pairs"] += 1
-                continue
-            except Exception as exc:  # unexpected: log loudly, keep scanning
-                logger.exception("[%s/%s] unexpected error", frame_key, source)
-                db.log_collection(
-                    conn, run_id, source, frame_key, "failed", 0, f"{type(exc).__name__}: {exc}"
-                )
-                totals["failed_pairs"] += 1
-                continue
 
             new = db.upsert_documents(conn, docs)
             totals["fetched"] += len(docs)
@@ -246,7 +320,6 @@ def run(
             "  %-12s %-8s %3d queries, %6s records",
             row["source"], row["status"], row["queries"], row["records"] or 0,
         )
-    conn.close()
     return totals
 
 

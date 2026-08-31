@@ -195,6 +195,26 @@ A DISR critical-technology match adds a fixed bonus. It is binary because the
 DISR list is a policy designation: a topic either falls in a national-interest
 field or it does not.
 
+**Whether it says anything depends on a cut-off, and the cut-off belongs to the
+embedding backend.** The match is a blend that is 70% a cosine, and a cosine's
+scale is a property of the backend: under `hashing` an unrelated pair scores
+near zero, under `bge` it still scores 0.35-0.5. So a cut-off of 0.25 is a real
+filter under one and no filter at all under the other. It was a hardcoded 0.25
+until 2026-08-31 and matched **114 of 114 topics** on the only run ever produced
+under the shipped `bge` default — a national-interest designation printed on
+every evidence card, meaning nothing.
+
+It now lives in
+`scoring.strategic_fit.critical_tech_match.thresholds.<backend>`. **A blank
+value means no topic is matched and no topic receives the bonus**, rather than
+borrowing a number swept in a different vector space; the run log and
+`pipeline_runs` both say so when that happens. `python -m src.calibrate
+critical-tech` sweeps it.
+
+So: an empty `critical_tech` column means either "this topic is not in a DISR
+field" or "no cut-off has been swept for this backend". Check the run log to
+tell which. As of 2026-08-31 the shipped `bge` default is the second.
+
 ---
 
 ## Stage 4 — Opportunity index

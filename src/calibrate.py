@@ -9,6 +9,7 @@ evidence rather than intuition.
     python -m src.calibrate attributes         # attribute ranges and influence
     python -m src.calibrate bertopic           # sweep BERTopic seeds and neighbourhoods
     python -m src.calibrate attachment         # where to put the attachment threshold
+    python -m src.calibrate critical-tech      # sweep the DISR match threshold
 
 WHY THIS EXISTS. The clustering threshold is the single most consequential
 number in the pipeline and it cannot be reasoned to — it depends on the corpus,
@@ -32,12 +33,14 @@ from src import db
 from src.collectors.base import document_text
 from src.config import (
     bertopic_params,
+    critical_tech_match_threshold,
+    critical_tech_match_weights,
     get,
     load_config,
     resolve_path,
     topic_similarity_threshold,
 )
-from src.embeddings import build_embedder
+from src.embeddings import build_embedder, encode_with_cache
 from src.errors import insufficient_data_error
 from src.normalise import percentile_rank
 from src.topics import (
@@ -63,16 +66,29 @@ DEFAULT_SWEEP = DEFAULT_SWEEP_BY_METHOD["agglomerative"]
 
 
 def _load_forming_corpus(config: dict[str, Any]) -> tuple[np.ndarray, list[str], int]:
-    """Embed the corpus and return (vectors, texts, total) for forming sources."""
+    """Embed the corpus and return (vectors, texts, total) for forming sources.
+
+    Reads through the SAME vector cache the stages read, which is not a
+    performance nicety — it is what makes a sweep describe the pipeline.
+    Calling `embedder.encode` directly here re-embedded at this module's own
+    batch size while the pipeline read back cached vectors; the two agreed to a
+    cosine of 0.9999998, and UMAP turned that ~3e-7 difference into 118 clusters
+    against the pipeline's 124. That discrepancy is recorded twice in
+    PROJECT_STATE.md (issues 16 and 20) as something to work around. It is
+    cheaper to remove. See issue 32.
+    """
     with db.get_connection(resolve_path(config, "storage", "duckdb_path")) as conn:
         documents = db.fetch_documents(conn)
-    if not documents:
-        raise insufficient_data_error("calibrate", "no documents. Run Stage 1 first.")
+        if not documents:
+            raise insufficient_data_error("calibrate", "no documents. Run Stage 1 first.")
 
-    texts = [document_text(d) for d in documents]
-    embedder = build_embedder(config)
-    embedder.fit(texts)
-    vectors = embedder.encode(texts)
+        texts = [document_text(d) for d in documents]
+        embedder = build_embedder(config)
+        embedder.fit(texts)
+        vectors = encode_with_cache(
+            embedder, texts, conn,
+            enabled=bool(get(config, "embeddings", "cache_vectors", default=True)),
+        )
 
     forming = set(get(config, "emergence", "topics", "forming_sources", default=[]) or [])
     indices = [
@@ -179,7 +195,6 @@ def report_attributes(config: dict[str, Any]) -> None:
     Attributes are rank-normalised before weighting precisely so that influence
     matches the configured weight. This report is the check that it does.
     """
-    run_id = str(get(config, "pipeline", "run_label", default=""))
     with db.get_connection(resolve_path(config, "storage", "duckdb_path")) as conn:
         runs = conn.execute(
             "SELECT DISTINCT run_id FROM topics ORDER BY run_id DESC"
@@ -325,13 +340,17 @@ def report_attachment(config: dict[str, Any]) -> None:
     """
     with db.get_connection(resolve_path(config, "storage", "duckdb_path")) as conn:
         documents = db.fetch_documents(conn)
-    if not documents:
-        raise insufficient_data_error("calibrate", "no documents. Run Stage 1 first.")
+        if not documents:
+            raise insufficient_data_error("calibrate", "no documents. Run Stage 1 first.")
 
-    texts = [document_text(d) for d in documents]
-    embedder = build_embedder(config)
-    embedder.fit(texts)
-    vectors = embedder.encode(texts)
+        # Through the cache, for the reason in `_load_forming_corpus`.
+        texts = [document_text(d) for d in documents]
+        embedder = build_embedder(config)
+        embedder.fit(texts)
+        vectors = encode_with_cache(
+            embedder, texts, conn,
+            enabled=bool(get(config, "embeddings", "cache_vectors", default=True)),
+        )
 
     forming = set(get(config, "emergence", "topics", "forming_sources", default=[]) or [])
     forming_idx = [i for i, d in enumerate(documents) if d["source"] in forming]
@@ -400,10 +419,124 @@ def report_attachment(config: dict[str, Any]) -> None:
     )
 
 
+def report_critical_tech(config: dict[str, Any]) -> None:
+    """Sweep the DISR critical-technology match threshold against a real run.
+
+    THE NUMBER THIS SETS DECIDES WHETHER THE FLAG MEANS ANYTHING. It is a
+    cut-off on a blend that is 70% a cosine, so its scale belongs to the
+    embedding backend — and the value that worked under `hashing` did not
+    survive the move to `bge`. Until 2026-08-31 it was a bare Python default
+    of 0.25, and under the shipped default it matched 114 of 114 topics: a
+    national-interest designation printed on every evidence card, meaning
+    nothing, with the +0.10 bonus attached. See PROJECT_STATE.md issue 21.
+
+    Scores are computed with `stage3_scoring.critical_technology_scores`, the
+    same function the pipeline matches on, so a sweep cannot drift away from
+    what it is calibrating.
+    """
+    from src.stage3_scoring import critical_technology_scores
+
+    backend = str(get(config, "embeddings", "backend", default="hashing"))
+    embedding_weight, lexicon_weight = critical_tech_match_weights(config)
+
+    with db.get_connection(resolve_path(config, "storage", "duckdb_path")) as conn:
+        runs = conn.execute(
+            "SELECT DISTINCT run_id FROM topics ORDER BY run_id DESC"
+        ).fetchall()
+        if not runs:
+            raise insufficient_data_error("calibrate", "no topics. Run Stage 2 first.")
+        run_id = runs[0][0]
+        topics = db.fetch_topics(conn, run_id)
+        refs = [r for r in db.fetch_strategy_refs(conn) if r["ref_type"] == "critical_tech"]
+        if not refs:
+            raise insufficient_data_error(
+                "calibrate", "no critical_tech references. Run Stage 0 first."
+            )
+
+        # Same representation Stage 3 scores: a topic is its label plus its
+        # terms, not its member documents.
+        documents = db.fetch_documents(conn)
+        corpus = [document_text(d) for d in documents] + [r["text"] for r in refs]
+        embedder = build_embedder(config)
+        embedder.fit(corpus)
+        cache = bool(get(config, "embeddings", "cache_vectors", default=True))
+        ref_vectors = encode_with_cache(
+            embedder, [r["text"] for r in refs], conn, enabled=cache
+        )
+        topic_vectors = encode_with_cache(
+            embedder,
+            [" ".join([t["label"] or ""] + [term for term, _ in t["terms"]]) for t in topics],
+            conn,
+            enabled=cache,
+        )
+
+    best_score, best_field = [], []
+    for i, topic in enumerate(topics):
+        scores = critical_technology_scores(
+            topic_vectors[i],
+            [(str(term), float(w)) for term, w in topic["terms"]],
+            refs,
+            ref_vectors,
+            embedding_weight=embedding_weight,
+            lexicon_weight=lexicon_weight,
+        )
+        best_score.append(max(scores))
+        best_field.append(refs[int(np.argmax(scores))]["code"])
+    best = np.asarray(best_score)
+
+    active = critical_tech_match_threshold(config)
+    print(
+        f"\nRun {run_id} — {len(topics)} topics against {len(refs)} DISR fields.\n"
+        f"Backend {backend!r}, blend {embedding_weight} x cosine + "
+        f"{lexicon_weight} x lexicon.\n"
+    )
+    for label, value in (
+        ("min", best.min()), ("10th", np.percentile(best, 10)),
+        ("median", np.percentile(best, 50)), ("90th", np.percentile(best, 90)),
+        ("max", best.max()), ("mean", best.mean()),
+    ):
+        print(f"  {label:>7}  {value:.3f}")
+
+    if active is None:
+        print(
+            f"\nActive: NOT SET for backend {backend!r} — no topic is matched and no "
+            f"topic receives the critical_tech_bonus.\n"
+        )
+    else:
+        print(
+            f"\nActive: {active:.2f}, matching "
+            f"{100.0 * float((best >= active).mean()):.0f}% of topics.\n"
+        )
+
+    print(f"{'threshold':>10} {'matched':>9} {'% of topics':>12}   distinct fields")
+    print("-" * 62)
+    for candidate in np.arange(0.10, 0.91, 0.05):
+        hits = best >= candidate
+        fields = {f for f, hit in zip(best_field, hits) if hit}
+        marker = "  <- active" if active is not None and abs(candidate - active) < 1e-9 else ""
+        print(
+            f"{candidate:10.2f} {int(hits.sum()):9d} {hits.mean():11.0%}   "
+            f"{len(fields):>2d} of {len(refs)}{marker}"
+        )
+
+    print(
+        "\nWhat to look for. The DISR list is seven fields; a horizon scan over a\n"
+        "broad frame should put a MINORITY of its topics inside one. A threshold\n"
+        "matching ~100% has stopped discriminating and is worse than none, because\n"
+        "it prints a policy designation on every evidence card. One matching ~0%\n"
+        "means the blend never clears it and the bonus is dead weight. Read the\n"
+        "labels of what matches at your candidate before settling.\n"
+        "\nRecord the value and the reasoning in PROJECT_STATE.md's calibration log,\n"
+        "then set scoring.strategic_fit.critical_tech_match.thresholds."
+        f"{backend}.\n"
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Calibration helpers.")
     parser.add_argument(
-        "what", choices=["threshold", "attributes", "bertopic", "attachment"]
+        "what",
+        choices=["threshold", "attributes", "bertopic", "attachment", "critical-tech"],
     )
     parser.add_argument("--config", default=None)
     parser.add_argument("--values", default="", help="Comma-separated thresholds to sweep.")
@@ -436,6 +569,8 @@ def main(argv: list[str] | None = None) -> int:
         )
     elif args.what == "attachment":
         report_attachment(config)
+    elif args.what == "critical-tech":
+        report_critical_tech(config)
     else:
         report_attributes(config)
     return 0

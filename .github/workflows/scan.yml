@@ -144,16 +144,30 @@ jobs:
           echo "Backend: $BACKEND | method: $METHOD | ML dependencies needed: $NEEDS_ML"
           echo "needs_ml=$NEEDS_ML" >> "$GITHUB_OUTPUT"
 
-      # The BGE weights are ~400 MB and do not change. Cached on the model name
-      # so a bump to embeddings.bge_model invalidates it rather than silently
-      # serving the old weights — vectors from two different models in one
-      # corpus would be a vector space that means nothing.
+      # The BGE weights are ~400 MB and do not change. Keyed on the MODEL NAME,
+      # so a bump to embeddings.bge_model invalidates the cache rather than
+      # silently serving the old weights — vectors from two different models in
+      # one corpus would be a vector space that means nothing.
+      #
+      # This said "cached on the model name" while hashing the whole config
+      # file, so editing any threshold, or even a comment, threw away 400 MB
+      # and re-downloaded it inside the job whose run time is the binding
+      # constraint (PROJECT_STATE issue 31).
+      - name: Resolve the embedding model name
+        if: steps.deps.outputs.needs_ml == 'true'
+        id: model
+        run: |
+          set -euo pipefail
+          MODEL=$(python -c "from src.config import load_config, get; print(get(load_config(), 'embeddings', 'bge_model', default='BAAI/bge-base-en-v1.5'))")
+          echo "Embedding model: $MODEL"
+          echo "name=$MODEL" >> "$GITHUB_OUTPUT"
+
       - name: Cache the sentence-transformers model
         if: steps.deps.outputs.needs_ml == 'true'
         uses: actions/cache@v4
         with:
           path: ~/.cache/huggingface
-          key: hf-${{ hashFiles('bigthink_config.yaml') }}
+          key: hf-${{ steps.model.outputs.name }}
           restore-keys: hf-
 
       - name: Install ML dependencies

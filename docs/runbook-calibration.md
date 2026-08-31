@@ -210,6 +210,44 @@ reproduced; a seed recorded without its sweep cannot be argued with.
 
 ---
 
+## Step 3b — Sweep the DISR critical-technology cut-off
+
+**Do this whenever you change the embedding backend.** It is the same class of
+number as the clustering threshold and for the same reason: it is a cut-off on
+a blend that is 70% a cosine, and a cosine's scale belongs to the backend.
+
+```bash
+python -m src.calibrate critical-tech
+```
+
+Sets `scoring.strategic_fit.critical_tech_match.thresholds.<backend>`, which
+decides whether a topic is flagged as falling in a DISR national-interest field
+and collects `critical_tech_bonus` on its strategic fit.
+
+**A blank value is a legitimate setting and is currently what `bge` ships
+with.** Blank means no topic is matched and no bonus is awarded, which is the
+right answer until someone has swept it — a cut-off carried over from another
+vector space does not degrade gracefully. `hashing: 0.25` was swept; `bge` has
+not been.
+
+Read the output the same way as the attachment sweep. The DISR list is seven
+fields against a whole horizon scan, so **a minority of topics matching is what
+a working cut-off looks like.** Two failure modes, and only one of them is
+visible without doing this:
+
+- **~100% matched** — the flag has stopped discriminating and is worse than
+  absent, because it prints a policy designation on every evidence card. This
+  is what a hardcoded 0.25 did under `bge`: 114 of 114 topics
+  (`PROJECT_STATE.md` issue 21).
+- **~0% matched** — the blend never clears the cut-off and the bonus is dead
+  weight.
+
+Also read the "distinct fields" column. A threshold matching plenty of topics
+but only one or two of the seven fields is telling you the blend is picking up
+something other than the field.
+
+---
+
 ## Step 4 — Record what you did
 
 In `PROJECT_STATE.md`, under "Calibration log":

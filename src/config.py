@@ -54,6 +54,12 @@ STEEPV_CATEGORIES = {
 
 _WEIGHT_SUM_TOLERANCE = 1e-6
 
+#: The DISR critical-technology cut-off as it was hardcoded in
+#: `stage3_scoring.match_critical_technology` before 2026-08-31. Kept only so a
+#: config snapshot from before then resolves to the number that run actually
+#: used. Never a fallback for a modern config: see PROJECT_STATE.md issue 21.
+_LEGACY_CRITICAL_TECH_THRESHOLD = 0.25
+
 
 # ---------------------------------------------------------------------------
 # Public interface
@@ -162,6 +168,55 @@ def topic_similarity_threshold(config: dict[str, Any]) -> float:
     )
 
 
+def critical_tech_match_threshold(config: dict[str, Any]) -> float | None:
+    """Cut-off for calling a topic a DISR critical technology, for this backend.
+
+    Returns None when the active backend has no measured cut-off, which is not
+    the same as zero: the caller must then decline to match at all rather than
+    fall back to a number calibrated against a different vector space.
+
+    Resolved here, beside `topic_similarity_threshold`, for the same reason —
+    one place where a backend-dependent cosine cut-off becomes a value. The
+    argument is identical too. This threshold applies to a blend that is 70% a
+    cosine, and a cosine's scale belongs to the backend: hashed TF-IDF puts an
+    unrelated pair near zero, BGE puts it around 0.35-0.5. A cut-off of 0.25
+    is a real filter under the first and no filter at all under the second.
+
+    That is not hypothetical. 0.25 was a bare Python default until 2026-08-31,
+    and on `verify-bertopic` — the only run ever produced under the shipped
+    `bge` + `bertopic` default — it matched 114 of 114 topics, against 6 of 102
+    under `hashing`. See PROJECT_STATE.md issue 21.
+    """
+    backend = str(get(config, "embeddings", "backend", default="hashing"))
+    block = get(config, "scoring", "strategic_fit", "critical_tech_match", default=None)
+    if not block:
+        # No block at all: a config snapshot predating 2026-08-31. Reproduce
+        # what that run actually did — the hardcoded 0.25 — rather than
+        # refusing to score it. Every such run was collected under `hashing`,
+        # where 0.25 is the swept value anyway.
+        return _LEGACY_CRITICAL_TECH_THRESHOLD
+    thresholds = block.get("thresholds") or {}
+    if backend not in thresholds:
+        raise ConfigError(
+            f"No scoring.strategic_fit.critical_tech_match.thresholds entry for the "
+            f"active embedding backend {backend!r}. Add one (leave it blank if it has "
+            f"not been swept) before running Stage 3."
+        )
+    value = thresholds[backend]
+    return None if value is None else float(value)
+
+
+def critical_tech_match_weights(config: dict[str, Any]) -> tuple[float, float]:
+    """(embedding_weight, lexicon_weight) for the critical-technology blend."""
+    block = (
+        get(config, "scoring", "strategic_fit", "critical_tech_match", default={}) or {}
+    )
+    return (
+        float(block.get("embedding_weight", 0.7)),
+        float(block.get("lexicon_weight", 0.3)),
+    )
+
+
 def bertopic_params(config: dict[str, Any], min_topic_size: int) -> Any:
     """Build `topics.BertopicParams` from `emergence.topics.bertopic`.
 
@@ -188,6 +243,53 @@ def bertopic_params(config: dict[str, Any], min_topic_size: int) -> Any:
         min_cluster_size=int(settings.get("min_cluster_size") or min_topic_size),
         min_samples=None if min_samples is None else int(min_samples),
         cluster_selection_method=str(settings.get("cluster_selection_method", "eom")),
+    )
+
+
+#: Prepended to every page this project publishes to GitHub Pages.
+#:
+#: All three published pages began with a bare `<title>` until 2026-08-31 and
+#: had none of this. Each line earns its place:
+#:
+#:   doctype   without it every browser renders in quirks mode, where
+#:             box-sizing and table layout follow pre-standards rules.
+#:   charset   these pages are full of en-dashes and curly quotes. Served by
+#:             Pages they survive on its own header; opened as a local file —
+#:             which is how the workflow artefact is read — they do not.
+#:   viewport  without it a phone lays the page out at ~980px and scales down,
+#:             so the `@media (max-width: 720px)` rules both stylesheets
+#:             already carry can never fire. The responsive work was inert.
+#:
+#: PROJECT_STATE.md issue 28.
+PAGE_HEAD = (
+    "<!doctype html>\n"
+    '<html lang="en">\n'
+    "<head>\n"
+    '<meta charset="utf-8">\n'
+    '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+)
+
+#: Closes what PAGE_HEAD opens. `<head>` ends after the page's own title and
+#: style, so the caller places this itself.
+PAGE_TAIL = "</body>\n</html>\n"
+
+
+def repo_url(config: dict[str, Any]) -> str:
+    """This repository's GitHub URL, read out of the configured user-agent.
+
+    One place names it, rather than two. The published pages link to evidence
+    cards on GitHub because `data/outputs/` is not served by Pages — only
+    `docs/` is.
+    """
+    import re
+
+    match = re.search(
+        r"https://github\.com/[^\s)]+",
+        str(get(config, "pipeline", "user_agent", default="") or ""),
+    )
+    return (
+        match.group(0).rstrip(")") if match
+        else "https://github.com/Thomas-Amann-IPAustralia/BigThink"
     )
 
 
@@ -483,6 +585,59 @@ def _validate_scoring(s: dict[str, Any]) -> None:
             raise ConfigError(
                 f"scoring.{key}: embedding_weight + lexicon_weight must sum to 1.0 "
                 f"(got {ew} + {lw} = {ew + lw})"
+            )
+    _validate_critical_tech_match(
+        (s.get("strategic_fit", {}) or {}).get("critical_tech_match", {}) or {}
+    )
+
+
+def _validate_critical_tech_match(m: dict[str, Any]) -> None:
+    """Validate the DISR critical-technology match block.
+
+    A blank threshold is legal and means "not swept for this backend" — Stage 3
+    then declines to match rather than reaching for a number measured against a
+    different vector space. A *missing* backend key is not legal: silence about
+    the active backend is how this went unnoticed for a whole method change.
+    """
+    if not isinstance(m, dict):
+        raise ConfigError("scoring.strategic_fit.critical_tech_match must be a mapping.")
+    if not m:
+        return  # absent block: the function-level defaults apply, as before
+
+    ew = float(m.get("embedding_weight", 0.7))
+    lw = float(m.get("lexicon_weight", 0.3))
+    if abs((ew + lw) - 1.0) > _WEIGHT_SUM_TOLERANCE:
+        raise ConfigError(
+            "scoring.strategic_fit.critical_tech_match: embedding_weight + "
+            f"lexicon_weight must sum to 1.0 (got {ew} + {lw} = {ew + lw})"
+        )
+
+    thresholds = m.get("thresholds")
+    if not isinstance(thresholds, dict) or not thresholds:
+        raise ConfigError(
+            "scoring.strategic_fit.critical_tech_match.thresholds must map each "
+            "embedding backend to its own cut-off. The blend is 70% a cosine, and a "
+            "cosine's scale belongs to the backend — one number cannot serve both."
+        )
+    for backend, value in thresholds.items():
+        if backend not in _VALID_EMBEDDING_BACKENDS:
+            raise ConfigError(
+                f"scoring.strategic_fit.critical_tech_match.thresholds has unknown "
+                f"backend {backend!r}"
+            )
+        if value is None:
+            continue  # not swept for this backend; Stage 3 declines to match
+        if not 0.0 < float(value) < 1.0:
+            raise ConfigError(
+                f"scoring.strategic_fit.critical_tech_match.thresholds.{backend} must "
+                "be in (0, 1), or blank if it has never been swept."
+            )
+    for backend in _VALID_EMBEDDING_BACKENDS:
+        if backend not in thresholds:
+            raise ConfigError(
+                f"scoring.strategic_fit.critical_tech_match.thresholds is missing "
+                f"{backend!r}. Every supported backend needs an entry — blank if it "
+                "has not been swept, so the gap is stated rather than discovered."
             )
 
 
