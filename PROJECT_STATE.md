@@ -175,6 +175,56 @@ Three things in that table are worth noticing, and one of them is a warning.
 in this file, so new issues keep the next free number wherever they sit in the
 ordering.*
 
+### 19. ~~Stage 2 crashes the second time it runs against an accumulated database~~ — FIXED 2026-08-31
+
+**Every real run to date started from an empty database**, each deliberately
+(`fresh_baseline`, or the first-ever scheduled run) — so `--skip-collect`, the
+fast loop for tuning this file and `CLAUDE.md` both document and recommend,
+had never actually been exercised against a database Stage 2 had already
+written to. The first time it was — triggering `scan.yml` with
+`skip_collect: true` against the restored `corpus-20260830-230512` release,
+to rebuild the site after this session's dashboard PR merged — it crashed
+immediately:
+
+```
+_duckdb.ConstraintException: Constraint Error: Duplicate key "topic_id: T0000"
+violates primary key constraint.
+```
+
+**Cause.** `topics.topic_id` is a bare `VARCHAR PRIMARY KEY` — global across
+the whole table, not scoped by `run_id` the way `topic_scores` already is.
+Every clustering method numbers its output fresh from `T0000` on every run,
+regardless of `run_id`. `db.replace_topics` deletes existing rows for its
+*own* `run_id` before inserting, but a **different** run_id's `T0000` (from
+whichever run last wrote topics) is still sitting in the table, and the
+insert collides with it. This is not a corner case — it is guaranteed on the
+very next Stage 2 run against any non-empty `topics` table, because id
+generation is deterministic and always restarts at zero.
+
+**Consequence, if it had gone unnoticed longer:** every workflow retrying
+`--skip-collect` after any Stage 1 fix, and every local tuning session
+following the documented fast loop, would fail identically — silently ruling
+out the one workflow this project's own docs point people toward for
+iterating on Stage 2 configuration.
+
+**Fixed** in `src/stage2_emergence.py`: once a run's topic ids are final
+(after `drop_vocabulary_poor_topics`, the last renumbering step), each is
+qualified with the run id — `topic_id = f"{run_id}-{topic_id}"` — so it is
+unique everywhere it is stored or displayed without touching the schema or
+any query. Evidence-card filenames and CSV/dashboard topic ids get slightly
+longer (`2026-08-31-T0000` instead of `T0000`) but nothing parses the old
+shape (checked: no code pattern-matches `T\d+`). Regression test:
+`test_running_stage_two_twice_against_one_database_does_not_collide`, which
+runs Stage 2 twice against one persisted database with two different run
+ids and asserts the second does not raise and the two runs' topic ids are
+disjoint — reproduced against the pre-fix code first, to confirm it actually
+catches this.
+
+**Note this does not fix issue 18** (two runs sharing one run_id on the same
+UTC day) — under this fix they would generate the *same* qualified id and
+the second correctly overwrites the first via `replace_topics`, exactly the
+already-documented behaviour of issue 18.
+
 ### 11. ~~Crossref peer-review records are producing phantom topics~~ — FIXED 2026-08-31
 
 `src/collectors/crossref.py` now drops `type` in
