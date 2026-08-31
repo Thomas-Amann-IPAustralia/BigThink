@@ -69,6 +69,7 @@ python -m src.calibrate threshold --show-labels   # sweep the clustering thresho
 python -m src.calibrate bertopic --show-labels    # sweep BERTopic seeds and n_neighbors
 python -m src.calibrate attachment                # where the attachment threshold belongs
 python -m src.calibrate attributes                # attribute ranges and influence
+python -m src.calibrate critical-tech             # where the DISR match threshold belongs
 
 # Tests — offline by design, no network calls. BERTopic tests run offline too
 # (they are handed embeddings, so no model loads); they skip without
@@ -116,10 +117,20 @@ instead of trusting it. Two rules keep it honest, and both are load-bearing:
   `percentile_rank`) rather than reimplementing them, so a check cannot drift
   away from the code it checks.
 
-**Stages communicate only through DuckDB.** No stage passes Python objects to
-another. That is what makes a stage re-runnable alone and a months-old result
-explainable — `pipeline_runs` stores the config snapshot that produced it.
-Preserve this. Do not add cross-stage function calls that bypass the database.
+**Stages communicate through DuckDB, with one deliberate exception.** Each
+stage reads its inputs from the database and writes its outputs back, which is
+what makes a stage re-runnable alone and a months-old result explainable —
+`pipeline_runs` stores the config snapshot that produced it. Preserve this; do
+not add cross-stage function calls that bypass the database.
+
+The exception, because it is in the code and reading the rule as absolute would
+be misleading: **Stage 5 calls Stages 3 and 4 directly** and consumes their
+return values (`stage5_synthesis._run_inner`). It has to. Stage 3 deliberately
+persists nothing on its own — it prints, so you can inspect fit before the
+index is built on top — so there is nothing in the database for Stage 5 to
+read. Writing all of `topic_scores` in one place also means a crash between
+Stages 3 and 4 cannot leave that table half-populated. If you add a stage,
+follow the rule; if you need this exception, say why at the call site.
 
 ## Key design decisions — do not undo these without reading why
 
@@ -127,6 +138,7 @@ Preserve this. Do not add cross-stage function calls that bypass the database.
 |---|---|
 | **DuckDB, not SQLite** | Every stage aggregates. `BasicInfraSuggestion.md` specifies it. Single-writer — hence the Actions concurrency group |
 | **Pluggable embeddings, `bge` default since 2026-08-31** | `hashing` matches vocabulary, not meaning, so a topic's terms and an asset description shared few exact tokens and the asset-leverage axis spanned only 0.03-0.10 across the whole shortlist. `hashing` stays fully supported and is what the tests and any torch-less machine run on — the pipeline must remain runnable with no torch and no model download |
+| **The DISR critical-technology cut-off is per backend, and blank means "do not match"** | Same argument as the row below, applied to a different cosine. It was a bare `0.25` default in `stage3_scoring.py` until 2026-08-31 and matched 114 of 114 topics under `bge`, printing a national-interest designation on every evidence card. A backend with no swept value now matches nothing and says so, rather than borrowing a number from another vector space. `python -m src.calibrate critical-tech` |
 | **Per-method AND per-backend similarity thresholds** | The backend sets a cosine's *scale* (hashed TF-IDF puts a related pair around 0.28; BGE above 0.8). The method sets what the cosine is *between* — `leader` compares to a centroid, `agglomerative` to a mean pairwise similarity, which is far lower on identical data. At the leader value of 0.30, average linkage assigned 23 of 2,987 documents. `topic_similarity_threshold()` is the only place this is resolved |
 | **True average-linkage clustering, not leader clustering** | The pre-2026-08-30 method updated a centroid in place as it accreted, so a growing cluster drifted toward the corpus mean and then resembled everything. It produced a catch-all holding 57% of everything assigned, whose centroid sat at cosine 0.955 from the corpus centroid. Average linkage makes a cluster *harder* to join as it grows, and is order-invariant, so the chronological ordering of the corpus cannot bias which topics form |
 | **BERTopic by default since 2026-08-31, over seeded UMAP + HDBSCAN** | Reverses the earlier call, on the owner's instruction: a single scan should be as accurate on its own as it can be, and its value as a reference point for a later run is explicitly secondary. Every argument for average linkage was an argument about the second thing. Within a corpus it is still deterministic — UMAP is seeded from `emergence.topics.bertopic.random_state` — so a result stays checkable; across corpora it moves more than average linkage, and that is the accepted cost |
@@ -139,7 +151,7 @@ Preserve this. Do not add cross-stage function calls that bypass the database.
 | **GDELT's window is split into date-range chunks** | `timespan` does not do what it says: `artlist` sorts most-recent-first and `maxrecords` caps at 250, so one request returns the newest 250 articles however wide the window. Every GDELT document on the 2026-08-30 run carried a 2026 date |
 | **Impact percentiles computed within source** | arXiv reports no citations. Ranked globally, every preprint sits at the bottom and the fastest-moving evidence is systematically penalised |
 | **Opportunity index excluded from the ranking** | It is the weakest-founded number here. Folding it into the headline order would launder that weakness |
-| **Thin topics suppressed, not scored** | A composite on 8 documents looks identical to one on 800. That is how a horizon scan misleads people |
+| **Thin topics suppressed, not scored** — *at Stage 4 only* | A composite on 8 documents looks identical to one on 800. That is how a horizon scan misleads people. Note the gate is real in Stage 4 (`opportunity_index.min_documents`) and **absent in Stage 2**: `emergence.min_docs_per_topic` only logs a warning, so a thin topic is still scored, ranked and published with an emergence score. Open issue 13 |
 | **Weight redistribution when a component has no data** | Otherwise disabling PatentsView silently shrinks every index by 15% and the ranking looks unchanged while measuring something different |
 | **The notebook explains a run, it does not re-run one** | Stages 2–5 are deterministic given the corpus, so re-deriving them proves something. Stage 1 hits live metered APIs, so a cell claiming to reproduce the corpus would be false the moment a source changed its budget |
 | **The notebook is executed at generation time, in-process** | It must read correctly without being run and stay runnable. An `.ipynb` is only JSON; `nbformat`/`nbclient` would add dependencies and buy nothing |

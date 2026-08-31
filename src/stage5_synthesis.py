@@ -346,7 +346,7 @@ def write_shortlist(
     add("")
     add("| Three Horizons | Topics | | Signal class | Topics |")
     add("|---|---:|---|---|---:|")
-    horizons = [("H1", "H2", "H3")[i] for i in range(3)]
+    horizons = ["H1", "H2", "H3"]
     signals = ["weak", "strong", "latent", "noise"]
     for i in range(max(len(horizons), len(signals))):
         h = horizons[i] if i < len(horizons) else ""

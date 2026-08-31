@@ -40,7 +40,8 @@ TWO CAVEATS THAT MATTER FOR READING RESULTS
 
 2. Short series produce spurious bursts. With eight annual slices there is very
    little evidence for any state sequence, and a single anomalous year can flip
-   a topic to "bursting". `emergence.min_docs_per_topic` is the main guard;
+   a topic to "bursting". `emergence.min_docs_per_topic` is meant to be the main
+   guard and currently only warns (PROJECT_STATE.md issue 13);
    treat a burst on a thin topic as a prompt to look, not a finding.
 """
 

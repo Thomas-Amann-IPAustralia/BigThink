@@ -52,6 +52,14 @@ def test_snapshot_omits_internal_keys():
         (lambda c: c["dashboard"]["projection"].update(method="tsne"), "projection.method"),
         (lambda c: c["dashboard"]["projection"].update(n_neighbors=1), "n_neighbors"),
         (lambda c: c["dashboard"]["projection"].update(min_dist=1.5), "min_dist"),
+        (lambda c: c["scoring"]["strategic_fit"]["critical_tech_match"].update(
+            embedding_weight=0.9), "sum to 1.0"),
+        (lambda c: c["scoring"]["strategic_fit"]["critical_tech_match"]["thresholds"].update(
+            word2vec=0.3), "unknown backend"),
+        (lambda c: c["scoring"]["strategic_fit"]["critical_tech_match"]["thresholds"].update(
+            hashing=1.4), r"must be in \(0, 1\)"),
+        (lambda c: c["scoring"]["strategic_fit"]["critical_tech_match"]["thresholds"].pop(
+            "bge"), "is missing 'bge'"),
     ],
 )
 def test_validation_rejects_bad_values(raw, mutate, expected):
@@ -265,3 +273,46 @@ def test_the_threshold_sweep_refuses_to_run_under_bertopic():
     config["emergence"]["topics"]["method"] = "bertopic"
     with pytest.raises(Exception, match="takes no clustering threshold"):
         sweep_threshold(config, [0.1])
+
+
+# --- DISR critical-technology threshold -----------------------------------
+
+
+def test_critical_tech_threshold_resolves_per_backend(raw):
+    """The cut-off applies to a blend that is 70% a cosine, so its scale belongs
+    to the backend — the same argument as topic_similarity_threshold. Shipping
+    one number for both is what gave verify-bertopic a 114-of-114 match rate
+    (PROJECT_STATE.md issue 21)."""
+    from src.config import critical_tech_match_threshold
+
+    config = copy.deepcopy(raw)
+    config["embeddings"]["backend"] = "hashing"
+    assert critical_tech_match_threshold(config) == 0.25
+
+    # Blank is not zero and not a default: it means "never swept for this
+    # backend", and Stage 3 then matches nothing at all.
+    config["embeddings"]["backend"] = "bge"
+    assert critical_tech_match_threshold(config) is None
+
+
+def test_a_blank_threshold_is_legal_but_a_missing_backend_is_not(raw):
+    """Blank states the gap. A missing key hides it, which is how the shipped
+    default ran for a whole method change with a cut-off that matched
+    everything."""
+    config = copy.deepcopy(raw)
+    config["scoring"]["strategic_fit"]["critical_tech_match"]["thresholds"] = {
+        "hashing": 0.25, "bge": None,
+    }
+    _validate(config)
+
+    del config["scoring"]["strategic_fit"]["critical_tech_match"]["thresholds"]["hashing"]
+    with pytest.raises(ConfigError, match="is missing 'hashing'"):
+        _validate(config)
+
+
+def test_config_without_a_critical_tech_match_block_still_validates(raw):
+    """A config predating the block keeps the function-level defaults, so an
+    older run can still be reproduced from its own snapshot."""
+    config = copy.deepcopy(raw)
+    del config["scoring"]["strategic_fit"]["critical_tech_match"]
+    _validate(config)

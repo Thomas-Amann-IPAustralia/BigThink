@@ -347,3 +347,64 @@ def test_render_html_contains_title_and_data():
     assert "<title>" in html
     assert "__DASHBOARD_DATA__" in html
     assert "A normal title" in html
+
+
+# --- published page structure ---------------------------------------------
+#
+# Every page this project publishes began with a bare <title> until 2026-08-31:
+# no doctype (quirks mode), no charset (mojibake for the en-dashes both pages
+# are full of, whenever the file is opened rather than served), and no viewport
+# meta — which meant the `@media (max-width: 720px)` rules both stylesheets
+# carry could never fire on a phone. PROJECT_STATE.md issue 28.
+
+
+def _published_pages():
+    """Both generated pages, rendered from the same fixture."""
+    from src.dashboard import render_html
+    from src.report import build_html
+
+    data = {
+        "run_id": "test-run", "generated_at": "2026-08-31T00:00", "repo_url": "https://x/y",
+        "backend": "hashing", "projection_method": "pca", "shortlist_size": 1,
+        "documents_total": 1, "documents_plotted": 1, "topics_total": 1,
+        "year_min": 2024, "year_max": 2026, "sources": ["crossref"], "steepv": ["Technological"],
+        "topics": [], "points": {k: [] for k in (
+            "x", "y", "topic", "similarity", "source", "steepv",
+            "year", "citation", "title", "url", "venue")},
+    }
+    rows = [{
+        "rank": 1, "topic_id": "T0000", "label": "a topic — with an en-dash",
+        "horizon": "H2", "signal_class": "weak", "emergence_score": 0.5,
+        "strategic_fit": 0.5, "asset_leverage": 0.5, "opportunity_index": 0.5,
+        "index_suppressed": False, "best_objective": "4.2", "fit_quadrant": "act",
+    }]
+    stats = {"documents": 1, "topics": 1, "slices": 1, "span": "2024–2026",
+             "backend": "hashing"}
+    return {
+        "dashboard.html": render_html(data),
+        "index.html": build_html(rows, rows, "test-run", stats, "https://x/y"),
+    }
+
+
+@pytest.mark.parametrize("required", [
+    "<!doctype html>",
+    '<meta charset="utf-8">',
+    '<meta name="viewport" content="width=device-width, initial-scale=1">',
+])
+def test_every_published_page_declares_its_document_head(required):
+    for name, html in _published_pages().items():
+        assert required in html, f"{name} is missing {required}"
+
+
+def test_every_published_page_is_a_closed_document():
+    for name, html in _published_pages().items():
+        assert html.rstrip().endswith("</html>"), f"{name} is not closed"
+        for tag in ("<html", "<head>", "</head>", "<body>", "</body>"):
+            assert tag in html, f"{name} is missing {tag}"
+
+
+def test_the_shortlist_links_each_topic_to_its_evidence_card():
+    """Reading the evidence cards is the one check this project says finds
+    clustering artefacts. The page should not make a reader go and find them."""
+    html = _published_pages()["index.html"]
+    assert "data/outputs/test-run/evidence/01_T0000.md" in html

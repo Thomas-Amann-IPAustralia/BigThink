@@ -1,8 +1,8 @@
 # IPAVentures horizon scan — shortlist
 
-Run `2026-08-31` · generated 2026-08-31 06:48 UTC
+Run `2026-08-31` · generated 2026-08-31 03:25 UTC
 
-7,501 documents · 102 topics · 9 time slices (2018–2026) · embedding backend `hashing`
+15,036 documents · 120 topics · 9 time slices (2018–2026) · embedding backend `hashing`
 
 > **How to read this.** These are *candidates*, not conclusions. The ranking combines an emergence score, strategic fit and asset leverage; the weights behind it are a considered judgement that has not yet been validated against a known past opportunity. The opportunity index is relative and is not a market size. Read the evidence cards before you believe any row.
 
@@ -10,21 +10,21 @@ Run `2026-08-31` · generated 2026-08-31 06:48 UTC
 
 | # | Topic | H | Signal | Emrg | Fit | Lev | Index | Closest objective |
 |---:|---|:-:|---|---:|---:|---:|---:|---|
-| 1 | **artificial intelligence / patent / examinati** | H2 | strong | 0.79 | 0.17 | 0.12 | 0.73 | 4.2 Innovative digital and data-dr |
-| 2 | **decision making / automated decision / makin** | H1 | noise | 0.55 | 0.44 | 0.21 | 0.59 | SI-3 AI and Automated Decision Mak |
-| 3 | **trust / chapter / political / britain** | H2 | weak | 0.77 | 0.21 | 0.05 | 0.29 | 1.1 Trust and confidence in a high |
-| 4 | **indigenous / traditional knowledge / cultura** | H1 | latent | 0.56 | 0.20 | 0.16 | 0.68 | SI-5 First Nations Strategy |
-| 5 | **good governance / trust / citizen / public i** | H1 | noise | 0.62 | 0.15 | 0.10 | 0.38 | 1.1 Trust and confidence in a high |
-| 6 | **service delivery / local government / public** | H2 | strong | 0.74 | 0.15 | 0.06 | 0.73 | 4.2 Innovative digital and data-dr |
-| 7 | **patent / ai / language / nlp** | H1 | weak | 0.57 | 0.20 | 0.07 | 0.58 | SI-3 AI and Automated Decision Mak |
-| 8 | **copyright / page / economic right / exceptio** | H2 | strong | 0.88 | 0.07 | 0.07 | 0.76 | 4.1 Innovation and adaptiveness in |
-| 9 | **ai / adm / automated decision-making / accou** | H3 | strong | 0.53 | 0.18 | 0.12 | 0.77 | SI-3 AI and Automated Decision Mak |
-| 10 | **ipgod / ip right / government open / propert** | H1 | strong | 0.56 | 0.13 | 0.23 | 0.54 | 4.1 Innovation and adaptiveness in |
-| 11 | **trust / institution / public / driver** | H2 | strong | 0.74 | 0.19 | 0.04 | 0.54 | 1.1 Trust and confidence in a high |
-| 12 | **access medicine / medicine africa / law acce** | H1 | latent | 0.60 | 0.20 | 0.06 | 0.52 | 2.1 Access to and benefits from IP |
-| 13 | **patent law / artificial intelligence / futur** | H2 | strong | 0.66 | 0.08 | 0.07 | 0.70 | 4.2 Innovative digital and data-dr |
-| 14 | **genetic resource / benefit sharing / access ** | H1 | strong | 0.59 | 0.14 | 0.06 | 0.41 | 2.1 Access to and benefits from IP |
-| 15 | **prior art / patent / art search / retrieval** | H2 | strong | 0.63 | 0.07 | 0.09 | 0.68 | 4.1 Innovation and adaptiveness in |
+| 1 | **geographical indication / protection geograp** | H2 | strong | 0.88 | 0.31 | 0.06 | 0.74 | SI-1 Geographical indications regi |
+| 2 | **artificial intelligence / patent / inventors** | H1 | strong | 0.82 | 0.15 | 0.07 | 0.75 | 4.2 Innovative digital and data-dr |
+| 3 | **examination / artificial / intelligence / ec** | H2 | strong | 0.90 | 0.11 | 0.18 | 0.59 | SI-3 AI and Automated Decision Mak |
+| 4 | **adm / automated / decision-making / eu** | H2 | strong | 0.69 | 0.19 | 0.07 | 0.59 | SI-3 AI and Automated Decision Mak |
+| 5 | **trust / public institution / oecd / driver** | H2 | strong | 0.70 | 0.18 | 0.06 | 0.56 | 1.1 Trust and confidence in a high |
+| 6 | **decision making / automated decision / adm /** | H2 | strong | 0.51 | 0.34 | 0.17 | 0.52 | SI-3 AI and Automated Decision Mak |
+| 7 | **service delivery / government / local / publ** | H2 | strong | 0.73 | 0.14 | 0.05 | 0.77 | 4.2 Innovative digital and data-dr |
+| 8 | **genetic resource / benefit sharing / access ** | H1 | weak | 0.62 | 0.13 | 0.08 | 0.46 | 2.1 Access to and benefits from IP |
+| 9 | **trust / chapter / political / crisis** | H1 | weak | 0.65 | 0.21 | 0.05 | 0.33 | 1.1 Trust and confidence in a high |
+| 10 | **large language / emergent ability / ability ** | H1 | weak | 0.68 | 0.15 | 0.05 | 0.56 | SI-3 AI and Automated Decision Mak |
+| 11 | **prior art / patent / art search / retrieval** | H2 | strong | 0.76 | 0.07 | 0.09 | 0.72 | 4.1 Innovation and adaptiveness in |
+| 12 | **copyright / page / exception limitation / ec** | H2 | strong | 0.93 | 0.06 | 0.09 | 0.85 | 2.1 Access to and benefits from IP |
+| 13 | **intellectual property / property right / enf** | H1 | strong | 0.75 | 0.09 | 0.06 | 0.62 | SI-3 AI and Automated Decision Mak |
+| 14 | **digital / service delivery / public / govern** | H3 | strong | 0.48 | 0.24 | 0.07 | 0.82 | 4.2 Innovative digital and data-dr |
+| 15 | **llm / language / large / reasoning** | H1 | strong | 0.72 | 0.09 | 0.05 | 0.63 | SI-3 AI and Automated Decision Mak |
 
 Evidence cards: `data/outputs/2026-08-31/evidence/`
 
@@ -32,32 +32,32 @@ Evidence cards: `data/outputs/2026-08-31/evidence/`
 
 *Which emerging trends are on strategy?*
 
-Split at the median of each axis (strategic fit 0.06, emergence 0.49).
+Split at the median of each axis (strategic fit 0.08, emergence 0.49).
 
 | | low strategic fit | high strategic fit |
 |---|---|---|
-| **high emergence** | additive manufacturing / arc additive <br>dashboard / digital project / queensla<br>patent / prior art / examiner / invent<br>image / patent / retrieval / classific<br>heritage / cultural / intellectual / p<br>valuation / property / intellectual / <br>*+14 more* | artificial intelligence / patent / exa<br>decision making / automated decision /<br>trust / chapter / political / britain<br>indigenous / traditional knowledge / c<br>good governance / trust / citizen / pu<br>service delivery / local government / <br>*+25 more* |
-| **low emergence** | valuation / briefing / market / valuer<br>patent / classification / claim / tc<br>chinese / patent / chapter implementat<br>bp-net / malaria / quantum / llm<br>neural / network / classification / de<br>video / vmt / low-light / feature<br>*+25 more* | service delivery / digital / public se<br>ai / chatgpt / generative / content<br>fairness / algorithmic / machine learn<br>unregistered / registered design / des<br>ip / intellectual / property / right<br>ai / patent / invention / law<br>*+14 more* |
+| **high emergence** | prior art / patent / art search / retr<br>copyright / page / exception limitatio<br>patent / claim / novelty / prior art<br>dashboard / digital project / queensla<br>li / ul / nsw / opengov<br>intellectual / copyright / artificial <br>*+24 more* | geographical indication / protection g<br>artificial intelligence / patent / inv<br>examination / artificial / intelligenc<br>adm / automated / decision-making / eu<br>trust / public institution / oecd / dr<br>decision making / automated decision /<br>*+24 more* |
+| **low emergence** | cancer / tumor / t-cell / mutant<br>chinese / chapter implementation / pat<br>firm / vc / patent / innovation<br>image / patent / retrieval / face x-ra<br>distillation / aede / data-free / know<br>ai / kente / indigenous / health<br>*+24 more* | digital / service delivery / public / <br>trust / institution / political / publ<br>trade mark / geographical indication /<br>trust science / trust scientist / open<br>indigenous / traditional knowledge / t<br>quantum / photonic / dot / silicon<br>*+24 more* |
 
 ## View 2 — strategic fit × asset leverage
 
 *Of those, which could IP Australia credibly act on?* This is the view that separates an interesting trend from a viable venture.
 
-Split at the median of each axis (strategic fit 0.06, asset leverage 0.05).
+Split at the median of each axis (strategic fit 0.08, asset leverage 0.05).
 
 | | low strategic fit | high strategic fit |
 |---|---|---|
-| **high asset leverage** | additive manufacturing / arc additive <br>dashboard / digital project / queensla<br>patent / prior art / examiner / invent<br>image / patent / retrieval / classific<br>valuation / property / intellectual / <br>patent / examination / invention / reb<br>*+11 more* | artificial intelligence / patent / exa<br>decision making / automated decision /<br>trust / chapter / political / britain<br>indigenous / traditional knowledge / c<br>good governance / trust / citizen / pu<br>service delivery / local government / <br>*+28 more* |
-| **low asset leverage** | heritage / cultural / intellectual / p<br>patent / retrieval / idea generation /<br>patent portfolio / portfolio managemen<br>africa / kilometre km / square kilomet<br>ketupat / culture / acknowledgment / m<br>index / stop line / positioning / aide<br>*+28 more* | trust / institution / public / driver<br>geographical indication / gi / trade /<br>trust / institution / public / citizen<br>trust / financial / institution / icel<br>trade / agreement / free / eu<br>energy / storage / hydrogen / renewabl<br>*+11 more* |
+| **high asset leverage** | prior art / patent / art search / retr<br>copyright / page / exception limitatio<br>patent / claim / novelty / prior art<br>dashboard / digital project / queensla<br>li / ul / nsw / opengov<br>intellectual / copyright / artificial <br>*+20 more* | geographical indication / protection g<br>artificial intelligence / patent / inv<br>examination / artificial / intelligenc<br>adm / automated / decision-making / eu<br>trust / public institution / oecd / dr<br>decision making / automated decision /<br>*+28 more* |
+| **low asset leverage** | accountability / broadening intelligen<br>kilometre km / square kilometre / afri<br>australian marine / park / reef / acce<br>quantum / floquet / physic / gauge the<br>chatgpt / clinical / medical / languag<br>patent portfolio / portfolio managemen<br>*+28 more* | generative / ai / artificial intellige<br>energy storage / battery / renewable /<br>access medicine / medicine africa / la<br>quantum / many-body system / optical /<br>quantum / machine learning / adversari<br>synthetic biology / biological / cell <br>*+20 more* |
 
 ## Distribution
 
 | Three Horizons | Topics | | Signal class | Topics |
 |---|---:|---|---|---:|
-| H1 | 58 | | weak | 19 |
-| H2 | 35 | | strong | 35 |
-| H3 | 9 | | latent | 16 |
-|  |  | | noise | 32 |
+| H1 | 95 | | weak | 60 |
+| H2 | 19 | | strong | 60 |
+| H3 | 6 | | latent | 0 |
+|  |  | | noise | 0 |
 
 ## What happens next
 

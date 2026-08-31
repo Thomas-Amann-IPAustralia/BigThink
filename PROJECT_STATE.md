@@ -44,14 +44,15 @@ as a finding.
 | 5 — Synthesis | **Working; not yet read by a human** | Shortlist, 2×2 views, evidence cards, CSV, published HTML. **No one has read the `2026-08-31` evidence cards** — the check that caught both artefacts last time |
 | Notebook export | **Working, not yet reviewed by anyone** | `src/notebook.py`; written automatically after Stage 5. Re-derives emergence, horizon, index and composite rank from stored inputs |
 | Automation | **Fully exercised; scan.yml reworked 2026-08-31, not yet run under the new defaults** | `tests.yml` now has a second `ml` job covering the default BGE/BERTopic path, while the first job still installs `requirements.txt` only — which keeps "runs with no torch" a tested guarantee. `verify-access.yml` — **both credentials pass**. `scan.yml` installs the ML stack only when the resolved settings need it, caches the model, takes `embedding_backend`/`clustering_method` dispatch inputs, and its timeout is 300 min (issue 17) |
-| Tests | **277 (269 passing + 8 skipped without `requirements-ml.txt`)** | Offline by design — the BERTopic tests included, since BERTopic is handed embeddings and never loads a model. They skip without `requirements-ml.txt` and run in CI's `ml` job |
+| Tests | **298 (290 passing + 8 skipped without `requirements-ml.txt`)** | Offline by design — the BERTopic tests included, since BERTopic is handed embeddings and never loads a model. They skip without `requirements-ml.txt` and run in CI's `ml` job |
 
 **Current baseline — `2026-08-31`** (workflow run 33345343027, 164 min, from an
-empty database with all collection fixes live). **WARNING: this run's committed
-outputs no longer exist under that name.** `data/outputs/2026-08-31/` was
-overwritten three hours later by a smaller run sharing the id, and the published
-site shows that one — see issue 23. The figures below are from the 03:25 UTC run
-and are recoverable at `git show 2cdeefd:data/outputs/2026-08-31/`. **15,036 documents, 120 topics**,
+empty database with all collection fixes live). **Its outputs were overwritten and have
+been restored** — `data/outputs/2026-08-31/` held a different, smaller run for
+some hours (issue 23, now fixed). It again holds the 03:25 UTC run the figures
+below describe. The run that displaced it is kept at
+`data/outputs/2026-08-31T0648/`. **`docs/` still renders that other run** and
+will until the next scan rebuilds the site. **15,036 documents, 120 topics**,
 2018–2026. Stage 1 status `partial`, honestly: 7 failed and 9 partial
 source/frame pairs, all named in `collection_log`.
 
@@ -199,7 +200,7 @@ is quoted, the script that produced it is described well enough to re-run.
 
 ---
 
-### 21. The DISR critical-technology threshold is hardcoded, and under the shipped default it matches every topic — NEW 2026-08-31
+### 21. ~~The DISR critical-technology threshold is hardcoded, and under the shipped default it matches every topic~~ — FIXED 2026-08-31
 
 **`src/stage3_scoring.py:153`** — `match_critical_technology(..., threshold: float = 0.25)`.
 The only caller (line 261) passes no threshold, so 0.25 is what every run has
@@ -244,14 +245,38 @@ the shipped default, and this file says of it, in the calibration log: *"Read
 the evidence cards there before trusting the topics. Nobody has."* A 100% match
 rate is visible on the first card.
 
-**Fix shape.** Per-backend, in config, next to the thresholds that already work
-this way (`emergence.topics.similarity_thresholds`), because the quantity being
-compared has a different scale under each backend — the same argument this repo
-already accepted for clustering. The `hashing` value stays 0.25 so no past run
-changes. The `bge` value has to be measured, not guessed; see the questions at
-the end of this section.
+**FIXED 2026-08-31, per backend and in config**, next to the thresholds that
+already work this way, because the quantity being compared has a different scale
+under each backend — the same argument this repo already accepted for
+clustering.
 
-### 22. `cluster_agglomerative` is neither exact average linkage nor order-invariant — NEW 2026-08-31
+- `scoring.strategic_fit.critical_tech_match.thresholds.{hashing,bge}`, resolved
+  by `config.critical_tech_match_threshold` (beside `topic_similarity_threshold`,
+  which exists for the same reason). The blend weights, also hardcoded, moved to
+  `critical_tech_match.{embedding_weight,lexicon_weight}` and are validated
+  convex like every other blend here.
+- `hashing: 0.25` — unchanged, so no run collected under it moves.
+- **`bge:` is deliberately blank, and blank does not mean "use a default".**
+  Stage 3 then matches nothing, awards no bonus, logs one loud warning naming
+  the sweep, and writes "matching DISABLED" into its `pipeline_runs` message.
+  A flag that matches everything is worse than an absent one, because it is
+  printed on every evidence card as a policy designation. Reporting no match is
+  a smaller error than reporting a false one, and unlike a false one it is
+  visible.
+- The value cannot be guessed and was not: **`python -m src.calibrate
+  critical-tech` is new** and sweeps the cut-off against a real run, printing the
+  match rate and the number of distinct DISR fields hit at each candidate. It
+  scores through `stage3_scoring.critical_technology_scores`, the same function
+  the pipeline matches on, so the sweep cannot drift from what it calibrates.
+- A config snapshot with no `critical_tech_match` block at all resolves to the
+  historical 0.25, so an old run still reproduces as it actually ran.
+
+**Still open, and it is the next thing to do:** nobody has swept it. Until
+`thresholds.bge` is set from a real corpus, the shipped default produces no DISR
+matches at all and the `critical_tech_bonus` is inert. That is the honest
+position, not the finished one.
+
+### 22. ~~`cluster_agglomerative` is neither exact average linkage nor order-invariant~~ — FIXED 2026-08-31
 
 **`src/topics.py:215-218`.** The nearest-neighbour cache is correct in its
 premise and broken in one branch:
@@ -278,9 +303,10 @@ random 40x12 corpora of four latent groups at threshold 0.5:
 - **9 of 40 permutations of the same corpus produce different clusters** from
   each other.
 
-Replacing the two lines with the full row rescan the *other* stale branch
-already does (`row = np.where(active, sims[candidate], -inf); ...`) gives
-**0 of 30** disagreements and restores order-invariance.
+**FIXED 2026-08-31.** Both stale branches now call one `_refresh(cluster)`
+helper that rescans the row, so nothing can write a value below the row maximum
+into the cache. **0 of 30** disagreements with the exact reference afterwards,
+and order-invariance restored.
 
 **Why this matters more than a 10% error rate suggests.** Order-invariance is
 not a nice property of this method — it is the entire published argument for
@@ -311,7 +337,7 @@ ML stack runs, and what the 0.14 threshold in the calibration log was swept
 under. The sweep numbers in the 2026-08-30 calibration entry were produced by
 this code and inherit the same imprecision.
 
-### 23. The `2026-08-31` baseline in this file is not the run in `data/outputs/2026-08-31/` — NEW 2026-08-31
+### 23. ~~The `2026-08-31` baseline in this file is not the run in `data/outputs/2026-08-31/`~~ — FIXED 2026-08-31
 
 Issue 18 happened a second time, on the run this file calls the current
 baseline, and was not noticed.
@@ -345,12 +371,26 @@ repo.
 **Recoverable.** `git show 2cdeefd:data/outputs/2026-08-31/` has the whole
 directory — shortlist, evidence cards, `topics.csv`, `summary.json`, notebook.
 
-**Consequence while it stands.** Anyone following this file's own instruction —
+**Consequence while it stood.** Anyone following this file's own instruction —
 *"Open `data/outputs/<run_id>/shortlist.md` and read the top five evidence cards
-before looking at any score"* — reads a different run's cards than the one every
+before looking at any score"* — read a different run's cards than the one every
 number here refers to, with nothing saying so.
 
-### 24. Stage 1 loses a frame's collected documents when a source is retired — NEW 2026-08-31
+**FIXED 2026-08-31.** `data/outputs/2026-08-31/` is restored from `2cdeefd` and
+again holds the 03:25 run this file describes. The 06:48 run is **not**
+discarded: it is preserved at `data/outputs/2026-08-31T0648/` — the id it would
+have been given had `default_run_id()` been minute-resolution at the time —
+with a `README.md` explaining how it got there and that the two are not
+comparable.
+
+**One piece deliberately not fixed:** `docs/index.html`, `docs/latest.json` and
+`docs/dashboard.html` still render the 06:48 run under the label `2026-08-31`.
+Rebuilding them needs the DuckDB corpus, which is gitignored and not in a review
+environment, and hand-editing generated HTML to say something its numbers did
+not come from would be a worse problem than the one it solves. `scan.yml`
+rebuilds the site on every run, so the next scan corrects it.
+
+### 24. ~~Stage 1 loses a frame's collected documents when a source is retired~~ — FIXED 2026-08-31
 
 **`src/stage1_collect.py:169`.** `docs = list(collector.collect(...))` inside a
 `try` whose `except PermanentError` retires the source. `collect` is a
@@ -372,12 +412,16 @@ Same shape for `patentsview`, which raises `missing_credential_error` before its
 first yield (harmless there, since nothing has been yielded) and for any
 collector that hits a 403 mid-frame.
 
-**Fix shape.** Drain the generator incrementally so partial output survives the
-raise, then retire. Roughly: iterate with a `try` inside the loop, keep what was
-yielded, record the reason, and log `partial` rather than `skipped` when
-documents survived — which is the status vocabulary Stage 1 already has.
+**FIXED 2026-08-31.** `stage1_collect._drain` replaces `list()`: it pulls the
+generator by hand, keeps every document produced before the failure, and returns
+`(documents, (exception, kind))` where kind is permanent / retryable /
+unexpected. The caller retires the source exactly as before, but now logs
+`partial` with the surviving records and an incident naming the failure when
+anything survived, and `skipped` / `failed` with zero only when nothing did.
+Pinned by `test_a_permanent_error_mid_frame_keeps_the_documents_already_collected`,
+which also asserts that the old `list()` path loses them.
 
-### 25. `attention_tone` scores "no coverage" as "maximally negative coverage" — NEW 2026-08-31
+### 25. ~~`attention_tone` scores "no coverage" as "maximally negative coverage"~~ — FIXED 2026-08-31
 
 **`src/stage4_opportunity_index.py:197-198`** — `attention_tone` is `0.0` when a
 topic has no GDELT documents, and is then percentile-ranked against the topics
@@ -390,13 +434,19 @@ Under `forming_sources` GDELT never forms a topic and only attaches at
 all is therefore ranked below every topic with genuinely hostile coverage, on a
 component carrying **10% of the opportunity index**.
 
-**The repo already solves this correctly, one file over.**
+**The repo already solved this correctly, one file over.**
 `stage2_emergence.citation_percentiles` returns a neutral 0.5 for a source with
 no citation variation, with the comment: *"There is no impact signal here, so
 say so with a neutral 0.5 rather than a confident wrong answer."* That is the
-same problem and the right answer; Stage 4 gives the other one.
+same problem and the right answer; Stage 4 gave the other one.
 
-### 26. A documented guard that does not exist: `min_term_document_frequency` — NEW 2026-08-31
+**FIXED 2026-08-31.** A topic with no GDELT documents now takes
+`_NO_TONE_SIGNAL = 0.5`, the midpoint of the rescaled range. **This changes the
+opportunity index**, and therefore the value reported beside every topic —
+though not the composite rank, which excludes the index by design. See the
+calibration log entry below.
+
+### 26. ~~A documented guard that does not exist: `min_term_document_frequency`~~ — RESOLVED 2026-08-31 (removed, not implemented)
 
 `bigthink_config.yaml`, under `emergence.topics`:
 
@@ -417,12 +467,24 @@ against exactly the artefact class (a handful of near-identical documents
 becoming a topic) that produced the peer-review artefacts of issue 11.
 
 Related, smaller, same family: `storage.strategy_dir` is read by nothing, and
-`strategy.documents[].weight` (1.0 and 0.6) and `.label` are read by nothing —
-`load_strategy_corpus` concatenates the files and ignores both, so the annual
+`strategy.documents[].weight` (1.0 and 0.6) is read by nothing —
+`load_strategy_corpus` concatenates the files and ignores it, so the annual
 report is weighted equally with the corporate plan in policy salience despite
 the config saying 0.6.
 
-### 27. Stage 1 alone never records its own failure and never closes its connection — NEW 2026-08-31
+**RESOLVED 2026-08-31 by removing all three, not by implementing them.** Each
+would change a number: a term-document-frequency filter changes every topic in
+the run, and a per-document corpus weight changes every `policy_salience` score.
+Both belong behind a sweep and a calibration-log entry, not behind a quiet
+"finish the feature" commit — this project's own ordering rule is inputs before
+weights, and neither has been measured. What replaces them is a comment at each
+site saying the guard does not exist and what does: `label_topics` drops a term
+occurring fewer than twice within a topic, and `min_distinct_terms` drops a
+topic that cannot be described in three distinct terms.
+
+**No result changes.** Nothing read any of the three.
+
+### 27. ~~Stage 1 alone never records its own failure and never closes its connection~~ — FIXED 2026-08-31
 
 Every other stage wraps its body in `try / except / finally` and calls
 `log_stage_finish(conn, entry_id, "failed", ...)` before re-raising, then closes
@@ -439,7 +501,10 @@ The stuck row matters beyond tidiness: `pipeline_runs` is the observability
 surface this project relies on, and the notebook resolves a run's config from
 `ORDER BY id DESC LIMIT 1` over exactly this table.
 
-### 28. Every published HTML page is missing its document head — NEW 2026-08-31
+**FIXED 2026-08-31.** Split into `run` (log, try / except / finally, close) and
+`_run_inner`, matching every other stage exactly.
+
+### 28. ~~Every published HTML page is missing its document head~~ — FIXED 2026-08-31
 
 `docs/index.html`, `docs/dashboard.html` and `docs/signal-walkthrough-2026-08-30.html`
 each begin with `<title>` and go straight into `<style>`. There is no
@@ -458,20 +523,35 @@ Three consequences, in increasing order of how much they matter:
    `@media (max-width: 720px)` breakpoint that **can never fire**, so the
    responsive work already done in `report.py` and `dashboard.py` is inert.
 
-Generated by `report.py:116` and `dashboard.py:1037`; the walkthrough is
-hand-written and has the same gap.
+Generated by `report.py` and `dashboard.py`; the walkthrough is hand-written
+and has the same gap.
 
-### 29. `report.py`'s docstring describes output the module does not produce — NEW 2026-08-31
+**FIXED 2026-08-31** for both generators, via `config.PAGE_HEAD` / `PAGE_TAIL`
+so the two cannot drift, with each line's reason recorded there. Pinned by
+`test_every_published_page_declares_its_document_head` and
+`test_every_published_page_is_a_closed_document`, which render both pages from
+one fixture and assert doctype, charset, viewport and a closed document.
+
+`docs/*.html` on disk still lack it until the next scan regenerates them; the
+hand-written `docs/signal-walkthrough-2026-08-30.html` is not generated by
+anything and is fixed in place.
+
+### 29. ~~`report.py`'s docstring describes output the module does not produce~~ — FIXED 2026-08-31
 
 *"Renders docs/index.html: the ranked shortlist, both 2x2 views, and links to
-the evidence cards."* The page renders **one** 2x2 (fit x leverage; the
-fit x emergence view exists only in `shortlist.md`) and contains **no link to
-any evidence card** — only a footer naming the directory. Given that reading the
-evidence cards is the single check this project says finds artefacts, a
-docstring promising links that do not exist is worth correcting in one direction
-or the other.
+the evidence cards."* The page rendered **one** 2x2 (fit x leverage; the
+fit x emergence view exists only in `shortlist.md`) and contained **no link to
+any evidence card** — only a footer naming the directory.
 
-### 30. `CLAUDE.md` states an architectural rule the code does not follow — NEW 2026-08-31
+**FIXED 2026-08-31 in both directions**, because of the two the links were the
+half worth having: reading the evidence cards is the single check this project
+says finds artefacts, and the page should not make a reader go and find them.
+Every shortlisted row now links to its card on GitHub — at GitHub, not a
+relative path, because only `docs/` is served by Pages and the cards live under
+`data/outputs/`; the dashboard already linked them this way. The docstring now
+describes what is actually rendered.
+
+### 30. ~~`CLAUDE.md` states an architectural rule the code does not follow~~ — FIXED 2026-08-31
 
 > **Stages communicate only through DuckDB.** No stage passes Python objects to
 > another. [...] Do not add cross-stage function calls that bypass the database.
@@ -483,11 +563,15 @@ command list says *"prints only; does not persist"*), so there is nothing in the
 database for Stage 5 to read.
 
 The reason for the coupling is good and is stated at the call site — writing
-`topic_scores` in one transaction so a crash cannot leave it half-populated. The
-rule as written is simply false, and the next contributor will either believe it
-or quietly conclude the documentation is unreliable. Both are bad outcomes.
+`topic_scores` in one place so a crash cannot leave it half-populated. The rule
+as written was simply false, and the next contributor would either believe it or
+quietly conclude the documentation is unreliable. Both are bad outcomes.
 
-### 31. The vector cache and the model cache are each keyed on the wrong thing — NEW 2026-08-31
+**FIXED 2026-08-31 in `CLAUDE.md`**, by stating the exception and its reason
+rather than softening the rule: the rule still governs any stage you add, and
+the one place that breaks it says why at the call site.
+
+### 31. ~~The vector cache and the model cache are each keyed on the wrong thing~~ — FIXED 2026-08-31
 
 Two separate instances of the same mistake, in opposite directions.
 
@@ -507,7 +591,18 @@ config file, so editing `max_topics`, a threshold or even a comment throws away
 the 400 MB model cache and re-downloads it — inside the job whose run time is
 issue 17.
 
-### 32. Smaller things found in the same pass — NEW 2026-08-31
+**BOTH FIXED 2026-08-31.**
+
+- `Embedder.cache_key` is new and names the vector space, not the backend:
+  `hashing`, but `bge:BAAI/bge-base-en-v1.5`. `encode_with_cache` keys on it,
+  so changing `embeddings.bge_model` now misses cleanly instead of serving the
+  old model's vectors. **Cost: one re-embed of the stored corpus on the next
+  run** — ~10-15 minutes, already inside the timeout budget of issue 17 — since
+  every cached `bge` vector is under the old key.
+- `scan.yml` resolves the model name in its own step and keys the Actions cache
+  on `hf-<model name>`, which is what its comment always claimed.
+
+### 32. ~~Smaller things found in the same pass~~ — FIXED 2026-08-31
 
 None of these change a number. Recorded so they are not re-discovered.
 
@@ -549,6 +644,18 @@ None of these change a number. Recorded so they are not re-discovered.
   (269 passing + 8 skipped without `requirements-ml.txt`).
 - **`docs/method.md` does not mention the critical-technology match threshold at
   all**, only the bonus it gates. See issue 21.
+
+**ALL FIXED 2026-08-31**, none of them changing a score. Two are worth calling
+out because they were not cosmetic:
+
+- `calibrate._load_forming_corpus` and `report_attachment` now read through
+  `encode_with_cache`, so a sweep and the pipeline see **the same vectors**.
+  That removes the discrepancy issues 16 and 20 both work around rather than
+  continuing to explain it — the sweep no longer re-embeds at its own batch
+  size and lands ~3e-7 away from what the pipeline clustered.
+- Stage 4 issued one `fetch_topic_documents` query per topic; it now reads the
+  run's membership in a single `fetch_run_topic_documents` call and joins in
+  Python. Identical output, 120 fewer joins over the whole corpus.
 
 ### What the review did NOT find
 
@@ -1288,6 +1395,74 @@ not a replacement.
 
 Append to this. Every entry should say what changed, why, and what moved.
 
+### 2026-08-31 — review fixes: two numbers move, and one axis is switched off
+
+**What changed, and it is short on purpose.** The repository review (issues
+21-32) found three defects that change a result. Two are corrected here; the
+third was corrected by removing a wrong number rather than replacing it with a
+guessed one.
+
+**1. The DISR critical-technology match is OFF under the shipped default, on
+purpose.** The cut-off was a bare `0.25` in `stage3_scoring.py`, never in
+config, and under `bge` it matched 114 of 114 topics. It is now
+`scoring.strategic_fit.critical_tech_match.thresholds`, keyed per backend:
+`hashing: 0.25` (unchanged), `bge:` blank.
+
+Blank means *no topic is matched and no topic receives the +0.10
+`critical_tech_bonus`*, with a warning in the run log and "matching DISABLED" in
+`pipeline_runs`. That is a deliberate reduction in what the pipeline claims, not
+an oversight — the alternative was carrying a cut-off swept in a lexical vector
+space into a semantic one, which is what produced the 100% match rate.
+
+*What this moves.* On the shipped default, `critical_tech` becomes empty for
+every topic and strategic fit loses a **uniform** +0.10. Uniform, so under
+`percentile_rank` the ordering is unchanged — Stage 5 rank-normalises each axis
+before weighting. What changes is the reported fit level, and the disappearance
+of a column that was noise. Under `hashing` nothing at all changes.
+
+*Where the number comes from next.* `python -m src.calibrate critical-tech`,
+which is new, sweeps it against a real corpus and reports the match rate and
+distinct DISR fields hit at each candidate. **Nobody has run it** — the corpus
+is not in a review environment. Until someone does, this axis is off. The DISR
+list is seven fields over a broad horizon scan, so the answer to look for is a
+minority of topics matching, not 100% and not 0%.
+
+**2. A topic with no news coverage now scores neutral tone, not the worst
+possible tone.** `attention_tone` mapped an absent GDELT signal to 0.0, which on
+its own rescaled -10..+10 range is uniformly maximally negative coverage. It is
+now 0.5, the midpoint — the same answer `citation_percentiles` already gives for
+a source with no citation signal.
+
+*What this moves.* The opportunity index for every topic with no attached news,
+upward, on a component carrying 10% of it. GDELT forms no topics and only
+attaches at 0.6 x the clustering threshold, so on a research-heavy corpus this
+is a lot of topics. **It does not move the composite rank**, which excludes the
+index by design.
+
+**3. Average linkage now actually is average linkage.** `cluster_agglomerative`
+disagreed with an exact reference on 3 of 30 random corpora and was not
+order-invariant (9 of 40 permutations differed). Fixed.
+
+*What this moves.* Nothing in any current headline number — `bertopic` is the
+default and takes no part in this. It moves any future `agglomerative` run, and
+it means **the 0.14 threshold in the 2026-08-30 entry below was swept with the
+defective implementation**. Re-sweep before trusting it on a torch-less run.
+
+**Two numbers were deliberately NOT changed**, and both would have been easy:
+
+- **`min_docs_per_topic` still only warns** (issue 13). Gating it changes which
+  topics reach the shortlist, and this file has parked that behind issue 1
+  since it was found. It stays parked. What changed is that `CLAUDE.md` and
+  `burst.py` no longer describe the guard as though it exists.
+- **`min_term_document_frequency` was deleted, not implemented** (issue 26).
+  Same reasoning: it was never wired up, and wiring it up now would change every
+  topic in the run on the strength of a number nobody has swept.
+
+**Nothing here has been run end to end.** The corpus is gitignored and absent
+from the environment these fixes were made in, so every claim above about what
+moves is derived from the code, not measured on a run. The next scan is the
+measurement.
+
 ### 2026-08-31 — BGE embeddings and BERTopic clustering; both defaults changed
 
 **What changed.** `embeddings.backend` `hashing` → `bge`.
@@ -1774,8 +1949,8 @@ come out of the `2026-08-30` baseline and are both small:
    `python -m src.calibrate threshold --show-labels`. 0.14 was swept against
    2,987 OpenAlex-only documents; this corpus is 15,036 across five sources, and
    the topic cap is now binding (issue 16).
-4. `python -m pytest tests/ -q` — expect 277 (269 passing, 8 skipped without
-   `requirements-ml.txt`; all 277 pass with it). If not, start there.
+4. `python -m pytest tests/ -q` — expect 298 (290 passing, 8 skipped without
+   `requirements-ml.txt`; all 298 pass with it). If not, start there.
 5. Read `docs/method.md` if you have not; it is what the numbers mean.
 6. `python -m src.verify_access` — confirms the OpenAlex and R2 credentials
    still work before a run depends on them. Locally it needs the variables

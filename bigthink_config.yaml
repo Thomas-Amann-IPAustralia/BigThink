@@ -28,7 +28,6 @@ pipeline:
 storage:
   duckdb_path: "data/bigthink.duckdb"
   raw_dir: "data/raw"
-  strategy_dir: "data/strategy"
   outputs_dir: "data/outputs"
   # Raw payloads are large and reproducible; they are gitignored by default.
   # Set to true only if you have Cloudflare R2 (or similar) configured.
@@ -84,13 +83,19 @@ embeddings:
 # -----------------------------------------------------------------------------
 strategy:
   # Documents parsed into the strategic reference set. Paths are repo-relative.
+  #
+  # Read as ONE FLAT CONCATENATION by `stage0_strategy.load_strategy_corpus`,
+  # which is all Stage 4's policy-salience term count needs. There is no
+  # per-document weighting: a `weight:` key sat here until 2026-08-31 (1.0 and
+  # 0.6) and was read by nothing, so the annual report has always counted
+  # equally with the corporate plan. Removed rather than implemented, because
+  # implementing it would change every policy_salience score and belongs in the
+  # calibration log. PROJECT_STATE.md issue 26.
   documents:
     - path: "StrategicCorporatePlan26-27.md"
       label: "IP Australia Strategic Corporate Plan 2026-27"
-      weight: 1.0
     - path: "IPA-Annual-Report-2025.md"
       label: "IP Australia Annual Report 2024-25"
-      weight: 0.6
   # Hand-curated from the Corporate Plan's "Strategic objectives" section.
   # Refresh yearly when the plan is republished.
   objectives_file: "data/strategy/objectives.yaml"
@@ -149,8 +154,15 @@ collection:
       # downstream as an explosion of activity rather than as a sampling
       # artefact. Per-year quotas cost more requests and are the only way this
       # source can support a growth curve.
-      max_results_per_query: 270      # spread across the scan window
-      max_results_per_year: 30        # explicit per-year quota; overrides the split
+      # NOTE the arithmetic: when `max_results_per_year` is set it decides the
+      # total (30 x 9 years = 270 here), and `max_results_per_query` is only the
+      # fallback the split is computed from when it is blank. A per-year floor
+      # of 25 also applies (`_MIN_PER_YEAR` in the collector), because a year
+      # returning a handful of papers is the low end of a growth curve and is
+      # information too — so widening the window raises the real total above
+      # `max_results_per_query` rather than thinning each year.
+      max_results_per_query: 270      # fallback total, split across the window
+      max_results_per_year: 30        # explicit per-year quota; this is what binds
       # arXiv asks for >=3 s between requests. Honour it — but treat it as a
       # floor rather than the real limit. The 2026-08-31 run took 28 HTTP 429s
       # at this delay from a shared Actions IP and lost six of nine frames.
@@ -428,9 +440,17 @@ emergence:
     # described in three distinct terms is not a theme.
     min_distinct_terms: 3
     max_topics: 120
-    # Terms appearing in fewer than this many documents are dropped before
-    # topic formation, so single-paper coinages cannot become "topics".
-    min_term_document_frequency: 5
+    # NOTE, since this is the obvious place to look for it: there is no
+    # corpus-wide term document-frequency filter before topic formation. A key
+    # named `min_term_document_frequency: 5` sat here until 2026-08-31,
+    # complete with a rationale about single-paper coinages, and nothing has
+    # ever read it (PROJECT_STATE.md issue 26). It was removed rather than
+    # implemented, because implementing it would change every topic in the run
+    # and belongs behind a sweep of its own.
+    #
+    # What does exist: `label_topics` drops any term occurring fewer than twice
+    # WITHIN a topic, and `min_distinct_terms` above drops a topic that cannot
+    # be described in three distinct terms.
 
   # --- Rotolo, Hicks & Martin (2015) five attributes of emergence ---
   # Each maps to one computable indicator. Weights sum to 1.0; they are a
@@ -469,6 +489,51 @@ scoring:
     lexicon_weight: 0.3
     # Bonus applied when a topic maps to a DISR critical-technology field.
     critical_tech_bonus: 0.10
+
+    # --- Matching a topic to a DISR critical-technology field ---------------
+    # The DISR list is a policy designation: a topic either falls in a
+    # national-interest field or it does not. So this is a binary test with a
+    # cut-off, not a continuous score — and the cut-off has to be per backend,
+    # for exactly the reason emergence.topics.similarity_thresholds is
+    # (src/config.py:topic_similarity_threshold). The blend below is a cosine,
+    # and a cosine means a different thing under each backend.
+    #
+    # This lived as a bare `threshold: float = 0.25` default in
+    # src/stage3_scoring.py until 2026-08-31 and was never read from anywhere.
+    # Measured across the three committed runs:
+    #
+    #   run              backend + method            topics with a DISR field
+    #   2026-08-30       hashing + leader              0 of  15   (0%)
+    #   2026-08-31       hashing + agglomerative       6 of 102   (6%)
+    #   verify-bertopic  bge + bertopic  <- default  114 of 114 (100%)
+    #
+    # BGE cosines have a high floor — two unrelated pieces of text still score
+    # ~0.35-0.5 — so 0.7 x 0.45 clears 0.25 for essentially any topic against
+    # some field. Under the shipped default the flag had stopped discriminating
+    # entirely and every topic collected the bonus above. See PROJECT_STATE.md
+    # issue 21.
+    critical_tech_match:
+      # Weights of the blend the cut-off applies to. Convex, like every other
+      # blend here.
+      embedding_weight: 0.7
+      lexicon_weight: 0.3
+      thresholds:
+        # Unchanged, so no run collected under `hashing` moves.
+        hashing: 0.25
+        # DELIBERATELY BLANK — never swept. Blank does not mean "use a
+        # default": Stage 3 awards no bonus and reports no DISR field at all
+        # under a backend with no measured cut-off, and says so once per run.
+        # A flag that matches everything is worse than an absent one, because
+        # it is printed on every evidence card as a policy designation.
+        #
+        #   python -m src.calibrate critical-tech
+        #
+        # sweeps it against a real corpus and prints the match rate at each
+        # candidate. Aim for a rate that discriminates — the DISR list is seven
+        # fields over a whole horizon scan, so a plausible answer is a minority
+        # of topics, not 100% and not 0%. Record whatever you choose, and why,
+        # in PROJECT_STATE.md.
+        bge:
   asset_leverage:
     # Overlap between a topic and IP Australia's own data/capability inventory.
     inventory_file: "data/strategy/asset_inventory.yaml"

@@ -34,7 +34,6 @@ import argparse
 import hashlib
 import json
 import logging
-import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -44,22 +43,18 @@ import numpy as np
 
 from src import db
 from src.collectors.base import document_text
-from src.config import REPO_ROOT, get, load_config, resolve_path
+from src.config import (
+    PAGE_HEAD,
+    PAGE_TAIL,
+    REPO_ROOT,
+    get,
+    load_config,
+    repo_url as _repo_url,
+    resolve_path,
+)
 from src.embeddings import build_embedder, encode_with_cache
 
 logger = logging.getLogger(__name__)
-
-_GITHUB_URL_RE = re.compile(r"https://github\.com/[^\s)]+")
-_DEFAULT_REPO_URL = "https://github.com/Thomas-Amann-IPAustralia/BigThink"
-
-
-def _repo_url(config: dict[str, Any]) -> str:
-    """Pull the repo URL out of the configured user-agent rather than adding
-    a second place to name it."""
-    user_agent = str(get(config, "pipeline", "user_agent", default="") or "")
-    match = _GITHUB_URL_RE.search(user_agent)
-    return match.group(0).rstrip(")") if match else _DEFAULT_REPO_URL
-
 
 def _round(value: Any, places: int = 4) -> float | None:
     try:
@@ -1034,8 +1029,11 @@ def render_html(data: dict[str, Any]) -> str:
     parts: list[str] = []
     add = parts.append
 
+    add(PAGE_HEAD)
     add("<title>IPAVentures horizon scan — explorer</title>")
     add(f"<style>{_CSS}</style>")
+    add("</head>")
+    add("<body>")
     add('<header class="top">')
     add("<h1>IPAVentures horizon scan — explorer</h1>")
     add(f'<span class="meta">run <code>{run_id}</code> · {stats}</span>')
@@ -1115,6 +1113,7 @@ def render_html(data: dict[str, Any]) -> str:
 
     add(f"<script>window.__DASHBOARD_DATA__ = {_escape_for_script(data)};</script>")
     add(f"<script>{_JS}</script>")
+    add(PAGE_TAIL)
     return "\n".join(parts)
 
 

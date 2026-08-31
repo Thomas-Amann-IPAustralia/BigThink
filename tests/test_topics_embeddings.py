@@ -209,6 +209,122 @@ def test_average_linkage_is_order_invariant():
     assert as_sets == remapped
 
 
+def _exact_average_linkage(vectors, threshold, min_topic_size):
+    """Naive O(n^3) average linkage — the definition, not an optimisation of it.
+
+    Deliberately slow and obviously correct: recompute every cluster pair's mean
+    pairwise similarity from its members on every step, merge the best, stop
+    below the threshold. `cluster_agglomerative` uses a Lance-Williams update and
+    a nearest-neighbour cache to get the same answer in O(n^2), and this is what
+    "the same answer" is checked against.
+    """
+    import numpy as np
+
+    v = np.asarray(vectors, dtype=np.float64)
+    live = np.flatnonzero(np.any(v, axis=1))
+    v = v[live]
+    sims = v @ v.T
+    clusters = {i: [i] for i in range(len(v))}
+
+    while len(clusters) > 1:
+        best, pair = -np.inf, None
+        keys = sorted(clusters)
+        for position, a in enumerate(keys):
+            for b in keys[position + 1:]:
+                score = float(np.mean(sims[np.ix_(clusters[a], clusters[b])]))
+                if score > best:
+                    best, pair = score, (a, b)
+        if pair is None or best < threshold:
+            break
+        a, b = pair
+        clusters[a].extend(clusters[b])
+        del clusters[b]
+
+    return sorted(
+        (sorted(int(live[i]) for i in members) for members in clusters.values()
+         if len(members) >= min_topic_size),
+        key=lambda m: (-len(m), m[0]),
+    )
+
+
+def test_average_linkage_matches_an_exact_reference():
+    """`cluster_agglomerative` must agree with the definition of average linkage.
+
+    The optimised implementation caches each cluster's nearest neighbour and
+    relies on that cache being an UPPER BOUND on the row maximum — merging can
+    only lower a similarity, so a stale value is safe and revalidating the
+    winner before merging keeps the choice exact. Writing a *specific* pair's
+    similarity back into the cache breaks the bound, and the argmax then picks
+    the wrong cluster to merge. That was the state of the code until
+    2026-08-31 (PROJECT_STATE.md issue 22).
+
+    Overlapping groups and a small `min_topic_size`, because that is where the
+    divergence lived: `test_average_linkage_is_order_invariant` below uses
+    well-separated blobs and discards the boundary members, and passed
+    throughout.
+    """
+    import numpy as np
+
+    from src.topics import cluster_agglomerative
+
+    rng = np.random.default_rng(0)
+    disagreements = []
+    for trial in range(20):
+        centres = rng.normal(size=(4, 12))
+        vectors = np.vstack(
+            [centres[i % 4] + 0.7 * rng.normal(size=12) for i in range(40)]
+        )
+        vectors /= np.linalg.norm(vectors, axis=1, keepdims=True)
+
+        got = sorted(
+            (sorted(t.member_indices)
+             for t in cluster_agglomerative(
+                 vectors, threshold=0.5, min_topic_size=2, max_topics=100)),
+            key=lambda m: (-len(m), m[0]),
+        )
+        want = _exact_average_linkage(vectors, 0.5, 2)
+        if got != want:
+            disagreements.append(
+                f"trial {trial}: got {[len(m) for m in got]}, exact {[len(m) for m in want]}"
+            )
+
+    assert not disagreements, (
+        "cluster_agglomerative diverged from exact average linkage:\n  "
+        + "\n  ".join(disagreements)
+    )
+
+
+def test_average_linkage_is_order_invariant_on_overlapping_groups():
+    """Order-invariance, tested where it can actually fail.
+
+    The blob test below cannot catch a broken merge order because its groups do
+    not touch. These do: before the 2026-08-31 cache fix, 9 of 40 permutations
+    of a corpus like this clustered differently from each other.
+    """
+    import numpy as np
+
+    from src.topics import cluster_agglomerative
+
+    rng = np.random.default_rng(1)
+    for _ in range(10):
+        centres = rng.normal(size=(5, 12))
+        vectors = np.vstack(
+            [centres[i % 5] + 0.75 * rng.normal(size=12) for i in range(60)]
+        )
+        vectors /= np.linalg.norm(vectors, axis=1, keepdims=True)
+        order = rng.permutation(len(vectors))
+
+        first = cluster_agglomerative(
+            vectors, threshold=0.5, min_topic_size=2, max_topics=100
+        )
+        shuffled = cluster_agglomerative(
+            vectors[order], threshold=0.5, min_topic_size=2, max_topics=100
+        )
+        assert {frozenset(t.member_indices) for t in first} == {
+            frozenset(int(order[i]) for i in t.member_indices) for t in shuffled
+        }
+
+
 def test_documents_below_the_threshold_are_left_unassigned():
     """Forcing an unassignable document into its nearest topic corrupts that
     topic's centroid, which is how a catch-all starts."""
@@ -420,3 +536,33 @@ def test_bertopic_params_carry_every_hyperparameter_into_the_log():
                      "metric=", "min_cluster_size=9", "min_samples=",
                      "cluster_selection_method="):
         assert expected in described, f"{expected} missing from {described!r}"
+
+
+# --- the vector cache must name the vector space, not the backend ---------
+
+
+def test_the_vector_cache_key_names_the_model_not_just_the_backend():
+    """Two sentence-transformers models are two vector spaces.
+
+    Keying on the backend name alone meant changing `embeddings.bge_model`
+    served back vectors from the previous model for every document already
+    cached — silently mixing vector spaces, which is the one thing the cache
+    exists to prevent. PROJECT_STATE.md issue 31.
+    """
+    from src.embeddings import HashingEmbedder, content_hash
+
+    # The cheap backend has exactly one vector space, so its key is its name.
+    assert HashingEmbedder().cache_key == "hashing"
+
+    # BGE's key has to carry the model. Constructed without importing torch.
+    class _FakeBGE:
+        name = "bge"
+        model_name = "BAAI/bge-base-en-v1.5"
+        cache_key = property(lambda self: f"{self.name}:{self.model_name}")
+
+    from src.embeddings import BGEEmbedder
+
+    assert BGEEmbedder.cache_key.fget(_FakeBGE()) == "bge:BAAI/bge-base-en-v1.5"
+
+    # And the key must actually reach the hash, or none of the above matters.
+    assert content_hash("x", "bge:model-a") != content_hash("x", "bge:model-b")

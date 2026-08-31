@@ -40,8 +40,16 @@ Two aggravating factors, both now gone by construction:
 Average linkage compares a candidate against the *mean pairwise similarity* to
 a cluster's members rather than against its centroid, so a bloated cluster
 becomes progressively harder to join instead of easier. It is also
-order-invariant, so the seeding bias cannot exist — pinned by
-`test_average_linkage_is_order_invariant`.
+order-invariant, so the seeding bias cannot exist.
+
+Both properties are pinned by tests, and both had to be: until 2026-08-31 the
+nearest-neighbour cache in `cluster_agglomerative` broke its own upper-bound
+invariant and the implementation was neither exact nor order-invariant, while
+`test_average_linkage_is_order_invariant` passed throughout because its four
+synthetic blobs are separated far enough that no boundary case arises.
+`test_average_linkage_matches_an_exact_reference` now checks the result against
+a naive O(n^3) average linkage on overlapping groups, which is where the
+divergence lived. See PROJECT_STATE.md issue 22.
 
 WHY BERTOPIC IS NOW THE DEFAULT (decided 2026-08-31)
 
@@ -192,11 +200,32 @@ def cluster_agglomerative(
     members: list[list[int]] = [[i] for i in range(len(live))]
 
     # Nearest-neighbour cache. Merging can only lower a similarity (the merged
-    # value is a weighted mean of the two), so a cached value is an upper
-    # bound: revalidating the current maximum before acting on it is enough to
-    # keep the choice exact.
+    # value is a weighted mean of the two), so a cached value is an UPPER BOUND
+    # on that cluster's true best remaining pair. That bound is what makes the
+    # global argmax over `nn_sim` safe: revalidating the winner before acting
+    # on it is enough to keep the choice exact.
+    #
+    # The bound is load-bearing and easy to break. Every path that lowers a
+    # cached value must rescan the whole row (`_refresh` below) rather than
+    # writing in the similarity to one particular neighbour: that neighbour may
+    # no longer be the best one, and a cache holding a value BELOW the row
+    # maximum makes the argmax pick some other cluster and merge a worse pair.
+    #
+    # This was a real defect until 2026-08-31, and it cost both properties this
+    # method was chosen for. Measured against an exact O(n^3) average-linkage
+    # reference: 3 of 30 random corpora clustered differently, and 9 of 40
+    # permutations of one corpus disagreed with each other — so the method was
+    # not order-invariant either. See PROJECT_STATE.md issue 22 and
+    # `test_average_linkage_matches_an_exact_reference`.
     nn_sim = sims.max(axis=1)
     nn_idx = sims.argmax(axis=1)
+
+    def _refresh(cluster: int) -> None:
+        """Recompute cluster's nearest active neighbour, restoring the bound."""
+        row = np.where(active, sims[cluster], -np.inf)
+        row[cluster] = -np.inf
+        nn_idx[cluster] = int(np.argmax(row))
+        nn_sim[cluster] = row[nn_idx[cluster]]
 
     while True:
         candidate = int(np.argmax(np.where(active, nn_sim, -np.inf)))
@@ -206,15 +235,12 @@ def cluster_agglomerative(
 
         other = int(nn_idx[candidate])
         if not active[other]:
-            row = np.where(active, sims[candidate], -np.inf)
-            row[candidate] = -np.inf
-            nn_idx[candidate] = int(np.argmax(row))
-            nn_sim[candidate] = row[nn_idx[candidate]]
+            _refresh(candidate)
             continue
 
         fresh = float(sims[candidate, other])
         if fresh < best - 1e-9:
-            nn_sim[candidate] = fresh
+            _refresh(candidate)
             continue
 
         a, b = (candidate, other) if candidate < other else (other, candidate)
