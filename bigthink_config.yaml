@@ -61,9 +61,19 @@ embeddings:
   #              environment without torch.
   #   bge      — BAAI/bge-base-en-v1.5 sentence-transformers, the same model
   #              Tripwire uses at Stage 5. Better quality; ~400 MB download.
-  # Start on `hashing` to get the pipeline shaped, switch to `bge` before you
-  # trust the strategic-fit numbers.
-  backend: "hashing"
+  # `bge` since 2026-08-31. `hashing` matches vocabulary, not meaning, which is
+  # why the asset-leverage axis spanned only 0.03-0.10 across all 15 shortlisted
+  # topics on the 2026-08-30 run (PROJECT_STATE issue 2): a topic's 30 terms and
+  # a 60-word asset description share few exact tokens, so the cosine was near
+  # zero and only the lexicon match carried any signal.
+  #
+  # `hashing` remains fully supported and is what the tests and any
+  # torch-less environment run on. Note the two are NOT interchangeable
+  # mid-project: cosines from `hashing` are lexical-overlap-ish, cosines from
+  # BGE are semantic, and no threshold calibrated on one transfers to the
+  # other. `backend` is part of the vector cache key, so switching invalidates
+  # the cache rather than silently mixing two vector spaces.
+  backend: "bge"
   bge_model: "BAAI/bge-base-en-v1.5"
   hashing_dimensions: 2048
   # Cache computed vectors in DuckDB so re-runs do not re-embed a stable corpus.
@@ -251,12 +261,22 @@ emergence:
     # afterwards, so they count toward attention and the time series without
     # having distorted the topic that they are being counted against.
     forming_sources: ["openalex", "crossref", "arxiv", "datagovau", "patentsview"]
+    # `bertopic` is BERTopic over a seeded UMAP + HDBSCAN pair, and the default
+    # since 2026-08-31. It needs requirements-ml.txt; without those installed
+    # Stage 2 says so and names `agglomerative` as the fallback.
+    #
     # `agglomerative` is true average-linkage clustering: no heavy deps,
-    # deterministic, and order-invariant. `leader` is the pre-2026-08-30
-    # sequential nearest-centroid method, kept only to reproduce old runs — it
-    # builds a mega-cluster by construction (see src/topics.py). Switch to
-    # `bertopic` once you install requirements-ml.txt.
-    method: "agglomerative"
+    # deterministic, order-invariant, and the right choice on a machine with no
+    # torch. `leader` is the pre-2026-08-30 sequential nearest-centroid method,
+    # kept only to reproduce old runs — it builds a mega-cluster by
+    # construction (see src/topics.py).
+    #
+    # The old default was `agglomerative`, argued for on week-over-week
+    # comparability. That trade was reversed deliberately: a single scan should
+    # be as accurate on its own as it can be, and its value as a reference
+    # point for a later run is secondary. See src/topics.py and the 2026-08-31
+    # calibration log entry.
+    method: "bertopic"
     # A cosine threshold depends on BOTH the backend and the method, because
     # each names a different quantity.
     #
@@ -273,7 +293,50 @@ emergence:
     # mean pairwise cosine 0.075, 99th percentile 0.191. At the leader value of
     # 0.30, average linkage assigned 23 of 2,987 documents. Carrying one number
     # across methods is the same error as carrying one across backends.
+    # --- BERTopic hyperparameters ---
+    # Every number that decides a BERTopic result, in one place, so it travels
+    # into pipeline_runs.config_snapshot with the run. A hyperparameter left to
+    # a library default is one nobody wrote down and nobody can argue with.
+    #
+    # Swept on the 5,184-document forming corpus of the 2026-08-30 baseline
+    # under `bge`; see the 2026-08-31 calibration log entry in PROJECT_STATE.md
+    # for the numbers and `python -m src.calibrate bertopic` to re-run it.
+    bertopic:
+      # THE SEED. UMAP's initialisation is stochastic, so without this two runs
+      # over an identical corpus disagree about what the topics are — and a
+      # number nobody can reproduce is a number nobody should believe. Seeding
+      # forces UMAP single-threaded (hence the "n_jobs overridden to 1"
+      # warning), which is the price of a checkable result.
+      #
+      # 42 is the swept choice, not a library default left in place: seeds
+      # 0, 1, 7, 42 and 1234 were compared on the corpus above and 42 is
+      # recorded here because it was chosen, not because it was first.
+      random_state: 42
+      # UMAP: the manifold HDBSCAN then clusters in.
+      n_neighbors: 15        # local vs global structure
+      n_components: 5        # dimensions to reduce to before clustering
+      min_dist: 0.0          # pack points tightly — density clustering wants it
+      metric: "cosine"       # embeddings are L2-normalised
+      # HDBSCAN: the clusters themselves. min_cluster_size is left blank so it
+      # follows min_topic_size below; they are the same question asked twice,
+      # and letting them drift means HDBSCAN forms clusters the pipeline then
+      # discards.
+      min_cluster_size:      # blank -> min_topic_size
+      min_samples:           # blank -> HDBSCAN uses min_cluster_size
+      cluster_selection_method: "eom"
     similarity_thresholds:
+      # Under `bertopic` this threshold does NOT decide the clustering —
+      # HDBSCAN works on density in UMAP space and takes no cosine cut-off. It
+      # is still read, for one thing: attaching documents from non-forming
+      # sources (GDELT) to the nearest finished topic, at
+      # `attachment_threshold_ratio` of the value below. So it sets what counts
+      # as "this news article is about that topic", nothing more.
+      bertopic:
+        # PENDING MEASUREMENT — see the 2026-08-31 calibration log entry.
+        bge: 0.75
+        # For a bertopic run on the cheap backend — supported, but the scale is
+        # lexical, so it is a different number entirely.
+        hashing: 0.30
       agglomerative:
         # 0.14 from a sweep over those 2,987 documents: 61 topics, 56% of the
         # corpus assigned, largest cluster 10% of everything assigned, and

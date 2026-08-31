@@ -149,25 +149,64 @@ they express priority without changing what the score *means*.
 
 ---
 
-## Step 3 — Switch to real embeddings before you trust the fit scores
+## Step 3 — Real embeddings and BERTopic (already the default)
+
+Both switches were made on 2026-08-31; this step is here for the machine that
+does not have them, and for what to do after changing either.
 
 The `hashing` backend matches vocabulary. It does not know that "automated
 decision making" and "algorithmic administrative decisions" are the same thing,
-and strategic fit is exactly where that matters.
+and strategic fit is exactly where that matters. `bge` is the shipped default,
+along with `bertopic` clustering:
 
 ```bash
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements-ml.txt
 ```
 
-```yaml
-embeddings:
-  backend: "bge"
+Without those installed, run the cheap pairing explicitly rather than
+discovering the ImportError at Stage 2:
+
+```bash
+python -m src.pipeline --embedding-backend hashing --clustering-method agglomerative
 ```
 
-Then re-run **and re-do Step 0**. The cache is keyed on backend, so vectors are
-recomputed rather than mixed — but every threshold needs revisiting, because
-the whole similarity scale has changed.
+**After changing either, re-do Step 0.** The vector cache is keyed on backend,
+so vectors are recomputed rather than mixed — but every threshold needs
+revisiting, because the whole similarity scale has changed.
+
+### Sweeping BERTopic
+
+HDBSCAN takes no cosine cut-off, so under `bertopic` the Step 0 threshold sweep
+does not apply to clustering. Two different sweeps replace it:
+
+```bash
+python -m src.calibrate bertopic --show-labels   # seeds and n_neighbors
+python -m src.calibrate attachment               # the attachment threshold
+```
+
+Read the two halves of the `bertopic` output differently:
+
+- **`n_neighbors`** genuinely decides what the topics are — it sets how much
+  local versus global structure UMAP keeps. Choose it from the topic count, the
+  assigned share, the size of the largest cluster, and the labels.
+- **The seed spread is a diagnostic, not a leaderboard.** Every seed is equally
+  defensible in advance, so a parameter set whose output swings between seeds is
+  one whose topics are an artefact of the initialisation rather than of the
+  corpus. Small spread is the result you want; then pick a seed and write it
+  down. Never pick the seed that produced the prettiest shortlist — that is
+  fitting the instrument to the answer.
+
+`python -m src.calibrate attachment` sets
+`similarity_thresholds.bertopic.<backend>`, which under `bertopic` is used for
+one thing only: attaching GDELT documents to the nearest finished topic. Aim to
+attach most of the attention corpus without attaching all of it — at 100% it
+has stopped discriminating, and near 0% the Stage 4 attention component is
+empty.
+
+**Record the seed you chose in `emergence.topics.bertopic.random_state`, and
+why, in `PROJECT_STATE.md`.** A run whose seed is not recorded cannot be
+reproduced; a seed recorded without its sweep cannot be argued with.
 
 ---
 

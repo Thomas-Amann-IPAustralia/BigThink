@@ -219,6 +219,13 @@ def test_running_stage_two_twice_against_one_database_does_not_collide(tmp_path)
     """
     config = load_config()
     config["storage"]["duckdb_path"] = str(tmp_path / "fixture.duckdb")
+    # Pinned, not inherited. The shipped config runs `bge` + `bertopic`, which
+    # would download a ~400 MB model and need torch — and the suite is offline
+    # by design, so CI never depends on a third-party service being up. Pinning
+    # also keeps this test testing what it says it tests: a default that
+    # changes underneath it would silently change what is being exercised.
+    config["embeddings"]["backend"] = "hashing"
+    config["emergence"]["topics"]["method"] = "agglomerative"
 
     texts = (
         ["Quantum error correction with surface codes for fault tolerant qubits"] * 10

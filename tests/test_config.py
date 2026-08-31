@@ -97,6 +97,7 @@ def test_similarity_threshold_follows_the_active_backend():
     the wrong one produces either one giant topic or none, and both look like
     data problems rather than config ones."""
     config = load_config()
+    config["emergence"]["topics"]["method"] = "agglomerative"
     config["embeddings"]["backend"] = "hashing"
     hashing = topic_similarity_threshold(config)
     config["embeddings"]["backend"] = "bge"
@@ -104,7 +105,12 @@ def test_similarity_threshold_follows_the_active_backend():
 
 
 def test_missing_threshold_for_active_backend_raises():
+    # Method and backend are pinned rather than inherited: this test is about
+    # the pairing `agglomerative`+`hashing`, and the shipped defaults have
+    # moved before (to `bertopic`+`bge` on 2026-08-31) and will again.
     config = load_config()
+    config["emergence"]["topics"]["method"] = "agglomerative"
+    config["embeddings"]["backend"] = "hashing"
     del config["emergence"]["topics"]["similarity_thresholds"]["agglomerative"]["hashing"]
     with pytest.raises(ConfigError, match="No emergence.topics"):
         topic_similarity_threshold(config)
@@ -124,6 +130,9 @@ def test_the_threshold_depends_on_the_method_as_well_as_the_backend():
 def test_the_pre_2026_08_30_threshold_shape_is_still_honoured():
     """Old runs must stay reproducible from their own config snapshot."""
     config = load_config()
+    # The legacy shape is keyed by backend alone, from when `leader` was the
+    # only method. `hashing` was the backend of every run that used it.
+    config["embeddings"]["backend"] = "hashing"
     del config["emergence"]["topics"]["similarity_thresholds"]
     config["emergence"]["topics"]["similarity_threshold_by_backend"] = {"hashing": 0.30}
     assert topic_similarity_threshold(config) == 0.30
@@ -158,3 +167,88 @@ def test_r2_jurisdiction_is_optional():
     from src.config import _validate_storage
 
     _validate_storage({"r2": {"enabled": True, "bucket": "b"}})
+
+
+# --- BERTopic hyperparameters ---------------------------------------------
+# `bertopic` is the default clustering method since 2026-08-31, and its seed is
+# the difference between a reproducible topic set and one nobody can check.
+
+
+def test_the_shipped_config_records_a_bertopic_seed():
+    """An unrecorded seed makes every BERTopic run unreproducible."""
+    seed = load_config()["emergence"]["topics"]["bertopic"]["random_state"]
+    assert isinstance(seed, int) and not isinstance(seed, bool)
+
+
+@pytest.mark.parametrize("seed", [None, "42", 1.5, -1, True])
+def test_a_missing_or_non_integer_bertopic_seed_is_refused(seed):
+    config = load_config()
+    config["emergence"]["topics"]["bertopic"]["random_state"] = seed
+    with pytest.raises(ConfigError, match="random_state"):
+        _validate(config)
+
+
+@pytest.mark.parametrize(
+    "key,bad",
+    [("n_neighbors", 1), ("n_components", 0), ("min_cluster_size", 1), ("min_samples", 0)],
+)
+def test_out_of_range_bertopic_integers_are_refused(key, bad):
+    config = load_config()
+    config["emergence"]["topics"]["bertopic"][key] = bad
+    with pytest.raises(ConfigError, match=key):
+        _validate(config)
+
+
+def test_blank_bertopic_integers_are_allowed_and_mean_follow_the_default():
+    """min_cluster_size follows min_topic_size; min_samples follows HDBSCAN."""
+    config = load_config()
+    config["emergence"]["topics"]["bertopic"]["min_cluster_size"] = None
+    config["emergence"]["topics"]["bertopic"]["min_samples"] = None
+    _validate(config)  # must not raise
+
+
+def test_an_unknown_cluster_selection_method_is_refused():
+    config = load_config()
+    config["emergence"]["topics"]["bertopic"]["cluster_selection_method"] = "greedy"
+    with pytest.raises(ConfigError, match="cluster_selection_method"):
+        _validate(config)
+
+
+def test_bertopic_params_default_min_cluster_size_to_min_topic_size():
+    """The same question asked twice — letting them drift means HDBSCAN forms
+    clusters the pipeline then silently discards."""
+    from src.config import bertopic_params
+
+    config = load_config()
+    config["emergence"]["topics"]["bertopic"]["min_cluster_size"] = None
+    assert bertopic_params(config, min_topic_size=11).min_cluster_size == 11
+
+
+def test_bertopic_params_come_from_the_config_not_the_dataclass_defaults():
+    """A hyperparameter left to a library default is one nobody wrote down."""
+    from src.config import bertopic_params
+
+    config = load_config()
+    config["emergence"]["topics"]["bertopic"].update(
+        random_state=1234, n_neighbors=30, n_components=7,
+        min_dist=0.1, metric="euclidean", cluster_selection_method="leaf",
+    )
+    params = bertopic_params(config, min_topic_size=8)
+
+    assert params.random_state == 1234
+    assert params.n_neighbors == 30
+    assert params.n_components == 7
+    assert params.min_dist == 0.1
+    assert params.metric == "euclidean"
+    assert params.cluster_selection_method == "leaf"
+
+
+def test_the_bertopic_method_has_a_threshold_for_the_active_backend():
+    """Under bertopic the threshold does not cluster — HDBSCAN takes no cosine
+    cut-off — but Stage 2 still reads it to attach GDELT documents to the
+    nearest finished topic. A missing entry fails the run at Stage 2."""
+    config = load_config()
+    config["emergence"]["topics"]["method"] = "bertopic"
+    for backend in ("bge", "hashing"):
+        config["embeddings"]["backend"] = backend
+        assert 0.0 < topic_similarity_threshold(config) < 1.0

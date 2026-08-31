@@ -85,21 +85,31 @@ up as a skipped row rather than as "fewer results this week".
 
 ### Topic formation
 
-Documents are embedded, then clustered by cosine similarity: a leader pass, a
-reassignment pass that removes order-dependence, and a merge pass for
-near-duplicate clusters. Documents that match no cluster are dropped rather
-than forced into the nearest one, which would corrupt that cluster's centroid.
+Documents are embedded, then clustered. Since 2026-08-31 the default is
+**BERTopic over a seeded UMAP + HDBSCAN pair**: UMAP reduces the BGE vectors to
+a handful of dimensions, and HDBSCAN finds density peaks in that space.
+Documents HDBSCAN cannot place densely are reported as outliers and dropped
+rather than forced into the nearest cluster, which would corrupt that cluster's
+centroid. Two alternatives remain available in `emergence.topics.method`:
+`agglomerative` (average linkage, numpy only, the right choice with no torch)
+and `leader` (kept only to reproduce pre-2026-08-30 runs).
 
 Labels come from c-TF-IDF — the same idea BERTopic uses — so a label carries
 the terms that distinguish a topic from its neighbours, not merely the terms
-common within it.
+common within it. One labelling path serves every method, so a label means the
+same thing whichever produced it.
 
-**Why not BERTopic by default.** BERTopic finds better topics. It also brings
-UMAP and HDBSCAN, whose output shifts between runs unless carefully seeded, and
-this pipeline's value rests on a score being comparable with last month's. The
-default method is worse at finding topics and perfect at reproducing them,
-which is the right trade while the weights are being calibrated. Switch via
-`emergence.topics.method` once they are settled.
+**What seeding does and does not buy.** UMAP's initialisation is stochastic, so
+`emergence.topics.bertopic.random_state` is not optional bookkeeping — without
+it, two runs over an identical corpus disagree about what the topics are. With
+it, they agree exactly. What seeding cannot fix is that UMAP fits a manifold to
+the *whole* corpus: next week's documents move this week's topics rather than
+merely adding to them, and they move them more than average linkage would.
+
+That is a real cost and it was accepted deliberately. A single scan should be
+as accurate and as useful on its own as it can be; its value as a reference
+point for a later run is secondary. Read alongside "**Do not compare scores
+across runs**" below — which was already true, and is now more true.
 
 ### Kleinberg burst detection
 

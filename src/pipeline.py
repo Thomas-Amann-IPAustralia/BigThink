@@ -67,6 +67,18 @@ def main(argv: list[str] | None = None) -> int:
                         help="Reuse the existing corpus; run Stages 0 and 2-5 only.")
     parser.add_argument("--sample", action="store_true",
                         help="Cap records per query (development runs).")
+    # Overrides for the two settings that decide what a topic is. Both are
+    # normally config, and config stays the source of truth — these exist so a
+    # smoke run can pick the cheap pairing without editing a tracked file, the
+    # same way --sample does. They are applied to the config dict before any
+    # stage runs, so `pipeline_runs.config_snapshot` records what actually ran
+    # rather than what the file said.
+    parser.add_argument("--embedding-backend", default=None,
+                        choices=["hashing", "bge"],
+                        help="Override embeddings.backend for this run.")
+    parser.add_argument("--clustering-method", default=None,
+                        choices=["bertopic", "agglomerative", "leader"],
+                        help="Override emergence.topics.method for this run.")
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args(argv)
 
@@ -77,7 +89,29 @@ def main(argv: list[str] | None = None) -> int:
     config = load_config(args.config)
     if args.sample:
         config["pipeline"]["sample_mode"] = True
+    if args.embedding_backend:
+        config["embeddings"]["backend"] = args.embedding_backend
+    if args.clustering_method:
+        config["emergence"]["topics"]["method"] = args.clustering_method
     run_id = args.run_id or default_run_id()
+
+    # Logged rather than left implicit. These two decide what a topic *is*, and
+    # a run whose topics came from a different pairing than the config file
+    # currently shows is exactly the kind of thing that is impossible to work
+    # out afterwards from the output alone.
+    backend = get(config, "embeddings", "backend", default="hashing")
+    method = get(config, "emergence", "topics", "method", default="agglomerative")
+    overridden = [
+        name for name, value in
+        (("embeddings.backend", args.embedding_backend),
+         ("emergence.topics.method", args.clustering_method))
+        if value
+    ]
+    logger.info(
+        "Embedding backend %r, clustering method %r%s",
+        backend, method,
+        f" (overridden on the command line: {', '.join(overridden)})" if overridden else "",
+    )
 
     from src import stage0_strategy, stage1_collect, stage2_emergence, stage5_synthesis
 

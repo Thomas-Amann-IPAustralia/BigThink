@@ -162,6 +162,35 @@ def topic_similarity_threshold(config: dict[str, Any]) -> float:
     )
 
 
+def bertopic_params(config: dict[str, Any], min_topic_size: int) -> Any:
+    """Build `topics.BertopicParams` from `emergence.topics.bertopic`.
+
+    Resolved here rather than read at the call site for the same reason
+    `topic_similarity_threshold` is: one place where a hyperparameter that
+    decides the result is turned into a value, so a run's parameters can be
+    read off the config snapshot instead of reconstructed from defaults.
+
+    `min_cluster_size` defaults to `min_topic_size` rather than to a number of
+    its own. They are the same question asked twice — the smallest group of
+    documents worth calling a topic — and letting them drift apart means
+    HDBSCAN forms clusters the pipeline then silently discards.
+    """
+    from src.topics import BertopicParams  # local import: numpy at call time only
+
+    settings = get(config, "emergence", "topics", "bertopic", default={}) or {}
+    min_samples = settings.get("min_samples")
+    return BertopicParams(
+        random_state=int(settings.get("random_state", 42)),
+        n_neighbors=int(settings.get("n_neighbors", 15)),
+        n_components=int(settings.get("n_components", 5)),
+        min_dist=float(settings.get("min_dist", 0.0)),
+        metric=str(settings.get("metric", "cosine")),
+        min_cluster_size=int(settings.get("min_cluster_size") or min_topic_size),
+        min_samples=None if min_samples is None else int(min_samples),
+        cluster_selection_method=str(settings.get("cluster_selection_method", "eom")),
+    )
+
+
 def contact_email(config: dict[str, Any]) -> str:
     """Contact address for API polite pools; env var wins over config."""
     return os.environ.get("BIGTHINK_CONTACT_EMAIL") or str(
@@ -244,6 +273,48 @@ def _validate_storage(s: dict[str, Any]) -> None:
             f"storage.r2.jurisdiction must be one of "
             f"{sorted(j for j in _VALID_R2_JURISDICTIONS if j)}, got {jurisdiction!r}. "
             "Leave it empty for a bucket created without a jurisdiction."
+        )
+
+
+def _validate_bertopic(b: dict[str, Any]) -> None:
+    """Validate `emergence.topics.bertopic`.
+
+    Strict about the seed in particular. An absent or non-integer
+    `random_state` makes UMAP stochastic, and a topic set nobody can reproduce
+    cannot be reviewed — it fails here rather than three hours into a scan, or,
+    worse, not at all.
+    """
+    if not isinstance(b, dict):
+        raise ConfigError("emergence.topics.bertopic must be a mapping.")
+
+    seed = b.get("random_state", 42)
+    if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
+        raise ConfigError(
+            "emergence.topics.bertopic.random_state must be a non-negative integer. "
+            "It seeds UMAP; without it two runs over the same corpus disagree about "
+            "what the topics are."
+        )
+
+    for key, minimum in (("n_neighbors", 2), ("n_components", 2), ("min_cluster_size", 2),
+                         ("min_samples", 1)):
+        value = b.get(key)
+        if value is None:      # blank means "follow the default at the call site"
+            continue
+        if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+            raise ConfigError(
+                f"emergence.topics.bertopic.{key} must be an integer >= {minimum}, "
+                f"got {value!r}"
+            )
+
+    min_dist = float(b.get("min_dist", 0.0))
+    if not 0.0 <= min_dist <= 1.0:
+        raise ConfigError("emergence.topics.bertopic.min_dist must be in [0, 1]")
+
+    selection = str(b.get("cluster_selection_method", "eom"))
+    if selection not in {"eom", "leaf"}:
+        raise ConfigError(
+            "emergence.topics.bertopic.cluster_selection_method must be 'eom' or "
+            f"'leaf', got {selection!r}"
         )
 
 
@@ -367,6 +438,8 @@ def _validate_emergence(e: dict[str, Any]) -> None:
                         f"emergence.topics.similarity_thresholds.{name}.{backend} "
                         "must be in (0, 1)"
                     )
+    _validate_bertopic(topics.get("bertopic") or {})
+
     for backend, value in legacy.items():
         if backend not in _VALID_EMBEDDING_BACKENDS:
             raise ConfigError(
