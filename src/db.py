@@ -142,9 +142,15 @@ CREATE TABLE IF NOT EXISTS topic_scores (
     index_suppressed     BOOLEAN DEFAULT FALSE,  -- true when below min_documents
     composite_rank_score DOUBLE,
     rank                 INTEGER,
+    fit_quadrant         VARCHAR,   -- 2x2 placement: act | on-strategy... | capability... | watch
     created_at           TIMESTAMP NOT NULL,
     PRIMARY KEY (topic_id, run_id)
 );
+
+-- Migration: fit_quadrant was added after topic_scores first shipped. A
+-- restored corpus from an earlier run predates the column; CREATE TABLE IF
+-- NOT EXISTS above is a no-op against it, so add the column explicitly.
+ALTER TABLE topic_scores ADD COLUMN IF NOT EXISTS fit_quadrant VARCHAR;
 
 -- One row per stage execution. The observability surface: what ran, over what,
 -- how long it took, under which config.
@@ -451,6 +457,25 @@ def fetch_topic_documents(
     return _rows_to_dicts(cur)
 
 
+def fetch_run_topic_documents(conn: duckdb.DuckDBPyConnection, run_id: str) -> list[dict[str, Any]]:
+    """Every (topic_id, doc_id, similarity) membership row for a run, in one query.
+
+    `fetch_topic_documents` is per-topic and capped at the evidence-card size —
+    right for a shortlist card, wrong for a dashboard that needs to know every
+    document's topic assignment (or lack of one) at once.
+    """
+    cur = conn.execute(
+        """
+        SELECT td.topic_id, td.doc_id, td.similarity
+        FROM topic_documents td
+        JOIN topics t USING (topic_id)
+        WHERE t.run_id = ?
+        """,
+        [run_id],
+    )
+    return _rows_to_dicts(cur)
+
+
 def fetch_topic_timeseries(
     conn: duckdb.DuckDBPyConnection, topic_id: str
 ) -> list[dict[str, Any]]:
@@ -466,8 +491,8 @@ def fetch_topic_timeseries(
 
 _SCORE_COLUMNS = (
     "topic_id", "run_id", "strategic_fit", "best_objective", "best_objective_sim",
-    "critical_tech", "asset_leverage", "opportunity_index", "index_components",
-    "index_suppressed", "composite_rank_score", "rank", "created_at",
+    "critical_tech", "asset_leverage", "best_asset", "opportunity_index", "index_components",
+    "index_suppressed", "composite_rank_score", "rank", "fit_quadrant", "created_at",
 )
 
 
@@ -500,8 +525,9 @@ def fetch_ranked_topics(
     """Topics joined to their scores, in rank order — the Stage 5 view."""
     sql = """
         SELECT t.*, s.strategic_fit, s.best_objective, s.best_objective_sim,
-               s.critical_tech, s.asset_leverage, s.opportunity_index,
-               s.index_components, s.index_suppressed, s.composite_rank_score, s.rank
+               s.critical_tech, s.asset_leverage, s.best_asset, s.opportunity_index,
+               s.index_components, s.index_suppressed, s.composite_rank_score, s.rank,
+               s.fit_quadrant
         FROM topics t
         JOIN topic_scores s USING (topic_id, run_id)
         WHERE t.run_id = ?

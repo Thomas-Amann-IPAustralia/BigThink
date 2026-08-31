@@ -118,6 +118,11 @@ def build_html(
     add('<div class="wrap">')
     add("<h1>IPAVentures horizon scan</h1>")
     add(
+        '<p class="sub"><a href="dashboard.html"><strong>Explore the corpus as an interactive '
+        "map →</strong></a> every collected document plotted and searchable, coloured by "
+        "topic, horizon or source, with the same evidence as the table below.</p>"
+    )
+    add(
         f'<p class="meta">Run <code>{_e(run_id)}</code> · '
         f'{stats["documents"]:,} documents · {stats["topics"]} topics · '
         f'{stats["slices"]} time slices ({_e(stats["span"])}) · '

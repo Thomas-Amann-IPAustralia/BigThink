@@ -206,6 +206,9 @@ def _validate(cfg: dict[str, Any]) -> None:
     # still run the pipeline. It is validated only when present.
     if "notebook" in cfg:
         _validate_notebook(cfg["notebook"])
+    # Same reasoning: the dashboard is presentation, not a score.
+    if "dashboard" in cfg:
+        _validate_dashboard(cfg["dashboard"])
 
 
 def _validate_pipeline(p: dict[str, Any]) -> None:
@@ -444,6 +447,27 @@ def _validate_notebook(n: Any) -> None:
     for key in ("enabled", "include_verification"):
         if key in n and not isinstance(n[key], bool):
             raise ConfigError(f"notebook.{key} must be true or false, got {n[key]!r}")
+
+
+_VALID_PROJECTION_METHODS = {"umap", "pca"}
+
+
+def _validate_dashboard(d: Any) -> None:
+    if not isinstance(d, dict):
+        raise ConfigError("dashboard must be a mapping if present.")
+    if "max_points" in d and int(d["max_points"]) < 1:
+        raise ConfigError("dashboard.max_points must be >= 1")
+    projection = d.get("projection", {}) or {}
+    method = str(projection.get("method", "umap"))
+    if method not in _VALID_PROJECTION_METHODS:
+        raise ConfigError(
+            f"dashboard.projection.method must be one of {sorted(_VALID_PROJECTION_METHODS)}, "
+            f"got {method!r}"
+        )
+    if "n_neighbors" in projection and int(projection["n_neighbors"]) < 2:
+        raise ConfigError("dashboard.projection.n_neighbors must be >= 2")
+    if "min_dist" in projection and not 0.0 <= float(projection["min_dist"]) <= 1.0:
+        raise ConfigError("dashboard.projection.min_dist must be in [0, 1]")
 
 
 def _require_weight_sum(weights: Any, label: str, target: float = 1.0) -> None:

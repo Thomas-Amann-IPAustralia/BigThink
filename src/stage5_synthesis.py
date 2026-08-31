@@ -486,11 +486,13 @@ def _run_inner(conn: Any, config: dict[str, Any], run_id: str) -> list[dict[str,
             "best_objective_sim": r.get("best_objective_sim"),
             "critical_tech": r.get("critical_tech"),
             "asset_leverage": r.get("asset_leverage"),
+            "best_asset": r.get("best_asset"),
             "opportunity_index": r.get("opportunity_index"),
             "index_components": r.get("index_components"),
             "index_suppressed": r.get("index_suppressed", False),
             "composite_rank_score": r["composite_rank_score"],
             "rank": r["rank"],
+            "fit_quadrant": r.get("fit_quadrant"),
         }
         for r in rows
     ])

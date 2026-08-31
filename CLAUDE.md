@@ -50,6 +50,7 @@ python -m src.stage3_scoring   --run-id RUN     # prints only; does not persist
 python -m src.stage4_opportunity_index --run-id RUN
 python -m src.stage5_synthesis --run-id RUN     # runs 3 and 4, then persists all
 python -m src.report           --run-id RUN     # build docs/index.html
+python -m src.dashboard        --run-id RUN     # build docs/dashboard.html (point-cloud explorer)
 python -m src.notebook         --run-id RUN     # peer-review .ipynb for that run
 
 # Tests — offline by design, no network calls
@@ -78,7 +79,8 @@ Stage 2  stage2_emergence.py          Topics → bursts → growth curves → Ro
 Stage 3  stage3_scoring.py            Strategic fit × asset leverage
 Stage 4  stage4_opportunity_index.py  Relative composite index
 Stage 5  stage5_synthesis.py          Ranking, evidence cards, outputs
-         report.py                    GitHub Pages site
+         report.py                    GitHub Pages site (ranked shortlist)
+         dashboard.py                 GitHub Pages site (interactive point-cloud explorer)
          notebook.py                  Peer-review .ipynb (reads a run back out)
 ```
 
@@ -121,6 +123,8 @@ Preserve this. Do not add cross-stage function calls that bypass the database.
 | **Weight redistribution when a component has no data** | Otherwise disabling PatentsView silently shrinks every index by 15% and the ranking looks unchanged while measuring something different |
 | **The notebook explains a run, it does not re-run one** | Stages 2–5 are deterministic given the corpus, so re-deriving them proves something. Stage 1 hits live metered APIs, so a cell claiming to reproduce the corpus would be false the moment a source changed its budget |
 | **The notebook is executed at generation time, in-process** | It must read correctly without being run and stay runnable. An `.ipynb` is only JSON; `nbformat`/`nbclient` would add dependencies and buy nothing |
+| **The dashboard re-embeds the corpus rather than reading stored vectors** | The `hashing` backend never persists vectors — cheap enough that caching them would cost more in database writes than it saves (see `src/embeddings.py`). Re-embedding with the same recipe Stage 2 uses is deterministic and, for `hashing`, milliseconds; for `bge` it reads the cache Stage 2 already wrote. Topic membership itself is not recomputed — it comes straight from `topic_documents` |
+| **UMAP with a numpy-only PCA fallback, not a hard `umap-learn` requirement** | Same graceful-degradation shape as the `bge` embedding backend: the dashboard must still render a real map if the optional dependency is missing, just a flatter one |
 
 ## Configuration
 

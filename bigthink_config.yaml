@@ -400,3 +400,33 @@ notebook:
   # composite rank from their stored inputs. Turning this off removes the only
   # part of the notebook a reviewer cannot get from the HTML report — leave it on.
   include_verification: true
+
+# -----------------------------------------------------------------------------
+# Dashboard — interactive point-cloud explorer, published to docs/dashboard.html
+# -----------------------------------------------------------------------------
+# `python -m src.dashboard --run-id RUN` re-embeds the run's documents (reusing
+# the vector cache when the backend is cacheable) and projects them to 2D so a
+# reader can see the corpus as a map rather than a ranked table — the same
+# vectors and topic assignments Stage 2 computed, laid out for exploration
+# rather than clustering. Nothing here changes a score; this is presentation
+# only, generated after Stage 5.
+dashboard:
+  enabled: true
+  # Caps the point cloud so the published page stays a reasonable download as
+  # the corpus accumulates week over week. Below the cap, every document is
+  # plotted; above it, every topic-assigned document is kept (that is the
+  # signal worth exploring) and the remainder — chiefly GDELT attention
+  # signal, which forms no topics — is downsampled to fill what is left.
+  max_points: 25000
+  projection:
+    # "umap" if umap-learn is installed, else a numpy-only PCA fallback with
+    # no extra dependency — the same graceful-degradation shape as the bge
+    # embedding backend. UMAP separates topic clusters far better; PCA still
+    # produces a real, honest 2D map, just a flatter one.
+    method: "umap"
+    n_neighbors: 15
+    min_dist: 0.1
+    metric: "cosine"
+    # Fixed so the same corpus lays out the same way between runs. UMAP is
+    # still stochastic in fine detail — this bounds it, it does not remove it.
+    random_state: 42
