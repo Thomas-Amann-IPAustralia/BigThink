@@ -318,6 +318,72 @@ and expensive to miss.
 
 ---
 
+## The published explorer — and what it measures about itself
+
+`python -m src.dashboard --run-id RUN` writes `docs/dashboard.html`: five views
+over one finished run, served from GitHub Pages.
+
+| View | What it is for |
+|---|---|
+| Method | This document, made interactive and grounded in the run's own numbers |
+| Map | Every collected document as a 2D point cloud |
+| Topics | Every topic and every score, sortable, filterable, expandable to the arithmetic |
+| Scores | Any score against any other, with the four pairs this method reasons about preset |
+| Data | The run's tables, browsable, filterable and exportable |
+
+Two things about it are worth stating here rather than leaving to the code.
+
+**Every number on the Method view is read from the run, never hardcoded.** A
+method page that describes weights the pipeline no longer uses is worse than no
+method page at all — it is confidently wrong in exactly the way this project is
+most anxious about. The Rotolo weights, the horizon cut-points, the
+critical-technology threshold and whether it is switched on, the index
+components and which of them had data: all of it comes from the payload.
+
+**The map measures its own distortion rather than disclaiming it.** Flattening
+768 dimensions to two is lossy, the loss is not uniform across topics, and none
+of it is visible in the picture. So the page computes and prints four things
+from the run's own vectors and coordinates:
+
+- **Trustworthiness** — are the neighbours you can see real? It penalises points
+  drawn close together that are far apart in the embedding space: the error that
+  invents a cluster.
+- **Continuity** — are the real neighbours visible? The dual measure, penalising
+  genuinely close pairs the projection has pushed apart: the error that tears a
+  real topic in half. Both are Venna & Kaski's, computed on a seeded sample
+  whose size is printed beside them.
+- **Neighbour purity, per topic, measured twice** — the share of a member
+  document's nearest neighbours that share its topic, in the full space and
+  again on the map. The gap between the two is the distortion this picture adds,
+  and it lets a scattered-looking topic say whether it is incoherent or merely
+  badly drawn.
+- **Every plotted point's true nearest neighbours in the full space**, shipped
+  to the page. Select a document, switch on "true neighbours", and the lines go
+  to where its actual neighbours landed. Lines that shoot across the map are the
+  projection distorting, on the reader's own data.
+
+The projection also follows the clustering's UMAP settings by default
+(`dashboard.projection.follow_clustering`), so the map is a 2-component view of
+the manifold the topics were found in rather than an unrelated second opinion.
+`min_dist` is deliberately not followed — the clustering runs it at 0.0, which
+on a screen draws every topic as one indistinguishable dot.
+
+None of this makes the map trustworthy. It makes the map's untrustworthiness
+measurable, which is the most that can honestly be claimed for any projection —
+and a trustworthiness figure well below 1.0 should be read as an instruction to
+check a grouping in the evidence cards before believing it.
+
+**Why it is not a DuckDB query console.** The obvious way to let a reader
+interrogate the data is to ship duckdb-wasm and the database. Two things rule
+it out: the WASM bundle lives on a CDN, and this page is deliberately CDN-free
+because it is read behind corporate proxies where a silent script-load failure
+would take the whole page down; and the database is gitignored precisely
+because it is a large binary that does not diff, so Pages could not serve it
+anyway. The Data view browses the rows the page already carries and tells a
+reader how to rebuild and query the real database.
+
+---
+
 ## What this method cannot do
 
 - **It cannot find what the scan frame does not ask for.** The frame is
@@ -344,6 +410,9 @@ and expensive to miss.
 - Boutaleb et al. (2024). BERTrend. ACL FuturED workshop.
 - Curry, A., & Hodgson, A. (2008). "Seeing in Multiple Horizons."
   *Journal of Futures Studies* 13(1):1–20.
+- Venna, J., & Kaski, S. (2001). "Neighborhood Preservation in Nonlinear
+  Projection Methods: An Experimental Study." *ICANN 2001*, LNCS 2130:485–491.
+  The trustworthiness and continuity measures reported on the explorer's map.
 - Keeley, Pikkel, Quinn & Walters (2013). *Ten Types of Innovation.*
 - UK Government Office for Science, *Futures Toolkit* (updated August 2024).
 - WIPO, *Manual on Open Source Patent Analytics* (Paul Oldham, 2nd ed.).

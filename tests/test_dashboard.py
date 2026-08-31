@@ -43,9 +43,10 @@ def test_project_2d_honours_explicit_pca_config():
     config["dashboard"]["projection"]["method"] = "pca"
     rng = np.random.default_rng(2)
     vectors = rng.normal(size=(20, 12))
-    coords, method = dashboard.project_2d(vectors, config)
+    coords, method, params = dashboard.project_2d(vectors, config)
     assert method == "pca"
     assert coords.shape == (20, 2)
+    assert params["method"] == "pca"
 
 
 def test_project_2d_falls_back_to_pca_without_umap(monkeypatch):
@@ -56,7 +57,7 @@ def test_project_2d_falls_back_to_pca_without_umap(monkeypatch):
     config = load_config()
     rng = np.random.default_rng(3)
     vectors = rng.normal(size=(20, 12))
-    coords, method = dashboard.project_2d(vectors, config)
+    coords, method, _params = dashboard.project_2d(vectors, config)
     assert method == "pca"
     assert coords.shape == (20, 2)
 
@@ -67,9 +68,172 @@ def test_project_2d_uses_umap_when_available():
     config = load_config()
     rng = np.random.default_rng(4)
     vectors = rng.normal(size=(30, 12))
-    coords, method = dashboard.project_2d(vectors, config)
+    coords, method, _params = dashboard.project_2d(vectors, config)
     assert method == "umap"
     assert coords.shape == (30, 2)
+
+
+# ---------------------------------------------------------------------------
+# Projection parameters
+#
+# The map is only worth reading as evidence about the clustering if it was
+# projected in the space the clustering happened in. These guard that it is.
+# ---------------------------------------------------------------------------
+
+
+def test_projection_follows_the_bertopic_configuration():
+    config = load_config()
+    config["emergence"]["topics"]["method"] = "bertopic"
+    config["emergence"]["topics"]["bertopic"]["n_neighbors"] = 31
+    config["emergence"]["topics"]["bertopic"]["random_state"] = 7
+    config["dashboard"]["projection"]["follow_clustering"] = True
+    config["dashboard"]["projection"]["n_neighbors"] = 15
+    config["dashboard"]["projection"]["random_state"] = 42
+
+    params = dashboard.projection_params(config)
+    assert params["n_neighbors"] == 31
+    assert params["random_state"] == 7
+    assert set(params["followed"]) == {"n_neighbors", "random_state"}
+
+
+def test_projection_never_follows_min_dist():
+    """The clustering packs at min_dist 0.0, which on a screen draws every
+    topic as one indistinguishable dot. Following it would be visually fatal."""
+    config = load_config()
+    config["emergence"]["topics"]["method"] = "bertopic"
+    config["emergence"]["topics"]["bertopic"]["min_dist"] = 0.0
+    config["dashboard"]["projection"]["min_dist"] = 0.25
+    assert dashboard.projection_params(config)["min_dist"] == 0.25
+
+
+def test_projection_ignores_the_clustering_when_told_to():
+    config = load_config()
+    config["emergence"]["topics"]["method"] = "bertopic"
+    config["emergence"]["topics"]["bertopic"]["n_neighbors"] = 31
+    config["dashboard"]["projection"]["follow_clustering"] = False
+    config["dashboard"]["projection"]["n_neighbors"] = 15
+    params = dashboard.projection_params(config)
+    assert params["n_neighbors"] == 15
+    assert params["followed"] == []
+
+
+def test_projection_does_not_follow_a_non_bertopic_clustering():
+    """agglomerative has no UMAP stage, so there is nothing to follow and
+    borrowing BERTopic's numbers would be cargo-culting them."""
+    config = load_config()
+    config["emergence"]["topics"]["method"] = "agglomerative"
+    config["emergence"]["topics"]["bertopic"]["n_neighbors"] = 31
+    config["dashboard"]["projection"]["n_neighbors"] = 15
+    assert dashboard.projection_params(config)["n_neighbors"] == 15
+
+
+# ---------------------------------------------------------------------------
+# Projection fidelity
+# ---------------------------------------------------------------------------
+
+
+def test_knn_indices_puts_each_point_first_and_finds_its_own_cluster():
+    rng = np.random.default_rng(11)
+    a = rng.normal(size=(30, 8)) + 10.0
+    b = rng.normal(size=(30, 8)) - 10.0
+    vectors = np.vstack([a, b])
+    nn = dashboard.knn_indices(vectors, k=5)
+    assert nn.shape == (60, 6)
+    assert list(nn[:, 0]) == list(range(60))
+    # Two well-separated blobs: every neighbour should come from the same one.
+    labels = np.array([0] * 30 + [1] * 30)
+    assert (labels[nn[:, 1:]] == labels[:, None]).all()
+
+
+def test_knn_indices_is_correct_under_the_euclidean_metric():
+    """The map's own k-NN pass runs euclidean over 2D coordinates.
+
+    Guards a specific arithmetic slip: expanding ||a-b||^2 and dropping the
+    ||b||^2 term ranks a distant large vector as a near neighbour, because that
+    term varies per candidate. Points of very different magnitude make the
+    error visible; equal-magnitude fixtures hide it."""
+    points = np.array([
+        [0.0, 0.0], [0.1, 0.0], [0.0, 0.1],      # a tight cluster at the origin
+        [40.0, 40.0], [40.1, 40.0], [40.0, 40.1],  # and one far away
+    ])
+    nn = dashboard.knn_indices(points, k=2, metric="euclidean")
+    assert list(nn[:, 0]) == list(range(6)), "each point should be its own first neighbour"
+    for i in range(6):
+        near_side = set(range(3)) if i < 3 else set(range(3, 6))
+        assert set(nn[i, 1:]) == near_side - {i}, f"point {i} matched across the gap"
+
+
+def test_trustworthiness_is_perfect_for_a_lossless_projection():
+    """A projection that loses nothing must read 1.0 on both measures. If this
+    drifts, the numbers printed on the map are wrong.
+
+    Note what "lossless" has to mean here. The high-dimensional side is scored
+    by cosine — the metric the clustering itself used — and the 2D side by
+    euclidean, because euclidean is what a reader's eye does with the picture.
+    The two only rank neighbours identically for unit-norm vectors, where
+    ||a-b||^2 = 2 - 2cos, so the fixture puts its points on the unit circle.
+    Feeding unnormalised vectors here would fail at about 0.95, and that would
+    be the metric pairing showing up, not a defect. The angles are jittered for
+    the same kind of reason: on a perfectly regular circle every neighbour has
+    an exact twin at the same distance, and the two matrices break that tie on
+    different floating-point noise."""
+    rng = np.random.default_rng(12)
+    angles = np.sort(rng.uniform(0, 2 * np.pi, size=60))
+    coords = np.column_stack([np.cos(angles), np.sin(angles)])
+    trust, cont = dashboard.trustworthiness_continuity(coords, coords, k=5)
+    assert trust == pytest.approx(1.0, abs=1e-9)
+    assert cont == pytest.approx(1.0, abs=1e-9)
+
+
+def test_trustworthiness_scores_the_high_side_by_cosine():
+    """Pins the metric pairing above rather than leaving it to be rediscovered.
+
+    Scaling a vector changes its euclidean distance to everything and its
+    cosine distance to nothing, so a corpus and the same corpus with varied
+    magnitudes must produce the same high-dimensional neighbourhoods — which
+    is the property that makes the measure comparable across backends whose
+    vectors are not normalised the same way."""
+    rng = np.random.default_rng(21)
+    vectors = rng.normal(size=(50, 6))
+    coords = rng.normal(size=(50, 2))
+    scaled = vectors * rng.uniform(0.2, 5.0, size=(50, 1))
+    assert dashboard.trustworthiness_continuity(vectors, coords, k=6) == pytest.approx(
+        dashboard.trustworthiness_continuity(scaled, coords, k=6), abs=1e-9
+    )
+
+
+def test_trustworthiness_falls_for_a_scrambled_projection():
+    rng = np.random.default_rng(13)
+    vectors = rng.normal(size=(80, 12))
+    scrambled = rng.normal(size=(80, 2))
+    trust, cont = dashboard.trustworthiness_continuity(vectors, scrambled, k=8)
+    assert trust < 0.9
+    assert cont < 0.9
+
+
+def test_neighbour_purity_separates_a_clean_split_from_a_mixed_one():
+    clean = np.array([[0, 1, 2], [1, 0, 2], [2, 0, 1], [3, 4, 5], [4, 3, 5], [5, 3, 4]])
+    labels = np.array([0, 0, 0, 1, 1, 1])
+    assert dashboard.neighbour_purity(clean, labels).mean() == pytest.approx(1.0)
+
+    mixed = np.array([[0, 3, 4], [1, 3, 5], [2, 4, 5], [3, 0, 1], [4, 0, 2], [5, 1, 2]])
+    assert dashboard.neighbour_purity(mixed, labels).mean() == pytest.approx(0.0)
+
+
+def test_topic_hull_ignores_a_single_stray_member():
+    """Untrimmed, one outlier stretches the hull across the whole map and the
+    shape stops meaning anything."""
+    square = np.array([[0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0]] * 6)
+    with_stray = np.vstack([square, [[80.0, 80.0]]])
+    hull = dashboard.topic_hull(with_stray)
+    assert max(abs(x) for x, _y in hull) < 5.0
+
+
+def test_convex_hull_of_a_square_keeps_only_its_corners():
+    points = np.array([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0], [0.5, 0.5]])
+    hull = dashboard._convex_hull(points)
+    assert len(hull) == 4
+    assert [0.5, 0.5] not in hull
 
 
 # ---------------------------------------------------------------------------
@@ -311,6 +475,110 @@ def test_build_dashboard_downsamples_under_a_small_cap(run_fixture):
         assert -1 <= ti < len(data["topics"])
 
 
+def test_build_dashboard_carries_every_score_and_its_inputs(run_fixture):
+    """The page explains each score by showing what went into it. A field
+    dropped from the payload turns a breakdown into an unexplained number."""
+    config, run_id = run_fixture
+    data = dashboard.build_dashboard(config, run_id)
+    for t in data["topics"]:
+        for attribute in ("novelty", "growth", "coherence", "impact", "uncertainty"):
+            assert t[attribute] is not None, f"{t['id']} is missing {attribute}"
+        assert t["timeseries"], f"{t['id']} has no time series to draw"
+        assert t["docs"], f"{t['id']} carries no member documents"
+        assert t["terms"]
+        for member in t["docs"]:
+            assert 0 <= member["i"] < data["documents_plotted"]
+
+
+def test_build_dashboard_reports_the_configured_weights(run_fixture):
+    """The Method view states the weights it explains. Reading them from the
+    live config is what stops the page describing a pipeline that has moved."""
+    config, run_id = run_fixture
+    data = dashboard.build_dashboard(config, run_id)
+    method = data["method"]
+    assert method["rotolo_weights"] == config["emergence"]["rotolo_weights"]
+    assert method["rank_weights"] == config["synthesis"]["rank_weights"]
+    assert method["index_components"] == config["opportunity_index"]["components"]
+    assert method["three_horizons"] == config["emergence"]["three_horizons"]
+
+
+def test_build_dashboard_says_when_no_critical_tech_cutoff_was_swept(run_fixture):
+    """A blank cut-off means "match nothing", not "value missing". The page has
+    to be able to tell a reader which of those an empty column means."""
+    config, run_id = run_fixture
+    config["scoring"]["strategic_fit"]["critical_tech_match"]["thresholds"]["hashing"] = None
+    data = dashboard.build_dashboard(config, run_id)
+    assert data["method"]["critical_tech_matching"] is False
+    assert data["method"]["critical_tech_threshold"] is None
+
+    config["scoring"]["strategic_fit"]["critical_tech_match"]["thresholds"]["hashing"] = 0.25
+    data = dashboard.build_dashboard(config, run_id)
+    assert data["method"]["critical_tech_matching"] is True
+    assert data["method"]["critical_tech_threshold"] == 0.25
+
+
+def test_build_dashboard_measures_projection_fidelity(run_fixture):
+    config, run_id = run_fixture
+    data = dashboard.build_dashboard(config, run_id)
+    fidelity = data["fidelity"]
+    assert fidelity["computed"] is True
+    assert 0.0 <= fidelity["trustworthiness"] <= 1.0
+    assert 0.0 <= fidelity["continuity"] <= 1.0
+
+    # One neighbour row per plotted point, and no index out of range.
+    neighbours = data["neighbours"]
+    assert len(neighbours["idx"]) == data["documents_plotted"] * neighbours["k"]
+    assert max(neighbours["idx"]) < data["documents_plotted"]
+
+    for topic in data["topics"]:
+        assert topic["map_purity"] is not None
+        assert topic["space_purity"] is not None
+
+
+def test_build_dashboard_skips_fidelity_over_the_budget(run_fixture):
+    """The k-NN pass is exact and quadratic. Past the budget it must decline
+    and say why, rather than putting a free Actions runner into a long
+    matrix multiply."""
+    config, run_id = run_fixture
+    config["dashboard"]["fidelity"]["max_points"] = 5
+    data = dashboard.build_dashboard(config, run_id)
+    assert data["fidelity"]["computed"] is False
+    assert data["fidelity"]["reason"]
+    assert data["neighbours"]["idx"] == []
+    # The rest of the payload still has to be complete and drawable.
+    assert data["topics"] and data["points"]["x"]
+
+
+def test_build_dashboard_hulls_stay_inside_the_plotted_extent(run_fixture):
+    config, run_id = run_fixture
+    data = dashboard.build_dashboard(config, run_id)
+    xs, ys = data["points"]["x"], data["points"]["y"]
+    for topic in data["topics"]:
+        for x, y in topic["hull"]:
+            assert min(xs) <= x <= max(xs)
+            assert min(ys) <= y <= max(ys)
+
+
+def test_build_dashboard_summarises_collection_by_source(run_fixture):
+    """A source that half failed is one story, and the badge must show the
+    worst outcome rather than the most common one."""
+    config, run_id = run_fixture
+    conn = db.init_db(config["storage"]["duckdb_path"])
+    try:
+        db.log_collection(conn, run_id, "crossref", "f1", "success", 100, "")
+        db.log_collection(conn, run_id, "crossref", "f2", "partial", 3, "rate limited")
+        db.log_collection(conn, run_id, "patentsview", "f1", "skipped", 0, "no key")
+    finally:
+        conn.close()
+
+    data = dashboard.build_dashboard(config, run_id)
+    by_source = {c["source"]: c for c in data["collection"]}
+    assert by_source["crossref"]["worst"] == "partial"
+    assert by_source["crossref"]["records"] == 103
+    assert by_source["crossref"]["queries"] == 2
+    assert by_source["patentsview"]["worst"] == "skipped"
+
+
 # ---------------------------------------------------------------------------
 # HTML rendering / script-injection safety
 # ---------------------------------------------------------------------------
@@ -347,6 +615,56 @@ def test_render_html_contains_title_and_data():
     assert "<title>" in html
     assert "__DASHBOARD_DATA__" in html
     assert "A normal title" in html
+
+
+# --- self-containment -----------------------------------------------------
+#
+# The page is served from GitHub Pages and read behind corporate proxies, so
+# it inlines everything. A stylesheet or a script that silently fails to load
+# from a CDN takes the whole dashboard with it, and the failure is invisible
+# to whoever published it.
+
+
+def test_every_asset_is_present_and_inlined():
+    html = dashboard.render_html(_minimal_data("t"))
+    for name in dashboard._JS_ASSETS + ("dashboard.css", "shell.html"):
+        path = dashboard.ASSET_DIR / name
+        assert path.is_file(), f"missing asset {name}"
+        # A distinctive line from each file, to catch an asset that exists but
+        # was dropped from the render.
+        marker = next(
+            line.strip() for line in path.read_text(encoding="utf-8").splitlines()
+            if len(line.strip()) > 30 and "*" not in line and "<!--" not in line
+        )
+        assert marker in html, f"{name} was not inlined into the page"
+
+
+def test_the_published_page_fetches_nothing_from_the_network():
+    """Guards the no-CDN decision. Anything with a scheme in a src/href that is
+    not a link a reader clicks would be a runtime dependency on a third party."""
+    import re
+
+    html = dashboard.render_html(_minimal_data("t"))
+    for attr in ("src", "href"):
+        for match in re.finditer(rf'{attr}\s*=\s*"([^"]+)"', html):
+            url = match.group(1)
+            if url.startswith(("http://", "https://", "//")):
+                # Anchors to the repository and to source documents are fine —
+                # those are navigation, not resources the page needs to render.
+                context = html[max(0, match.start() - 120):match.start()]
+                assert "<a " in context.rsplit(">", 1)[-1] or "<a" in context[-40:], (
+                    f"page loads {url} from the network"
+                )
+
+
+def test_the_stylesheet_defines_the_dark_palette_for_an_explicit_choice():
+    """The in-page toggle stamps data-theme, and a blocking head snippet stamps
+    it before first paint. If the stylesheet ever went back to keying dark mode
+    off prefers-color-scheme alone, the toggle would stop working one way."""
+    css = (dashboard.ASSET_DIR / "dashboard.css").read_text(encoding="utf-8")
+    assert ':root[data-theme="dark"]' in css
+    html = dashboard.render_html(_minimal_data("t"))
+    assert "data-theme" in html.split("</head>")[0], "theme is not set before first paint"
 
 
 # --- published page structure ---------------------------------------------

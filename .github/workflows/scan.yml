@@ -259,7 +259,7 @@ jobs:
       - name: Build the published site
         run: python -m src.report --run-id ${{ steps.runid.outputs.run_id }}
 
-      - name: Build the interactive point-cloud dashboard
+      - name: Build the interactive explorer
         run: python -m src.dashboard --run-id ${{ steps.runid.outputs.run_id }}
 
       # ------------------------------------------------------------------

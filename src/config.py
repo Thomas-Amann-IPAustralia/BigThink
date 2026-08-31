@@ -697,6 +697,28 @@ def _validate_dashboard(d: Any) -> None:
     if "min_dist" in projection and not 0.0 <= float(projection["min_dist"]) <= 1.0:
         raise ConfigError("dashboard.projection.min_dist must be in [0, 1]")
 
+    # The fidelity pass is exact and quadratic. A k below 2 measures nothing,
+    # and a k at or above a third of the sample makes the trustworthiness
+    # normaliser non-positive — the measurement silently becomes nonsense
+    # rather than failing, which is the shape of bug this project is most
+    # anxious about. Bound it here, where a bad value stops the run.
+    fidelity = d.get("fidelity", {}) or {}
+    if "k" in fidelity and int(fidelity["k"]) < 2:
+        raise ConfigError("dashboard.fidelity.k must be >= 2")
+    if "sample" in fidelity and int(fidelity["sample"]) < 50:
+        raise ConfigError("dashboard.fidelity.sample must be >= 50")
+    if "k" in fidelity and "sample" in fidelity:
+        k, sample = int(fidelity["k"]), int(fidelity["sample"])
+        if 2 * sample - 3 * k - 1 <= 0:
+            raise ConfigError(
+                "dashboard.fidelity.k is too large for dashboard.fidelity.sample: "
+                f"trustworthiness needs 2*sample > 3*k + 1, got k={k}, sample={sample}"
+            )
+    if "neighbour_links" in fidelity and int(fidelity["neighbour_links"]) < 1:
+        raise ConfigError("dashboard.fidelity.neighbour_links must be >= 1")
+    if "max_points" in fidelity and int(fidelity["max_points"]) < 1:
+        raise ConfigError("dashboard.fidelity.max_points must be >= 1")
+
 
 def _require_weight_sum(weights: Any, label: str, target: float = 1.0) -> None:
     if not isinstance(weights, dict) or not weights:

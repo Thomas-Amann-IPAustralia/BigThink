@@ -621,9 +621,55 @@ dashboard:
     # embedding backend. UMAP separates topic clusters far better; PCA still
     # produces a real, honest 2D map, just a flatter one.
     method: "umap"
+    # Take n_neighbors, metric and random_state from
+    # emergence.topics.bertopic when that is the clustering method, so the map
+    # is a 2-component view of the manifold the topics were actually found in
+    # rather than an unrelated second opinion. Projecting with a different
+    # neighbourhood size scatters topics across the picture for a reason no
+    # reader can see. min_dist is never followed: the clustering runs it at 0.0
+    # to pack clusters as tightly as HDBSCAN likes, which on a screen draws
+    # every topic as one indistinguishable dot.
+    #
+    # Set false for an independent projection. That is a legitimate thing to
+    # want — it asks whether the clusters survive a different neighbourhood
+    # size — but it is not the right default for a page whose job is to show
+    # what this run decided.
+    follow_clustering: true
     n_neighbors: 15
     min_dist: 0.1
     metric: "cosine"
     # Fixed so the same corpus lays out the same way between runs. UMAP is
     # still stochastic in fine detail — this bounds it, it does not remove it.
     random_state: 42
+  # How much the 2D map distorts the space the topics were found in, measured
+  # rather than disclaimed. Flattening 768 dimensions to 2 is lossy, the loss
+  # is not uniform across topics, and none of it is visible in the picture —
+  # so the page prints trustworthiness (are the neighbours you can see real?),
+  # continuity (are the real neighbours visible?) and a per-topic purity pair
+  # that says whether a scattered-looking topic is incoherent or merely
+  # badly drawn.
+  fidelity:
+    enabled: true
+    # Neighbourhood size for every measure. Matching projection.n_neighbors
+    # keeps the question the same one UMAP was optimising.
+    k: 15
+    # Trustworthiness and continuity need the full rank matrix, which is
+    # quadratic in memory. They run on a seeded sample of this size and the
+    # page reports the sample size beside the number.
+    sample: 2500
+    # High-dimensional nearest neighbours stored per point, so a reader can
+    # select a document and see where its true neighbours landed. The most
+    # direct honest answer to "does this map reflect the real clustering?".
+    neighbour_links: 8
+    # The k-NN pass is exact and quadratic in time. Past this many plotted
+    # points the measurement is skipped and the page says so, rather than
+    # putting a free Actions runner into a long matrix multiply.
+    #
+    # Held at max_points above, deliberately: a fidelity cap *below* the
+    # plotting cap is binding by accident rather than by decision, and the
+    # first draft of this shipped at 15,000 against a 15,036-document corpus —
+    # which would have silently dropped the readout for the sake of 36
+    # documents. The cost at this size is tens of seconds of a scan that takes
+    # hours (roughly n^2 x dimensions flops, ~1 TFLOP at 25,000 x 768), so the
+    # cap exists for a corpus an order of magnitude larger, not this one.
+    max_points: 25000

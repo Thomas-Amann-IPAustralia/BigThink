@@ -42,9 +42,10 @@ as a finding.
 | 3 — Fit and leverage | **Working; the fix for its weakness is in, unmeasured** | Strategic fit is usable. Asset leverage was compressed to 0.03–0.10 under `hashing`; the BGE switch is meant to widen it and **nobody has yet checked whether it did** — see Open issue 2 |
 | 4 — Opportunity index | **Working, partial** | `patent_activity` has no data without PatentsView; weight redistributes automatically |
 | 5 — Synthesis | **Working; not yet read by a human** | Shortlist, 2×2 views, evidence cards, CSV, published HTML. **No one has read the `2026-08-31` evidence cards** — the check that caught both artefacts last time |
+| Published explorer | **Rebuilt 2026-08-31; not yet run against the real corpus** | `src/dashboard.py` + `src/dashboard_assets/`. Five views over a finished run: an interactive `docs/method.md`, the point cloud, every topic and score in a sortable table, a configurable score scatter, and a browsable copy of the run's tables. The map now follows the clustering's UMAP settings and reports trustworthiness, continuity and a per-topic neighbour-purity pair. Those figures have **not yet been produced against the real corpus** — see the calibration log for what to look for in the first ones |
 | Notebook export | **Working, not yet reviewed by anyone** | `src/notebook.py`; written automatically after Stage 5. Re-derives emergence, horizon, index and composite rank from stored inputs |
 | Automation | **Fully exercised; scan.yml reworked 2026-08-31, not yet run under the new defaults** | `tests.yml` now has a second `ml` job covering the default BGE/BERTopic path, while the first job still installs `requirements.txt` only — which keeps "runs with no torch" a tested guarantee. `verify-access.yml` — **both credentials pass**. `scan.yml` installs the ML stack only when the resolved settings need it, caches the model, takes `embedding_backend`/`clustering_method` dispatch inputs, and its timeout is 300 min (issue 17) |
-| Tests | **298 (290 passing + 8 skipped without `requirements-ml.txt`)** | Offline by design — the BERTopic tests included, since BERTopic is handed embeddings and never loads a model. They skip without `requirements-ml.txt` and run in CI's `ml` job |
+| Tests | **319 (311 passing + 8 skipped without `requirements-ml.txt`)** | Offline by design — the BERTopic tests included, since BERTopic is handed embeddings and never loads a model. They skip without `requirements-ml.txt` and run in CI's `ml` job |
 
 **Current baseline — `2026-08-31`** (workflow run 33345343027, 164 min, from an
 empty database with all collection fixes live). **Its outputs were overwritten and have
@@ -1394,6 +1395,79 @@ not a replacement.
 ## Calibration log
 
 Append to this. Every entry should say what changed, why, and what moved.
+
+### 2026-08-31 — the dashboard becomes an analytical tool, and starts measuring its own map
+
+**No score changes.** Every number in `topics`, `topic_scores` and
+`pipeline_runs` is untouched. What changed is `src/dashboard.py`, which now
+renders five views over a finished run instead of one point cloud, and two new
+config blocks that change how the map is *laid out* and what it reports about
+itself.
+
+**1. The map now follows the clustering configuration.**
+`dashboard.projection.follow_clustering` (new, default `true`) takes
+`n_neighbors`, `metric` and `random_state` from
+`emergence.topics.bertopic` when BERTopic is the clustering method.
+
+*Why.* Under BERTopic the clusters are found by HDBSCAN in a UMAP space built
+with a particular neighbourhood size, metric and seed. The dashboard was
+projecting with its own unrelated settings, so the picture answered a different
+question from the one the topics were formed by, and the disagreement showed up
+as a topic scattered across the map for no reason a reader could see. Following
+the clustering makes the map a 2-component view of the same manifold.
+
+`min_dist` is deliberately **not** followed: the clustering runs it at 0.0 to
+pack clusters as tightly as HDBSCAN likes, which on a screen draws every topic
+as one indistinguishable dot.
+
+*What this moves.* The layout of `docs/dashboard.html` only. Under the shipped
+`bge` + `bertopic` default, `n_neighbors` and `random_state` both already
+matched at 15 and 42, so on the current defaults **nothing moves at all** — the
+setting exists so that a future change to the BERTopic block cannot silently
+desynchronise the map from the clustering. Under `agglomerative` there is no
+UMAP stage to follow and the dashboard's own settings are used, as before.
+
+**2. The map now measures how much it distorts, rather than disclaiming it.**
+New `dashboard.fidelity` block. Four measurements, all computed from the run's
+own vectors and coordinates:
+
+| measure | question it answers |
+|---|---|
+| trustworthiness | are the neighbours you can see real? |
+| continuity | are the real neighbours visible? |
+| neighbour purity, per topic, in *n*-D and in 2D | is a scattered-looking topic incoherent, or merely badly drawn? |
+| the k nearest high-dimensional neighbours of every plotted point | shipped to the page so a reader can select a document and watch where its true neighbours landed |
+
+Trustworthiness and continuity are Venna & Kaski's pair; both are quadratic in
+memory, so they run on a seeded sample (`dashboard.fidelity.sample`, default
+2,500) and the page prints the sample size beside the number. The k-NN pass is
+exact and quadratic in time, so past `dashboard.fidelity.max_points` the whole
+measurement is skipped and the page says so, rather than putting a free Actions
+runner into a long matrix multiply.
+
+That cap is held **at** `dashboard.max_points` (25,000), not below it. The
+first draft of this shipped at 15,000 against a 15,036-document corpus, which
+would have silently dropped the readout for the sake of 36 documents — a cap
+binding by accident rather than by decision. The cost at 25,000 x 768 is on the
+order of a TFLOP, tens of seconds inside a scan that takes hours, so the cap is
+there for a corpus an order of magnitude larger than this one.
+
+*What this moves.* Nothing in the database. It adds a readout to the map, a
+per-topic purity pair to every topic detail, and a `projection_fidelity` table
+to the new Data view.
+
+*The metric pairing is deliberate and pinned by a test.* The high-dimensional
+side is scored by **cosine** — the metric the clustering used, and the one that
+is invariant to the vector magnitudes that differ between backends — and the 2D
+side by **euclidean**, because euclidean is what a reader's eye does with the
+picture. `test_trustworthiness_scores_the_high_side_by_cosine` guards it.
+
+**Nobody has run this against the real corpus.** The figures above are from a
+3,370-document development corpus. The first real numbers will arrive with the
+next scan, and a trustworthiness below about 0.9 there would be worth acting on
+— it would mean the map is inventing adjacency, and the honest response would
+be to say so on the page rather than to tune the projection until the number
+looks better.
 
 ### 2026-08-31 — review fixes: two numbers move, and one axis is switched off
 
