@@ -93,8 +93,34 @@ def test_similarity_threshold_follows_the_active_backend():
 
 def test_missing_threshold_for_active_backend_raises():
     config = load_config()
-    del config["emergence"]["topics"]["similarity_threshold_by_backend"]["hashing"]
+    del config["emergence"]["topics"]["similarity_thresholds"]["agglomerative"]["hashing"]
     with pytest.raises(ConfigError, match="No emergence.topics"):
+        topic_similarity_threshold(config)
+
+
+def test_the_threshold_depends_on_the_method_as_well_as_the_backend():
+    """`leader` compares to a centroid, `agglomerative` to a mean pairwise
+    similarity. On the same 2,987-document corpus the leader value of 0.30
+    assigned 23 documents under average linkage. One number cannot serve both."""
+    config = load_config()
+    config["emergence"]["topics"]["method"] = "agglomerative"
+    agglomerative = topic_similarity_threshold(config)
+    config["emergence"]["topics"]["method"] = "leader"
+    assert topic_similarity_threshold(config) != agglomerative
+
+
+def test_the_pre_2026_08_30_threshold_shape_is_still_honoured():
+    """Old runs must stay reproducible from their own config snapshot."""
+    config = load_config()
+    del config["emergence"]["topics"]["similarity_thresholds"]
+    config["emergence"]["topics"]["similarity_threshold_by_backend"] = {"hashing": 0.30}
+    assert topic_similarity_threshold(config) == 0.30
+
+
+def test_an_unknown_method_and_backend_pairing_is_refused():
+    config = load_config()
+    del config["emergence"]["topics"]["similarity_thresholds"]
+    with pytest.raises(ConfigError, match="No clustering threshold"):
         topic_similarity_threshold(config)
 
 

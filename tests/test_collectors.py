@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from src.collectors.base import (
+    Collector,
     _retry_after_seconds,
     build_document,
     document_text,
@@ -147,3 +148,218 @@ def test_gdelt_queries_wrap_ord_groups_in_parentheses():
                 offenders.append((frame["key"], query))
                 break
     assert not offenders, f"GDELT queries need parenthesised OR groups: {offenders}"
+
+
+# --- incident recording ---------------------------------------------------
+#
+# The 2026-08-30 run recorded four GDELT frames as `success` with zero records
+# after every retry failed, and reported "0 failed pairs" on the strength of
+# it. These tests pin the mechanism that makes that impossible.
+
+
+class _FailingCollector(Collector):
+    """A collector that fails soft, the way GDELT and OpenAlex do."""
+
+    name = "fake_failing"
+
+    def collect(self, query, frame, start_year, end_year):
+        try:
+            raise RetryableError("connection reset by peer")
+        except RetryableError as exc:
+            self.note_incident(f"artlist: {exc}")
+            return
+        yield  # pragma: no cover - unreachable, keeps this a generator
+
+
+class _PartialCollector(Collector):
+    """Yields something, then loses the rest of the window."""
+
+    name = "fake_partial"
+
+    def collect(self, query, frame, start_year, end_year):
+        yield build_document(source=self.name, native_id="1", title="kept")
+        self.note_incident("chunk 2/4: timeout")
+
+
+def _collector(cls):
+    config = {
+        "pipeline": {"contact_email": "x@example.org"},
+        "storage": {"raw_dir": "data/raw", "keep_raw_payloads": False},
+    }
+    return cls(config, "test-run")
+
+
+def test_a_swallowed_failure_is_recorded_as_an_incident():
+    c = _collector(_FailingCollector)
+    c.begin_frame()
+    assert list(c.collect("q", {"key": "f"}, 2018, 2026)) == []
+    assert c.incidents, "a collector that returned nothing on failure must say so"
+    assert "connection reset" in c.incidents[0]
+
+
+def test_partial_results_keep_their_documents_and_still_report():
+    """A partial window is worth keeping; a silent one is not."""
+    c = _collector(_PartialCollector)
+    c.begin_frame()
+    docs = list(c.collect("q", {"key": "f"}, 2018, 2026))
+    assert len(docs) == 1
+    assert c.incidents == ["chunk 2/4: timeout"]
+
+
+def test_begin_frame_clears_incidents_between_frames():
+    """Collectors are reused across frames — one bad frame must not taint the next."""
+    c = _collector(_FailingCollector)
+    c.begin_frame()
+    list(c.collect("q", {"key": "f1"}, 2018, 2026))
+    assert c.incidents
+    c.begin_frame()
+    assert c.incidents == []
+
+
+def test_a_clean_collector_records_no_incident():
+    c = _collector(_PartialCollector)
+    c.begin_frame()
+    assert c.incidents == []
+
+
+# --- relevance floor ------------------------------------------------------
+#
+# The OpenAlex floor anchored on the maximum score made a query's yield a
+# function of how much of an outlier its top hit was. These are the real
+# score heads from the 2026-08-30 scan frame, replayed 2026-08-30.
+
+
+def _floor(scores, rank):
+    c = _collector(_PartialCollector)
+    return c.relevance_floor(scores, min_relative=0.4, anchor_rank=rank)
+
+
+def _kept(scores, rank):
+    """How many leading results survive the floor."""
+    floor = _floor(scores, rank)
+    for i, s in enumerate(scores):
+        if s < floor:
+            return i
+    return len(scores)
+
+
+CT_AI = [3011, 1628, 1500, 1450, 1409, 1180, 1100, 1050, 1000, 980, 950, 900]
+CT_BIOTECH = [609, 573, 550, 530, 516, 505, 500, 495, 490, 485, 480, 470]
+
+
+def test_anchoring_on_the_maximum_penalises_an_outlier_top_hit():
+    """The defect: same query shape, wildly different yield."""
+    assert _kept(CT_AI, 1) < _kept(CT_BIOTECH, 1) / 2
+
+
+def test_anchoring_on_rank_ten_treats_comparable_queries_comparably():
+    assert _kept(CT_AI, 10) == len(CT_AI)
+    assert _kept(CT_BIOTECH, 10) == len(CT_BIOTECH)
+
+
+def test_rank_one_reproduces_the_original_behaviour():
+    """Old runs must stay reproducible from their config snapshot."""
+    assert _floor(CT_AI, 1) == pytest.approx(3011 * 0.4)
+
+
+def test_anchor_rank_beyond_the_result_set_falls_back_to_the_last_result():
+    assert _floor([100.0, 50.0], 10) == pytest.approx(50.0 * 0.4)
+
+
+def test_missing_relevance_scores_do_not_produce_a_floor():
+    """No score means no basis to cut; keep everything rather than guess."""
+    assert _floor([None, None], 10) == 0.0
+
+
+# --- crossref record types ------------------------------------------------
+
+
+def _crossref(**settings):
+    from src.collectors.crossref import CrossrefCollector
+
+    config = {
+        "pipeline": {"contact_email": "x@example.org"},
+        "storage": {"raw_dir": "data/raw", "keep_raw_payloads": False},
+        "collection": {"sources": {"crossref": settings}},
+    }
+    return CrossrefCollector(config, "test-run")
+
+
+PEER_REVIEW = {
+    "DOI": "10.1002/eng2.70518/v1/review1",
+    "title": ["Wire arc additive manufacturing of intelligent structures"],
+    "type": "peer-review",
+    "issued": {"date-parts": [[2025, 3, 1]]},
+}
+
+
+def test_peer_review_records_are_excluded():
+    """Two of the fifteen 2026-08-30 topics were one paper's review reports."""
+    c = _crossref(exclude_types=["peer-review", "component"])
+    assert c._to_document(PEER_REVIEW, {"key": "f"}, "Technological") is None
+
+
+def test_the_reviewed_paper_itself_is_kept():
+    """The filter must remove the reviews, not the literature they review."""
+    c = _crossref(exclude_types=["peer-review", "component"])
+    paper = {**PEER_REVIEW, "DOI": "10.1002/eng2.70518", "type": "journal-article"}
+    doc = c._to_document(paper, {"key": "f"}, "Technological")
+    assert doc is not None and doc["native_id"] == "10.1002/eng2.70518"
+
+
+def test_back_matter_titled_references_is_excluded():
+    c = _crossref(exclude_titles=["references"])
+    item = {"DOI": "10.1/x", "title": ["References"], "type": "book-chapter"}
+    assert c._to_document(item, {"key": "f"}, "Technological") is None
+
+
+def test_nothing_is_excluded_when_the_lists_are_empty():
+    """An unconfigured collector must behave as it did before this change."""
+    c = _crossref()
+    assert c._to_document(PEER_REVIEW, {"key": "f"}, "Technological") is not None
+
+
+# --- gdelt windowing ------------------------------------------------------
+#
+# `timespan=24m` returns the newest 250 articles and nothing older, because
+# artlist sorts most-recent-first. Every GDELT document on the 2026-08-30 run
+# carried a 2026 date as a result. These pin the chunked replacement.
+
+
+def test_windows_are_contiguous_and_cover_the_whole_span():
+    from src.collectors.gdelt import _windows
+
+    windows = _windows(24, 4)
+    assert len(windows) == 4
+    for earlier, later in zip(windows, windows[1:]):
+        assert earlier[1] == later[0], "a gap between windows is lost coverage"
+
+
+def test_windows_run_oldest_first():
+    """A frame that dies partway keeps the recent end, which matters most."""
+    from src.collectors.gdelt import _windows
+
+    starts = [start for start, _ in _windows(24, 4)]
+    assert starts == sorted(starts)
+
+
+def test_a_single_chunk_reproduces_the_old_full_width_request():
+    from src.collectors.gdelt import _windows
+
+    (start, end), = _windows(24, 1)
+    assert _windows(24, 4)[0][0] == start
+    assert _windows(24, 4)[-1][1] == end
+
+
+def test_windows_use_gdelts_datetime_stamp_format():
+    from src.collectors.gdelt import _windows
+
+    for start, end in _windows(24, 4):
+        assert len(start) == 14 and start.isdigit()
+        assert len(end) == 14 and end.isdigit()
+
+
+def test_a_wider_span_reaches_further_back():
+    from src.collectors.gdelt import _windows
+
+    assert _windows(24, 4)[0][0] < _windows(12, 4)[0][0]

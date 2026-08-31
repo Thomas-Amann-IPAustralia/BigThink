@@ -139,7 +139,7 @@ def run(
             logger.error("Could not construct collector %s: %s", source, exc)
             db.log_collection(conn, run_id, source, "*", "failed", 0, f"init: {exc}")
 
-    totals = {"fetched": 0, "new": 0, "failed_pairs": 0}
+    totals = {"fetched": 0, "new": 0, "failed_pairs": 0, "partial_pairs": 0}
     started = time.monotonic()
 
     # Circuit breaker. A PermanentError is by definition not frame-specific —
@@ -164,6 +164,7 @@ def run(
                 totals["failed_pairs"] += 1
                 continue
 
+            collector.begin_frame()
             try:
                 docs = list(collector.collect(query, frame, start_year, end_year))
             except PermanentError as exc:
@@ -193,19 +194,46 @@ def run(
             new = db.upsert_documents(conn, docs)
             totals["fetched"] += len(docs)
             totals["new"] += new
-            db.log_collection(conn, run_id, source, frame_key, "success", len(docs))
-            logger.info(
-                "[%s/%s] %d fetched, %d new (corpus %d)",
-                frame_key, source, len(docs), new, db.count_documents(conn),
+
+            # A collector that handled its own failure returns normally, so the
+            # absence of an exception is not evidence the query succeeded. Ask
+            # the collector what went wrong before recording a status: without
+            # this, a frame that fetched nothing because the API dropped every
+            # connection is written to `collection_log` as `success` with zero
+            # records, and the run reports a clean sweep it did not have.
+            incidents = collector.incidents
+            if not incidents:
+                status = "success"
+            elif docs:
+                status = "partial"
+                totals["partial_pairs"] += 1
+            else:
+                status = "failed"
+                totals["failed_pairs"] += 1
+
+            db.log_collection(
+                conn, run_id, source, frame_key, status, len(docs),
+                "; ".join(incidents),
+            )
+            log = logger.info if status == "success" else logger.warning
+            log(
+                "[%s/%s] %s: %d fetched, %d new (corpus %d)%s",
+                frame_key, source, status, len(docs), new, db.count_documents(conn),
+                f" — {'; '.join(incidents)}" if incidents else "",
             )
 
     elapsed = time.monotonic() - started
     for source, reason in retired.items():
         logger.warning("Source retired during this run — %s: %s", source, reason)
-    status = "success" if totals["failed_pairs"] == 0 else "partial"
+    status = (
+        "success"
+        if totals["failed_pairs"] == 0 and totals["partial_pairs"] == 0
+        else "partial"
+    )
     message = (
         f"{totals['fetched']} fetched, {totals['new']} new, "
-        f"{totals['failed_pairs']} failed/skipped pairs in {elapsed:.0f}s"
+        f"{totals['failed_pairs']} failed/skipped pairs, "
+        f"{totals['partial_pairs']} partial in {elapsed:.0f}s"
     )
     db.log_stage_finish(
         conn, entry_id, status,

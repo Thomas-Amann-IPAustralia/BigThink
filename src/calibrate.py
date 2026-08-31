@@ -31,11 +31,21 @@ from src.config import get, load_config, resolve_path, topic_similarity_threshol
 from src.embeddings import build_embedder
 from src.errors import insufficient_data_error
 from src.normalise import percentile_rank
-from src.topics import cluster_agglomerative, label_topics
+from src.topics import cluster_agglomerative, cluster_leader, label_topics
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SWEEP = [0.14, 0.18, 0.22, 0.26, 0.28, 0.30, 0.34, 0.38, 0.42, 0.50, 0.60, 0.70]
+#: Sweep ranges are per method, because a threshold means a different thing
+#: under each: `leader` compares a document to a centroid, `agglomerative` the
+#: mean pairwise similarity between two clusters' members. Measured on 2,987
+#: real OpenAlex documents under `hashing`, mean pairwise cosine was 0.075 and
+#: the 99th percentile 0.191 — so a sweep starting at 0.14 would show
+#: `agglomerative` nothing but its collapse.
+DEFAULT_SWEEP_BY_METHOD = {
+    "agglomerative": [0.06, 0.08, 0.10, 0.12, 0.14, 0.16, 0.18, 0.20, 0.24],
+    "leader": [0.14, 0.18, 0.22, 0.26, 0.28, 0.30, 0.34, 0.38, 0.42, 0.50, 0.60, 0.70],
+}
+DEFAULT_SWEEP = DEFAULT_SWEEP_BY_METHOD["agglomerative"]
 
 
 def _load_forming_corpus(config: dict[str, Any]) -> tuple[np.ndarray, list[str], int]:
@@ -65,12 +75,18 @@ def sweep_threshold(
     vectors, texts, total = _load_forming_corpus(config)
     n = len(vectors)
     active = topic_similarity_threshold(config)
+    method = str(get(config, "emergence", "topics", "method", default="agglomerative"))
     min_topic_size = int(get(config, "emergence", "topics", "min_topic_size", default=8))
     max_topics = int(get(config, "emergence", "topics", "max_topics", default=120))
 
+    # Sweep the method the pipeline will actually run. Sweeping one method and
+    # configuring another is the mistake this whole file exists to prevent.
+    cluster = cluster_leader if method == "leader" else cluster_agglomerative
+
     print(
         f"\nCorpus: {total:,} documents, {n:,} from topic-forming sources.\n"
-        f"Backend: {get(config, 'embeddings', 'backend', default='hashing')} "
+        f"Method: {method}  ·  Backend: "
+        f"{get(config, 'embeddings', 'backend', default='hashing')} "
         f"(active threshold {active}).\n"
     )
     print(f"{'thresh':>7s} {'topics':>7s} {'assigned':>9s} {'assign%':>8s} "
@@ -79,7 +95,7 @@ def sweep_threshold(
 
     results = []
     for threshold in values:
-        topics = cluster_agglomerative(
+        topics = cluster(
             vectors, threshold=threshold,
             min_topic_size=min_topic_size, max_topics=max_topics,
         )
@@ -183,9 +199,11 @@ def main(argv: list[str] | None = None) -> int:
     config = load_config(args.config)
 
     if args.what == "threshold":
+        method = str(get(config, "emergence", "topics", "method", default="agglomerative"))
         values = (
             [float(v) for v in args.values.split(",") if v.strip()]
-            if args.values else DEFAULT_SWEEP
+            if args.values
+            else DEFAULT_SWEEP_BY_METHOD.get(method, DEFAULT_SWEEP)
         )
         sweep_threshold(config, values, show_labels=args.show_labels)
     else:

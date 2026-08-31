@@ -1,7 +1,7 @@
 {
-  "run_id": "2026-08-30",
-  "documents": 7501,
-  "topics": 15,
+  "run_id": "2026-08-31",
+  "documents": 15036,
+  "topics": 120,
   "slices": 9,
   "span": "2018\u20132026",
   "backend": "hashing"

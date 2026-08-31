@@ -39,6 +39,7 @@ class DataGovAuCollector(Collector):
 
         payload = self.fetch_json(API_URL, {"q": query, "rows": rows})
         if not payload.get("success"):
+            self.note_incident("CKAN returned success=false")
             logger.warning("CKAN returned success=false for %r", query)
             return
 

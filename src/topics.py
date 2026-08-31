@@ -1,24 +1,54 @@
 """
 src/topics.py — topic formation and labelling.
 
-Groups documents into topics and gives each a readable label. Two methods:
+Groups documents into topics and gives each a readable label. Three methods:
 
-  agglomerative  Deterministic centroid clustering over the embedding space,
-                 numpy only. Single leader pass, then one reassignment pass,
-                 then a merge pass. Default.
+  agglomerative  True average-linkage agglomerative clustering over cosine
+                 similarity, numpy only. Order-invariant. Default.
+
+  leader         Sequential nearest-centroid ("leader") clustering, then one
+                 reassignment pass, then a merge pass. The pre-2026-08-30
+                 default, kept so an old run can be reproduced from its config
+                 snapshot. See the warning below before choosing it.
 
   bertopic       Delegates to BERTopic when requirements-ml.txt is installed.
                  Better topics, heavy dependency, non-deterministic unless UMAP
                  is seeded.
+
+WHY `leader` WAS REPLACED (measured on the 2026-08-30 run)
+
+`leader` updates a cluster's centroid in place as it accretes, which creates a
+feedback loop: a growing cluster's centroid drifts toward the corpus mean, a
+mean-ward centroid resembles everything, so it absorbs more. The 2026-08-30 run
+recorded the end state of that loop. Its largest topic held 1,497 documents —
+57% of everything assigned — under the incoherent label "image / patent /
+learning / watermark", and its stored novelty of 0.045 means its centroid sat
+at cosine 0.955 from the corpus centroid, against 0.12-0.43 for every other
+topic. It was not a large topic. It was the corpus mean with a label on it.
+
+Two aggravating factors, both now gone by construction:
+
+  * Documents arrive `ORDER BY published_date`, so clusters were seeded by the
+    oldest documents and spent eight years accreting. A topic first appearing
+    in 2024 had to out-compete centroids that had already absorbed everything
+    before it — backwards, in an instrument built to find the new.
+  * On reaching `max_topics` the leader pass silently dropped every later
+    unmatched document, and under chronological ordering those were the recent
+    ones.
+
+Average linkage compares a candidate against the *mean pairwise similarity* to
+a cluster's members rather than against its centroid, so a bloated cluster
+becomes progressively harder to join instead of easier. It is also
+order-invariant, so the seeding bias cannot exist — pinned by
+`test_average_linkage_is_order_invariant`.
 
 WHY NOT JUST BERTOPIC
 
 The proposal names BERTopic, and it is the right destination. But BERTopic
 brings UMAP and HDBSCAN, whose output shifts between runs unless carefully
 seeded — and this pipeline's whole value is that a score can be compared with
-last month's. The agglomerative method is worse at finding topics and perfect
-at reproducing them, which is the right trade while the method is being
-calibrated. Switch once the weights are settled.
+last month's. Note that this argument has still never been *measured*; the
+bake-off harness that would settle it is not built yet.
 
 LABELLING
 
@@ -73,7 +103,147 @@ class Topic:
 # ---------------------------------------------------------------------------
 
 
+#: Guard on the pairwise similarity matrix. n=12,000 is ~576 MB at float32,
+#: which fits a GitHub Actions runner; beyond that the operator should say so
+#: deliberately rather than discover it as an OOM kill halfway through a scan.
+_MAX_PAIRWISE = 12_000
+
+
 def cluster_agglomerative(
+    vectors: np.ndarray,
+    *,
+    threshold: float,
+    min_topic_size: int,
+    max_topics: int,
+    max_pairwise: int = _MAX_PAIRWISE,
+) -> list[Topic]:
+    """Average-linkage agglomerative clustering over cosine similarity.
+
+    Repeatedly merges the two clusters with the highest mean pairwise
+    similarity, stopping when the best remaining pair falls below `threshold`.
+    Clusters smaller than `min_topic_size` are dropped rather than forced into
+    a neighbour — an unassignable document is noise for this purpose, and
+    attaching it would corrupt the topic it landed in.
+
+    Two properties matter and neither is incidental:
+
+    * **Order-invariant.** The result depends on the vectors, not the sequence
+      they arrive in, so the chronological ordering of the corpus cannot bias
+      which topics form. `cluster_leader` had exactly that bias.
+    * **Resistant to mega-clusters.** Linkage is the mean similarity between
+      two clusters' members, not the similarity to a centroid. A cluster that
+      has absorbed a lot of unrelated material has a low mean similarity to
+      anything new, so it becomes harder to join as it grows. Under
+      `cluster_leader` the opposite was true.
+
+    Similarities are updated with the Lance-Williams recurrence rather than
+    recomputed from members, which is what keeps this O(n^2) rather than
+    O(n^3): merging clusters a and b of sizes na, nb gives, for every other
+    cluster x, ``sim(ab, x) = (na*sim(a,x) + nb*sim(b,x)) / (na + nb)``.
+    """
+    n = len(vectors)
+    if n == 0:
+        return []
+    if n > max_pairwise:
+        raise ValueError(
+            f"agglomerative clustering needs an {n}x{n} similarity matrix "
+            f"(~{n * n * 4 / 1e9:.1f} GB at float32), above the {max_pairwise} "
+            "document guard. Raise emergence.topics.max_pairwise if the machine "
+            "has the memory, or use method: leader."
+        )
+
+    # Documents with no usable text cannot cluster; excluding them up front
+    # keeps them out of every centroid rather than dragging one toward zero.
+    live = np.flatnonzero(np.any(vectors, axis=1))
+    if len(live) < 2:
+        return []
+    v = np.asarray(vectors[live], dtype=np.float32)
+
+    sims = v @ v.T
+    np.fill_diagonal(sims, -np.inf)
+
+    sizes = np.ones(len(live), dtype=np.float64)
+    active = np.ones(len(live), dtype=bool)
+    members: list[list[int]] = [[i] for i in range(len(live))]
+
+    # Nearest-neighbour cache. Merging can only lower a similarity (the merged
+    # value is a weighted mean of the two), so a cached value is an upper
+    # bound: revalidating the current maximum before acting on it is enough to
+    # keep the choice exact.
+    nn_sim = sims.max(axis=1)
+    nn_idx = sims.argmax(axis=1)
+
+    while True:
+        candidate = int(np.argmax(np.where(active, nn_sim, -np.inf)))
+        best = nn_sim[candidate]
+        if not np.isfinite(best) or best < threshold:
+            break
+
+        other = int(nn_idx[candidate])
+        if not active[other]:
+            row = np.where(active, sims[candidate], -np.inf)
+            row[candidate] = -np.inf
+            nn_idx[candidate] = int(np.argmax(row))
+            nn_sim[candidate] = row[nn_idx[candidate]]
+            continue
+
+        fresh = float(sims[candidate, other])
+        if fresh < best - 1e-9:
+            nn_sim[candidate] = fresh
+            continue
+
+        a, b = (candidate, other) if candidate < other else (other, candidate)
+        total = sizes[a] + sizes[b]
+        sims[a] = (sizes[a] * sims[a] + sizes[b] * sims[b]) / total
+        sims[:, a] = sims[a]
+        sims[a, a] = -np.inf
+        sims[b, :] = -np.inf
+        sims[:, b] = -np.inf
+
+        members[a].extend(members[b])
+        members[b] = []
+        sizes[a] = total
+        active[b] = False
+
+        row = np.where(active, sims[a], -np.inf)
+        row[a] = -np.inf
+        nn_idx[a] = int(np.argmax(row))
+        nn_sim[a] = row[nn_idx[a]]
+        nn_sim[b] = -np.inf
+
+    topics: list[Topic] = []
+    for cluster in np.flatnonzero(active):
+        indices = [int(live[i]) for i in members[cluster]]
+        if len(indices) < min_topic_size:
+            continue
+        topics.append(
+            Topic(
+                topic_id="",
+                member_indices=sorted(indices),
+                centroid=_normalise(np.asarray(vectors[indices], dtype=np.float64).mean(axis=0)),
+            )
+        )
+
+    # Largest first, then a stable tiebreak so ids are reproducible.
+    topics.sort(key=lambda t: (-t.size, t.member_indices[0]))
+    if len(topics) > max_topics:
+        logger.info(
+            "Keeping the %d largest of %d topics (emergence.topics.max_topics)",
+            max_topics, len(topics),
+        )
+        topics = topics[:max_topics]
+    for rank, topic in enumerate(topics):
+        topic.topic_id = f"T{rank:04d}"
+    assigned = sum(t.size for t in topics)
+    logger.info(
+        "Agglomerated %d documents into %d topics (>= %d members) at threshold %.2f; "
+        "%d documents (%.0f%%) assigned",
+        n, len(topics), min_topic_size, threshold, assigned, 100.0 * assigned / max(n, 1),
+    )
+    return topics
+
+
+def cluster_leader(
     vectors: np.ndarray,
     *,
     threshold: float,
@@ -81,7 +251,11 @@ def cluster_agglomerative(
     max_topics: int,
     merge_threshold: float | None = None,
 ) -> list[Topic]:
-    """Cluster L2-normalised row vectors into topics.
+    """Sequential nearest-centroid clustering. Superseded — see the module docstring.
+
+    Retained only so a run collected before 2026-08-30 can be reproduced from
+    its config snapshot. It produces a mega-cluster by construction; prefer
+    `cluster_agglomerative`.
 
     Three passes:
       1. Leader pass — assign each document to the nearest centroid above
@@ -163,7 +337,7 @@ def cluster_agglomerative(
     for rank, topic in enumerate(topics):
         topic.topic_id = f"T{rank:04d}"
     logger.info(
-        "Clustered %d documents into %d topics (>= %d members) at threshold %.2f",
+        "Leader-clustered %d documents into %d topics (>= %d members) at threshold %.2f",
         n, len(topics), min_topic_size, threshold,
     )
     return topics

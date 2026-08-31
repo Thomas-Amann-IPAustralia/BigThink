@@ -39,6 +39,11 @@ on:
         type: boolean
         required: false
         default: false
+      fresh_baseline:
+        description: "Start from an empty database (do NOT restore the corpus release)"
+        type: boolean
+        required: false
+        default: false
       log_level:
         description: "Logging level"
         required: false
@@ -63,7 +68,14 @@ jobs:
     # Collection is dominated by deliberate rate-limit delays (arXiv asks for
     # 3 s between requests; GDELT needs 6 s and still drops connections), not
     # by compute. Budget accordingly.
-    timeout-minutes: 180
+    #
+    # Raised from 180 on 2026-08-30. Two changes landed together that both cost
+    # requests: GDELT's window is now split into 4 date ranges per frame
+    # (72 artlist requests at a measured 32-36 s each, against 18 before), and
+    # the OpenAlex relevance floor no longer stops inside page one, so that
+    # source pages properly. The 2026-08-30 run took 67 minutes; budget for
+    # roughly double and leave room for GDELT's retry behaviour.
+    timeout-minutes: 240
 
     steps:
       - name: Checkout
@@ -91,8 +103,17 @@ jobs:
       # ------------------------------------------------------------------
       # Restore the accumulated corpus. A missing asset is normal on the
       # first run and must not fail the job.
+      #
+      # `fresh_baseline` skips the restore instead of deleting the release.
+      # A change to what the collectors fetch — a relevance floor, a record-type
+      # filter, a window width — makes the accumulated corpus a mixture of two
+      # methods, and scores computed over a mixture describe neither. Starting
+      # empty is the only honest response. Deleting the old release would also
+      # destroy the record of the run being corrected, so it stays; the retention
+      # rule below ages it out on its own.
       # ------------------------------------------------------------------
       - name: Restore corpus from latest data release
+        if: ${{ github.event.inputs.fresh_baseline != 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -109,6 +130,13 @@ jobs:
           else
             echo "No corpus release found — starting a fresh database."
           fi
+
+      - name: Note a fresh-baseline run
+        if: ${{ github.event.inputs.fresh_baseline == 'true' }}
+        run: |
+          mkdir -p data
+          echo "Fresh baseline: skipping corpus restore, collecting into an empty database."
+          echo "Scores from this run are NOT comparable with any earlier run."
 
       - name: Run pipeline
         env:

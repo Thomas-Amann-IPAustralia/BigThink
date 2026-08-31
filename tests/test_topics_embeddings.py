@@ -147,3 +147,135 @@ def test_unattachable_documents_are_left_out():
     before = sum(t.size for t in topics)
     _attach_documents(topics, vectors, [len(corpus)], threshold=0.18)
     assert sum(t.size for t in topics) == before
+
+
+# --- average-linkage clustering -------------------------------------------
+#
+# The 2026-08-30 run's largest topic held 57% of everything assigned, under an
+# incoherent label, with its centroid at cosine 0.955 from the corpus centroid.
+# That is what `cluster_leader` does by construction. These pin the properties
+# that make `cluster_agglomerative` unable to repeat it.
+
+
+def _blobs(rng, spec, dim=64, spread=0.06):
+    """Well-separated clusters of L2-normalised vectors."""
+    import numpy as np
+
+    parts = []
+    for size in spec:
+        centre = rng.normal(0, 1, dim)
+        centre /= np.linalg.norm(centre)
+        v = centre + rng.normal(0, spread, (size, dim))
+        parts.append(v / np.linalg.norm(v, axis=1, keepdims=True))
+    return np.vstack(parts)
+
+
+def test_average_linkage_recovers_separated_groups():
+    import numpy as np
+
+    from src.topics import cluster_agglomerative
+
+    rng = np.random.default_rng(0)
+    topics = cluster_agglomerative(
+        _blobs(rng, [40, 30, 25]), threshold=0.5, min_topic_size=8, max_topics=20
+    )
+    assert sorted(t.size for t in topics) == [25, 30, 40]
+
+
+def test_average_linkage_is_order_invariant():
+    """The chronological ordering of the corpus must not decide which topics
+    form. `cluster_leader` seeded clusters from the oldest documents, so a
+    topic first appearing in 2024 competed against centroids that had already
+    absorbed eight years of text."""
+    import numpy as np
+
+    from src.topics import cluster_agglomerative
+
+    rng = np.random.default_rng(3)
+    vectors = _blobs(rng, [30, 25, 20, 15])
+    order = rng.permutation(len(vectors))
+
+    first = cluster_agglomerative(
+        vectors, threshold=0.5, min_topic_size=8, max_topics=20
+    )
+    shuffled = cluster_agglomerative(
+        vectors[order], threshold=0.5, min_topic_size=8, max_topics=20
+    )
+
+    as_sets = {frozenset(t.member_indices) for t in first}
+    remapped = {
+        frozenset(int(order[i]) for i in t.member_indices) for t in shuffled
+    }
+    assert as_sets == remapped
+
+
+def test_documents_below_the_threshold_are_left_unassigned():
+    """Forcing an unassignable document into its nearest topic corrupts that
+    topic's centroid, which is how a catch-all starts."""
+    import numpy as np
+
+    from src.topics import cluster_agglomerative
+
+    rng = np.random.default_rng(5)
+    vectors = np.vstack([_blobs(rng, [30]), _blobs(rng, [1] * 20, spread=0.9)])
+    topics = cluster_agglomerative(
+        vectors, threshold=0.5, min_topic_size=8, max_topics=20
+    )
+    assert sum(t.size for t in topics) < len(vectors)
+
+
+def test_a_cluster_gets_harder_to_join_as_it_grows():
+    """The property `cluster_leader` lacked. Linkage is the mean pairwise
+    similarity to a cluster's members, so absorbing unrelated material lowers
+    a cluster's affinity for everything else instead of raising it."""
+    import numpy as np
+
+    from src.topics import cluster_agglomerative
+
+    rng = np.random.default_rng(11)
+    vectors = _blobs(rng, [200, 20], spread=0.06)
+    topics = cluster_agglomerative(
+        vectors, threshold=0.5, min_topic_size=8, max_topics=20
+    )
+    assert len(topics) == 2, "the large group must not swallow the small one"
+
+
+def test_the_pairwise_guard_refuses_rather_than_exhausting_memory():
+    import numpy as np
+    import pytest
+
+    from src.topics import cluster_agglomerative
+
+    with pytest.raises(ValueError, match="max_pairwise"):
+        cluster_agglomerative(
+            np.zeros((50, 4)), threshold=0.5, min_topic_size=2,
+            max_topics=10, max_pairwise=10,
+        )
+
+
+def test_empty_documents_do_not_drag_a_centroid_toward_zero():
+    import numpy as np
+
+    from src.topics import cluster_agglomerative
+
+    rng = np.random.default_rng(7)
+    vectors = np.vstack([_blobs(rng, [20]), np.zeros((5, 64))])
+    topics = cluster_agglomerative(
+        vectors, threshold=0.5, min_topic_size=8, max_topics=20
+    )
+    assigned = {i for t in topics for i in t.member_indices}
+    assert assigned.isdisjoint(range(20, 25))
+
+
+def test_max_topics_keeps_the_largest_rather_than_dropping_silently():
+    """`cluster_leader` stopped assigning once it hit the cap, so under
+    chronological ordering the documents it dropped were the recent ones."""
+    import numpy as np
+
+    from src.topics import cluster_agglomerative
+
+    rng = np.random.default_rng(13)
+    topics = cluster_agglomerative(
+        _blobs(rng, [40, 30, 20, 10]), threshold=0.5, min_topic_size=8, max_topics=2
+    )
+    assert [t.size for t in topics] == [40, 30]

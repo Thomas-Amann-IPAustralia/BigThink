@@ -626,8 +626,16 @@ RANK_WEIGHTS = CONFIG["synthesis"]["rank_weights"]
 
 print(f"Config recovered from the {snapshot[0]!r} stage log.\\n")
 print("Embedding backend :", CONFIG["embeddings"]["backend"])
-print("Clustering thresh :", CONFIG["emergence"]["topics"]
-      ["similarity_threshold_by_backend"][CONFIG["embeddings"]["backend"]])
+_topics_cfg = CONFIG["emergence"]["topics"]
+_backend = CONFIG["embeddings"]["backend"]
+_method = _topics_cfg.get("method", "agglomerative")
+# Runs before 2026-08-30 stored one threshold map keyed by backend alone, when
+# there was only one numpy method. Read either shape, so an old notebook still
+# reports the number its own run actually used.
+_thresh = (_topics_cfg.get("similarity_thresholds", {}).get(_method)
+           or _topics_cfg.get("similarity_threshold_by_backend", {}))
+print("Clustering method :", _method)
+print("Clustering thresh :", _thresh.get(_backend, "not recorded"))
 print("Time slice        :", CONFIG["emergence"]["time_slice"])
 print("Collection window :",
       CONFIG["collection"]["start_year"], "-", CONFIG["collection"]["end_year"])

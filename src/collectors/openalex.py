@@ -46,12 +46,13 @@ class OpenAlexCollector(Collector):
         max_pages = int(self.settings.get("max_pages_per_query", 5))
         min_year = max(int(self.settings.get("min_year", start_year)), start_year)
         min_relative_score = float(self.settings.get("min_relative_score", 0.4))
+        anchor_rank = int(self.settings.get("relevance_anchor_rank", 10))
         steepv = self.steepv_for(frame)
         api_key = os.environ.get("OPENALEX_API_KEY", "")
 
         cursor = "*"
         emitted = 0
-        top_score: float | None = None
+        floor: float | None = None
         for page in range(max_pages):
             params: dict[str, Any] = {
                 "search": query,
@@ -68,7 +69,10 @@ class OpenAlexCollector(Collector):
                 payload = self.fetch_json(API_URL, params)
             except RetryableError as exc:
                 # A 429 here is nearly always the daily budget, not a transient
-                # spike; retrying inside this run cannot help.
+                # spike; retrying inside this run cannot help. Recorded as an
+                # incident so the frame is logged `partial` (or `failed` if
+                # nothing was emitted) rather than passing as a clean success.
+                self.note_incident(f"page {page}: {exc}")
                 logger.warning(
                     "OpenAlex unavailable for %r (%s). Set OPENALEX_API_KEY to raise the "
                     "budget. Continuing without this source.",
@@ -81,12 +85,23 @@ class OpenAlexCollector(Collector):
                 return
             self.save_raw(f"{frame.get('key', 'query')}", page, payload)
 
-            # OpenAlex cursor paging does preserve the relevance sort (unlike
-            # Crossref's), but a `search` still returns a long weak tail. Cut it
-            # at a fraction of this query's own top score, as Crossref does.
-            if top_score is None:
-                top_score = float(results[0].get("relevance_score") or 0.0)
-            floor = (top_score or 0.0) * min_relative_score
+            # OpenAlex cursor paging preserves the relevance sort (verified
+            # 2026-08-30: monotonic across page boundaries on all 20 frames),
+            # so the first result below the floor ends the useful set.
+            #
+            # The floor is anchored on rank `relevance_anchor_rank` of the
+            # first page, not on the maximum. Anchoring on the maximum made the
+            # yield a function of how much of an outlier the top hit was rather
+            # than of how much relevant literature existed: on the 2026-08-30
+            # run it kept 3 records for `ct_quantum` and 110 for `ct_biotech`,
+            # both three OR'd phrases over hundreds of thousands of works.
+            # See Collector.relevance_floor.
+            if floor is None:
+                floor = self.relevance_floor(
+                    [w.get("relevance_score") for w in results],
+                    min_relative=min_relative_score,
+                    anchor_rank=anchor_rank,
+                )
 
             for work in results:
                 score = work.get("relevance_score")
