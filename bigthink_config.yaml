@@ -340,12 +340,15 @@ emergence:
       #            30    93     90      77.1%     11.6%
       #            50    86     83      72.6%     12.9%
       #
-      # 15 is the inflection. Below it the corpus fragments and max_topics
-      # binds (163 and 139 clusters against a cap of 120, so the cap rather
-      # than the data decides what is described). At 20 and above a single
-      # ~480-document quantum cluster forms and the largest share more than
-      # doubles. 15 gives the most topics that survive without the cap binding,
-      # the smallest largest cluster, and labels that read cleanly:
+      # 15 is the inflection. Below it the corpus fragments badly (163 and 139
+      # clusters against a cap of 120). At 20 and above a single ~480-document
+      # quantum cluster forms and the largest share more than doubles.
+      #
+      # `raw` above is from an offline sweep; the pipeline formed 124 at these
+      # settings, not 118, because the two encodings of the same corpus differ
+      # by ~3e-7 and UMAP amplifies that (PROJECT_STATE issue 20). Read the
+      # shape of the table, not the individual counts. 15 gives the smallest
+      # largest cluster and labels that read cleanly:
       # "geographical indication / gi / trade / agreement",
       # "service delivery / government / digital / public service".
       n_neighbors: 15        # local vs global structure

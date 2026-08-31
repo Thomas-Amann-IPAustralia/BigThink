@@ -20,8 +20,13 @@ calibrated on one do not transfer to the other. `backend` is therefore part of
 the vector cache key, and switching it invalidates the cache rather than
 silently mixing vector spaces.
 
-Rule of thumb: shape the pipeline on `hashing`, then switch to `bge` and
-re-calibrate before anyone treats a strategic-fit score as meaningful.
+`bge` has been the configured default since 2026-08-31, and every threshold
+under it was re-calibrated then (see PROJECT_STATE.md). `hashing` is not
+deprecated and is not going away: it is what the test suite runs on, what CI's
+main job proves the pipeline still works with, and the right choice on any
+machine without torch. The function-level defaults in this module therefore
+still name `hashing` — a config missing a backend should degrade to the one
+that needs no download, not fail.
 """
 
 from __future__ import annotations

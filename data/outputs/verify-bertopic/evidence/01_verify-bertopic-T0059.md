@@ -1,0 +1,86 @@
+# 1. arc additive / wire arc / additive manufacturing / intelligence wire
+
+`verify-bertopic-T0059` · 22 documents · 2018–2025
+
+**H1 — established (0-3 yrs): sustains the current system**  
+**weak signal — low volume, high growth (the horizon-scanning target)**
+
+## Scores
+
+| Measure | Score | What it means |
+|---|---:|---|
+| Composite rank score | 0.954 | Weighted emergence + fit + leverage |
+| Emergence (Rotolo) | 0.890 | Weighted five-attribute score |
+| — novelty | 0.255 | Distance from where the field already was |
+| — growth | 0.340 | CAGR blended with burst intensity |
+| — coherence | 0.972 | How tightly the documents cluster |
+| — impact | 0.696 | Citation percentile within source |
+| — uncertainty | 0.720 | Dispersion of actors and evidence types |
+| Strategic fit | 0.704 | Closeness to published strategy |
+| Asset leverage | 0.481 | What IP Australia would bring |
+| Opportunity index | 0.490 | **Relative only — not a market size** |
+
+- **Closest strategic objective:** SI-3 AI and Automated Decision Making in IP administration
+- **Closest agency asset:** AS-PATANALYTICS Patent Analytics Hub and Office of the Chief Economist
+- **DISR critical technology:** CT-AMM Advanced manufacturing and materials
+- **Growth:** +32.5% per year · maturity 0.91
+- **Burst periods:** 2025
+
+## Defining terms
+
+`arc additive`, `wire arc`, `additive manufacturing`, `wire`, `intelligence wire`, `manufacturing systematic`, `arc`, `patent landscape`, `systematic patent`, `additive`
+
+## Trajectory
+
+```
+   2018     2 ██
+   2019     0 
+   2020     0 
+   2021     0 
+   2022     0 
+   2023     0 
+   2024     1 █
+   2025    19 ████████████████████  ← burst
+   2026     0 
+```
+
+## Evidence
+
+The documents nearest this topic's centre. Every score above derives from this set — if the documents do not look like a coherent theme, the topic is an artefact and should be discarded.
+
+- [Review for "Artificial Intelligence in Wire Arc Additive Manufacturing: A Systematic Review and Patent Landscape Analysis"](https://doi.org/10.1002/eng2.70518/v4/review3)  
+  <sub>crossref · 2025 · peer-review</sub>
+- [Review for "Artificial Intelligence in Wire Arc Additive Manufacturing: A Systematic Review and Patent Landscape Analysis"](https://doi.org/10.1002/eng2.70518/v1/review3)  
+  <sub>crossref · 2025 · peer-review</sub>
+- [Review for "Artificial Intelligence in Wire Arc Additive Manufacturing: A Systematic Review and Patent Landscape Analysis"](https://doi.org/10.1002/eng2.70518/v2/review1)  
+  <sub>crossref · 2025 · peer-review</sub>
+- [Review for "Artificial Intelligence in Wire Arc Additive Manufacturing: A Systematic Review and Patent Landscape Analysis"](https://doi.org/10.1002/eng2.70518/v1/review1)  
+  <sub>crossref · 2025 · peer-review</sub>
+- [Review for "Artificial Intelligence in Wire Arc Additive Manufacturing: A Systematic Review and Patent Landscape Analysis"](https://doi.org/10.1002/eng2.70518/v2/review2)  
+  <sub>crossref · 2025 · peer-review</sub>
+- [Review for "Artificial Intelligence in Wire Arc Additive Manufacturing: A Systematic Review and Patent Landscape Analysis"](https://doi.org/10.1002/eng2.70518/v1/review2)  
+  <sub>crossref · 2025 · peer-review</sub>
+- [Review for "Artificial Intelligence in Wire Arc Additive Manufacturing: A Systematic Review and Patent Landscape Analysis"](https://doi.org/10.1002/eng2.70518/v3/review1)  
+  <sub>crossref · 2025 · peer-review</sub>
+- [Review for "Artificial Intelligence in Wire Arc Additive Manufacturing: A Systematic Review and Patent Landscape Analysis"](https://doi.org/10.1002/eng2.70518/v4/review2)  
+  <sub>crossref · 2025 · peer-review</sub>
+
+## Synthesis prompts
+
+This is where the pipeline stops and judgement starts. The scores above rank candidates; they do not decide anything.
+
+**Doblin Ten Types** — where could the innovation actually sit? Doblin's research found breakthroughs usually combine several types, and that product-only innovation returns the least. A regulator can innovate in process, channel and engagement, not just in what it offers.
+
+- *Configuration*: Profit model, Network, Structure, Process
+- *Offering*: Product performance, Product system
+- *Experience*: Service, Channel, Brand, Customer engagement
+
+**Seven Questions** — for the sense-making session:
+
+1. What are the sources of confidence in this reading, and of doubt?
+2. If this is true, what would have to change about how IP Australia works?
+3. Who wins and who loses if this trend continues?
+4. What would have to happen for this to become urgent within 12 months?
+5. What is already being done, by us or by others?
+6. What would we need to know to decide, and how could we find it out cheaply?
+7. If we do nothing, what is the cost in three years?

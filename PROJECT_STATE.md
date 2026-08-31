@@ -450,7 +450,42 @@ Neither is built.
 and re-read the evidence cards before believing any one large topic is really
 one thing.
 
-### 16. ~~`max_topics` is now binding~~ — NO LONGER BINDING 2026-08-31
+### The same instability, at float precision — found 2026-08-31
+
+Worse than the seed spread, and found by accident while checking the sweep
+against the real pipeline.
+
+The calibration sweep and the verification run clustered **the same 5,184
+documents** with the same model, the same seed and the same parameters. The
+sweep encoded in batches of 500; the pipeline encoded through
+`encode_with_cache` at its own batch size. The resulting vectors agree to
+**cosine 0.9999998** — maximum absolute difference 3.3e-7, mean 9.2e-9, which
+is float32 batching noise and nothing else.
+
+They produced **118 and 124 clusters** respectively.
+
+**What this does and does not mean.**
+
+- It does **not** break reproducibility in practice. Vectors are cached in
+  DuckDB's `vectors` table and re-read, so a re-analysis of a stored corpus
+  gets bit-identical input and therefore identical topics. That is why
+  `--skip-collect` remains a sound tuning loop.
+- It does mean the topic set is **not robust**, only deterministic. UMAP's
+  nearest-neighbour graph resolves near-ties differently under a perturbation
+  far below any meaningful precision, and HDBSCAN turns a changed graph into
+  changed cluster boundaries. Determinism and robustness are not the same
+  property, and only the first is tested.
+- Practically: **do not compare a topic count, a topic's size, or a topic id
+  across two runs** even of the same corpus, unless both read the same cached
+  vectors. Re-embedding on a different machine, a different batch size or a
+  different sentence-transformers build is enough to move them.
+
+This makes the "report how often a topic survives across seeds" idea above the
+right fix rather than a nice-to-have, and it should perturb the vectors too,
+not only the seed. A topic that survives both is a finding; one that does not
+is an artefact of the arithmetic.
+
+### 16. `max_topics` is now binding — STILL BINDING under BERTopic 2026-08-31
 
 The `2026-08-31` run produced exactly **120** topics, which is
 `emergence.topics.max_topics`. More clusters passed `min_topic_size` and the
@@ -459,16 +494,30 @@ silent drop, but the cap is now deciding how much of the corpus is described
 rather than acting as a safety limit. Raise it, or raise the threshold, at the
 next sweep — and treat 120 as a number that was hit rather than chosen.
 
-**Resolved by the clustering switch, not by touching the cap.** Under
-`bertopic` at `n_neighbors` 15, HDBSCAN produces **118** clusters before the
-cap, so 120 is once again a safety limit rather than the thing deciding how
-much of the corpus is described. Nothing was raised; the number simply stopped
-binding.
+**Not resolved by the clustering switch — still binding, by a little.** The
+verification run on 2026-08-31 logged:
 
-It is a near miss, not a comfortable margin — 118 against 120 — so **watch it**.
-It is also sensitive to `n_neighbors` in the obvious direction: the sweep found
-163 raw clusters at 5 and 139 at 10, both well over the cap. Lowering
-`n_neighbors` re-breaks this. Raise `max_topics` at the same time if you do.
+```
+Keeping the 120 largest of 124 topics (emergence.topics.max_topics)
+```
+
+So the cap still decides the last four. Better than the previous run, which hit
+it exactly with more clusters behind it, but not fixed.
+
+**An offline sweep said 118 and was wrong**, which is worth recording because
+of *why* — see issue 20. The sweep and the pipeline embedded the same 5,184
+documents with the same model and got vectors agreeing to a cosine of
+0.9999998; that was enough to move the cluster count from 118 to 124. Trust the
+pipeline's own log line over any reproduction of it, including this file's.
+
+The direction of `n_neighbors` is unchanged and still matters: 163 raw clusters
+at 5 and 139 at 10, both well over the cap. Lowering it makes this much worse.
+
+**Suggested fix:** raise `max_topics` to ~200. It was set as a safety limit
+against a runaway clustering pass, and at 124 it is doing something else. The
+argument for leaving it is that nothing downstream reads more than the
+shortlist — but Stage 4 percentile-ranks *within* the topic set, so the cap
+silently changes every index it computes.
 
 ### 18. ~~Two runs on one UTC day share a run_id and the second overwrites the first~~ — FIXED 2026-08-31
 
@@ -554,7 +603,7 @@ The crucial distinction the runbook draws: **a miss caused by the scan frame
 cannot be fixed by re-weighting.** Trying is the standard way to overfit a
 method like this into uselessness.
 
-### 2. ~~The asset-leverage axis is compressed and barely discriminates~~ — BACKEND SWITCHED 2026-08-31, effect not yet measured
+### 2. The asset-leverage axis is compressed and barely discriminates — STILL OPEN; the expected fix was tried 2026-08-31 and did not work
 
 Across all 15 topics it spans 0.03–0.10. Rank-normalisation means it still
 contributes its configured 25% of the *ordering*, but the underlying signal is
@@ -574,14 +623,21 @@ The clustering switch was asked for alongside the backend and reverses this
 repo's previous argument for average linkage — see the calibration log entry
 below and the decision log for why that trade was made the other way round.
 
-**What is NOT yet known.** Whether the asset-leverage axis actually widens.
-That is the point of the change and it has not been measured on a full run:
-the axis spans 0.03–0.10 under `hashing`, and nothing here yet says what it
-spans under BGE. Check it on the first full run and record the range. If it is
-still compressed, the cause was not the backend and the second-order fix below
-becomes the main one.
+**Measured on the verification run, and the axis did not widen.** Top 15 by
+rank: 0.044–0.233 (span 0.189, span/mean 1.86) under `hashing`, against
+0.369–0.501 (span 0.132, span/mean **0.30**) under BGE. The values moved up and
+the relative spread got six times *narrower*. BGE cosines have a high floor —
+unrelated text still scores ~0.35 — so everything resembles everything.
 
-**Second-order fix, still open:** expand the lexicons in
+The diagnosis was right about the cause and wrong about the cure. Stage 5
+percentile-ranks the axis before weighting, so it still contributes its 25% of
+the ordering; what a narrow spread costs is signal-to-noise, since the gaps
+deciding the order shrink relative to the level.
+
+Keep BGE regardless — it is what made the clustering work (largest topic 54% →
+5.2%). It simply is not what fixes this.
+
+**The second-order fix is now the main one:** expand the lexicons in
 `data/strategy/asset_inventory.yaml`. They currently carry 7–11 entries each;
 more entries, and more of the phrasing the literature actually uses, would
 help under either backend.
@@ -854,7 +910,15 @@ tie-breaker and not a one-off.
 
 **Measured on** the 2026-08-30 corpus restored from release
 `corpus-20260831-064857` — 7,501 documents, of which 5,184 are from forming
-sources. Embedded with `BAAI/bge-base-en-v1.5` (768 dimensions) in 780 s at
+sources. The verification run's own outputs are committed at
+`data/outputs/verify-bertopic/` — shortlist, evidence cards, topics.csv and the
+peer-review notebook — so every number below can be checked rather than taken
+on trust. It is a Stages 0 and 2-5 re-analysis (`--skip-collect`) of a restored
+corpus, not a collection run, and is named to make that obvious.
+
+**Read the evidence cards there before trusting the topics.** Nobody has. That
+is the check that caught both clustering artefacts last time, and it has not
+been done for this method. Embedded with `BAAI/bge-base-en-v1.5` (768 dimensions) in 780 s at
 ~10 documents/second on one contended core.
 
 **`n_neighbors` sweep**, seed 42, `min_topic_size` 8, `max_topics` 120. `raw`
@@ -869,10 +933,16 @@ is clusters before the cap; `largest` is a share of assigned documents:
 | 30 | 93 | 90 | 77.1% | 11.6% |
 | 50 | 86 | 83 | 72.6% | 12.9% |
 
-15 is the inflection and is what is set. Below it the corpus fragments and
-`max_topics` binds — 163 and 139 clusters against a cap of 120, so the cap
-rather than the data decides how much is described. At 20 and above a single
+15 is the inflection and is what is set. Below it the corpus fragments badly —
+163 and 139 clusters against a cap of 120. At 20 and above a single
 ~480-document quantum cluster forms and the largest share more than doubles.
+
+**These are sweep numbers, and the pipeline does not reproduce them exactly.**
+The verification run over the same 5,184 documents at the same settings formed
+**124** clusters, not 118, and `max_topics` bound (issue 16). The two encodings
+agree to a cosine of 0.9999998; that was enough. Read the shape of this table,
+not its individual counts, and take the pipeline's own log line as the number
+for any given run. See issue 20.
 
 **Seed sweep**, `n_neighbors` 15:
 
@@ -904,9 +974,15 @@ looks exactly like a working attention signal from the outside. Set to 0.90,
 operative 0.54, attaching 86%. The distribution is unimodal with no natural
 cut, so this trims the worst ~14% by judgement rather than finding a boundary.
 
-**What moved.** The largest topic went from **1,497 documents (54% of
-everything assigned)** under the previous `hashing` + `agglomerative` baseline
-to **202 documents (5.2%)**. Assigned share went from 56% to 75.0%. Labels are
+**What moved.** Measured on the verification run (`verify-bertopic`, Stages
+0 and 2-5 over the restored corpus): 120 topics formed from 5,184 forming
+documents, **4,030 assigned (78%)**, 1,121 left as HDBSCAN outliers, 114 topics
+surviving the distinct-vocabulary drop, of which 25 weak, 33 strong and 6 in
+Horizon 3.
+
+Against the previous `hashing` + `agglomerative` baseline, the largest topic
+went from **1,497 documents (54% of everything assigned)** to **5.2%**, and
+assigned share from 56% to 78%. Labels are
 legible without reading the members: "geographical indication / gi / trade /
 agreement", "service delivery / government / digital / public service",
 "watermark / image / attack / dnn", "artificial intelligence / patent /
@@ -914,15 +990,52 @@ inventorship / ai". The catch-all that dominated every previous run is gone.
 
 **What is NOT yet known, and must not be assumed.**
 
-- **Whether the asset-leverage axis widens.** That is the stated point of the
-  BGE switch (issue 2) and it is untested — these sweeps stop at topic
-  formation and never reach Stage 3. Measure the axis range on the first full
-  run.
+- ~~Whether the asset-leverage axis widens.~~ **Measured on the verification
+  run, and it does not.** See below — this was the stated point of the BGE
+  switch and it did not deliver it.
 - **Whether the shortlist is better.** No ranking here has ever been validated
   against a known past opportunity (issue 1). Cleaner topics are not a
   validated ranking, and this entry is not evidence for one.
 - **Nothing here is comparable with any earlier run.** Different vector space,
   different clustering method, different topic ids.
+- **The topic set is deterministic but not robust.** Re-embedding the same
+  corpus at a different batch size moved the cluster count by 6. See issue 20
+  before comparing any two runs' topic counts.
+- **27 of the 114 topics fall below `min_docs_per_topic` (20)** and are
+  suppressed rather than scored, which is the intended behaviour but is a
+  larger share than the previous run had.
+
+---
+
+**The asset-leverage axis did NOT widen — the expected win did not happen.**
+Top 15 by rank, the same comparison issue 2 was written from:
+
+| run | asset leverage | span | span / mean |
+|---|---|---:|---:|
+| `2026-08-31` (hashing + agglomerative) | 0.044–0.233 | 0.189 | **1.86** |
+| `verify-bertopic` (bge + bertopic) | 0.369–0.501 | 0.132 | **0.30** |
+
+The values moved *up* — the floor goes from 0.04 to 0.37 — but the spread got
+**six times narrower in relative terms**. BGE cosines have a high floor: two
+unrelated pieces of text still score ~0.35, so everything resembles everything
+and the axis separates less, not more. Strategic fit shows the same pattern
+(span 0.366 → 0.276 on the shortlist).
+
+**Why this is not a disaster, and not nothing.** Stage 5 percentile-ranks each
+axis before weighting (`percentile_rank` in `stage5_synthesis.py`), so asset
+leverage still contributes its configured 25% of the *ordering* whatever its
+raw scale — a compressed axis that orders correctly still ranks correctly. What
+a narrow spread costs is signal-to-noise: the gaps deciding the order are now
+smaller relative to the level, so the ordering is more easily moved by noise.
+
+**So issue 2 is not fixed by the backend switch, and the second-order fix
+becomes the main one:** expand the lexicons in
+`data/strategy/asset_inventory.yaml`, which carry only 7–11 entries each. The
+diagnosis in issue 2 — that `hashing` matched vocabulary rather than meaning —
+was probably right about the *cause* and wrong about the *cure*.
+
+There is still a good reason to keep BGE: it is what makes the clustering work
+(largest topic 54% → 5.2%). It just is not what fixes Stage 3.
 
 ---
 

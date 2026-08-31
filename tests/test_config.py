@@ -252,3 +252,16 @@ def test_the_bertopic_method_has_a_threshold_for_the_active_backend():
     for backend in ("bge", "hashing"):
         config["embeddings"]["backend"] = backend
         assert 0.0 < topic_similarity_threshold(config) < 1.0
+
+
+def test_the_threshold_sweep_refuses_to_run_under_bertopic():
+    """Sweeping one method while another is configured is the mistake
+    src/calibrate.py exists to prevent — and `bertopic` is now the default, so
+    the plain threshold sweep would otherwise silently report a number on
+    average linkage that the pipeline never reads."""
+    from src.calibrate import sweep_threshold
+
+    config = load_config()
+    config["emergence"]["topics"]["method"] = "bertopic"
+    with pytest.raises(Exception, match="takes no clustering threshold"):
+        sweep_threshold(config, [0.1])

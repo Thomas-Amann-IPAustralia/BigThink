@@ -86,15 +86,31 @@ def sweep_threshold(
     config: dict[str, Any], values: list[float], show_labels: bool = False
 ) -> None:
     """Cluster at each threshold and report the shape of the result."""
+    # Checked before the corpus is loaded: embedding thousands of documents and
+    # then refusing would be a several-minute way to print an error message.
+    method = str(get(config, "emergence", "topics", "method", default="agglomerative"))
+    if method == "bertopic":
+        raise insufficient_data_error(
+            "calibrate",
+            "emergence.topics.method is 'bertopic', which takes no clustering "
+            "threshold — HDBSCAN works on density, not on a cosine cut-off. "
+            "Sweeping one here would report a number the pipeline never reads.\n"
+            "  python -m src.calibrate bertopic     # seeds and n_neighbors\n"
+            "  python -m src.calibrate attachment   # the one threshold bertopic DOES use\n"
+            "To sweep this anyway, set emergence.topics.method to agglomerative first.",
+        )
+
     vectors, texts, total = _load_forming_corpus(config)
     n = len(vectors)
     active = topic_similarity_threshold(config)
-    method = str(get(config, "emergence", "topics", "method", default="agglomerative"))
     min_topic_size = int(get(config, "emergence", "topics", "min_topic_size", default=8))
     max_topics = int(get(config, "emergence", "topics", "max_topics", default=120))
 
     # Sweep the method the pipeline will actually run. Sweeping one method and
-    # configuring another is the mistake this whole file exists to prevent.
+    # configuring another is the mistake this whole file exists to prevent —
+    # so `bertopic` refuses here rather than quietly sweeping average linkage
+    # and reporting a threshold that would never be used. HDBSCAN clusters on
+    # density in UMAP space and takes no cosine cut-off at all.
     cluster = cluster_leader if method == "leader" else cluster_agglomerative
 
     print(

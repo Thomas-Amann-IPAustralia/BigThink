@@ -635,7 +635,33 @@ _method = _topics_cfg.get("method", "agglomerative")
 _thresh = (_topics_cfg.get("similarity_thresholds", {}).get(_method)
            or _topics_cfg.get("similarity_threshold_by_backend", {}))
 print("Clustering method :", _method)
-print("Clustering thresh :", _thresh.get(_backend, "not recorded"))
+if _method == "bertopic":
+    # Under BERTopic the similarity threshold does not cluster anything —
+    # HDBSCAN works on density in UMAP space and takes no cosine cut-off. It is
+    # read for one purpose only: attaching documents from non-forming sources
+    # to the nearest finished topic. Labelled for what it does, so a reviewer
+    # is not left comparing it against a clustering threshold from another run.
+    print("Attachment thresh :", _thresh.get(_backend, "not recorded"),
+          f"x ratio {_topics_cfg.get('attachment_threshold_ratio', 0.6)}")
+    # THE SEED. UMAP's initialisation is stochastic, so this is the difference
+    # between a topic set another analyst can reproduce and one they cannot.
+    # Printed from the run's own snapshot, never from today's config file.
+    _bt = _topics_cfg.get("bertopic") or {}
+    print("BERTopic seed     :", _bt.get("random_state", "NOT RECORDED"))
+    print("BERTopic UMAP     :",
+          f"n_neighbors={_bt.get('n_neighbors')}, "
+          f"n_components={_bt.get('n_components')}, "
+          f"min_dist={_bt.get('min_dist')}, metric={_bt.get('metric')}")
+    print("BERTopic HDBSCAN  :",
+          f"min_cluster_size={_bt.get('min_cluster_size') or _topics_cfg.get('min_topic_size')}, "
+          f"min_samples={_bt.get('min_samples')}, "
+          f"selection={_bt.get('cluster_selection_method')}")
+    if not isinstance(_bt.get("random_state"), int):
+        print("\\n  WARNING: no seed recorded for this run. UMAP is stochastic, "
+              "so the topics below cannot be reproduced exactly, even from this "
+              "same corpus and config.")
+else:
+    print("Clustering thresh :", _thresh.get(_backend, "not recorded"))
 print("Time slice        :", CONFIG["emergence"]["time_slice"])
 print("Collection window :",
       CONFIG["collection"]["start_year"], "-", CONFIG["collection"]["end_year"])
