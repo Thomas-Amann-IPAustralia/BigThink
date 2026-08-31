@@ -195,7 +195,7 @@ jobs:
       # rule below ages it out on its own.
       # ------------------------------------------------------------------
       - name: Restore corpus from latest data release
-        if: ${{ inputs.fresh_baseline != 'true' }}
+        if: ${{ !inputs.fresh_baseline }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -214,7 +214,7 @@ jobs:
           fi
 
       - name: Note a fresh-baseline run
-        if: ${{ inputs.fresh_baseline == 'true' }}
+        if: ${{ inputs.fresh_baseline }}
         run: |
           mkdir -p data
           echo "Fresh baseline: skipping corpus restore, collecting into an empty database."
