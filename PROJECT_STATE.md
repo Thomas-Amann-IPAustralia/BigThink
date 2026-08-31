@@ -37,16 +37,69 @@ as a finding.
 | Stage | State | Notes |
 |---|---|---|
 | 0 — Strategy encoding | **Working** | 34 references: 9 objectives, 6 initiatives, 7 DISR fields, 12 assets |
-| 1 — Signal collection | **Working, five of six sources; rebuilt 2026-08-31** | OpenAlex relevance floor re-anchored — 3,120 records from one page per frame against 592 for the whole previous run (issue 3). Crossref peer-review records excluded (issue 11). GDELT windowed for real 24-month coverage (issue 5). Failures are now recorded rather than swallowed. PatentsView still disabled (issue 6) |
-| 2 — Emergence detection | **Working; clustering replaced 2026-08-31** | True average-linkage clustering at threshold 0.14 replaces leader clustering at 0.30 — largest cluster falls from 57% of everything assigned to 10-14%. Kleinberg bursts, logistic growth curves, Rotolo five-attribute score, Three Horizons unchanged, and the Rotolo blend carries a size bias (issue 12) |
+| 1 — Signal collection | **Working, five of six sources; rebuilt and exercised 2026-08-31** | OpenAlex 581 → **3,799 documents** across all 20 frames (issue 3). Crossref peer-review records excluded (issue 11). GDELT now genuinely spans 2024–2026 (issue 5). Failures recorded rather than swallowed — which immediately surfaced **arXiv losing 6 of 9 frames to HTTP 429** (issue 14). PatentsView still disabled (issue 6) |
+| 2 — Emergence detection | **Working; clustering replaced 2026-08-31** | True average-linkage clustering at 0.14 replaces leader clustering at 0.30. On the baseline the largest topic fell from **57% of everything assigned to 3.9%**, and the Rotolo size bias went with it (emergence vs log size −0.43 → +0.05) with no weight changed — issue 12. `max_topics` is now binding (issue 16) |
 | 3 — Fit and leverage | **Working, weak** | Strategic fit is usable; asset leverage is compressed — see Open issue 2 |
 | 4 — Opportunity index | **Working, partial** | `patent_activity` has no data without PatentsView; weight redistributes automatically |
-| 5 — Synthesis | **Working** | Shortlist, 2×2 views, evidence cards, CSV, published HTML |
+| 5 — Synthesis | **Working; not yet read by a human** | Shortlist, 2×2 views, evidence cards, CSV, published HTML. **No one has read the `2026-08-31` evidence cards** — the check that caught both artefacts last time |
 | Notebook export | **Working, not yet reviewed by anyone** | `src/notebook.py`; written automatically after Stage 5. Re-derives emergence, horizon, index and composite rank from stored inputs |
 | Automation | **Fully exercised** | `tests.yml` green. `verify-access.yml` — **both credentials pass**. `scan.yml` **first ran 2026-08-30 (run 33310810297) and succeeded end to end**: 66 min collection, 0 failed pairs, site built, outputs committed, first corpus release published, R2 mirror written |
 | Tests | **223 passing** | Offline by design; every defect found so far has one |
 
-**Current baseline — `2026-08-30`** (workflow run 33310810297, the first
+**Current baseline — `2026-08-31`** (workflow run 33345343027, 164 min, from an
+empty database with all collection fixes live). **15,036 documents, 120 topics**,
+2018–2026. Stage 1 status `partial`, honestly: 7 failed and 9 partial
+source/frame pairs, all named in `collection_log`.
+
+| source | documents | span | frames | note |
+|---|---:|---|---:|---|
+| gdelt | 8,054 | 2024–2026 | 17 | the 24-month window is real for the first time |
+| **openalex** | **3,799** | 2018–2026 | **20** | was 581 across the whole previous run |
+| crossref | 2,357 | 2018–2026 | 13 | peer-review records now excluded |
+| arxiv | 678 | 2018–2026 | 3 | **6 of 9 frames lost to HTTP 429** (issue 14) |
+| datagovau | 148 | 2022–2026 | 3 | |
+
+**The clustering fix removed the size bias on its own, with no weight changed.**
+Correlation of each attribute with log(document count), 2026-08-30 → 2026-08-31:
+
+| attribute | 2026-08-30 | 2026-08-31 |
+|---|---:|---:|
+| novelty | −0.80 | **+0.05** |
+| coherence | −0.54 | +0.12 |
+| uncertainty | −0.37 | −0.15 |
+| **emergence score** | **−0.43** | **+0.05** |
+
+Issue 12 was therefore mostly a *clustering* artefact rather than a scoring one:
+under leader clustering the population was one 1,497-document mega-cluster and
+fourteen small ones, so "small" and "coherent/novel" were perfectly confounded.
+With 120 topics at a median of 74 documents the confound disappears. **This is
+the argument for not having tuned the weights first.**
+
+Largest topic **472 documents = 3.9% of everything assigned**, against 57%.
+One topic below 20 documents, none below 15, so Stage 4 suppressed nothing.
+
+| # | Topic | H | Emrg | Fit | Lev | Closest objective |
+|---:|---|:-:|---:|---:|---:|---|
+| 1 | geographical indication / protection | H2 | 0.88 | 0.31 | 0.06 | SI-1 Geographical indications |
+| 2 | artificial intelligence / patent / inventorship | H1 | 0.82 | 0.15 | 0.07 | 4.2 Digital services |
+| 3 | examination / artificial intelligence | H2 | 0.90 | 0.11 | **0.18** | SI-3 AI and ADM |
+| 4 | adm / automated / decision-making / eu | H2 | 0.69 | 0.19 | 0.07 | SI-3 AI and ADM |
+| 5 | trust / public institution / oecd | H2 | 0.70 | 0.18 | 0.06 | 1.1 Trust and confidence |
+| 6 | decision making / automated decision / adm | H2 | 0.51 | **0.34** | 0.17 | SI-3 AI and ADM |
+| 7 | service delivery / government / local | H2 | 0.73 | 0.14 | 0.05 | 4.2 Digital services |
+| 11 | prior art / patent / art search / retrieval | H2 | 0.76 | 0.07 | 0.09 | 4.1 Stewardship |
+
+**No artefact reached the shortlist.** The mappings are the ones a human would
+make — GIs → SI-1, AI examination → SI-3, ADM → SI-3, trust → 1.1, service
+delivery → 4.2, prior art → 4.1. Asset leverage now spans 0.017–0.239 against
+0.030–0.101, and strategic fit 0.031–0.338.
+
+**Still not validated.** A better-behaved instrument is not a validated one; the
+ranking remains a hypothesis until issue 1 is done. **Nobody has read the
+evidence cards for this run yet** — that is the next action, and on the last
+baseline it was the only check that caught anything.
+
+**Previous baseline — `2026-08-30`** (workflow run 33310810297, the first
 `scan.yml` execution). Collected from an empty database, because no corpus
 release existed to restore: 7,653 records fetched, 7,219 documents after
 deduplication, across 2018–2026. It was originally recorded here as having
@@ -173,7 +226,7 @@ remove the scoring pressure that promoted them. A tight cluster of near-identica
 text scores maximally on novelty and coherence whatever produced it — see issue
 12.
 
-### 12. The emergence score is structurally biased toward small topics — NEW 2026-08-31
+### 12. ~~The emergence score is structurally biased toward small topics~~ — LARGELY RESOLVED 2026-08-31
 
 Measured across the fifteen topics of the 2026-08-30 run:
 
@@ -202,16 +255,24 @@ This is the mechanism behind the artefacts, not just bad luck: the
 (0.843) on novelty 0.878 and coherence 0.779, which are *correct measurements
 of the wrong thing*.
 
-**Made more urgent by the clustering fix.** Average linkage produces more,
-smaller topics — 62 rather than 15 on a 2,987-document trial, with 36 of them
-below `min_docs_per_topic`. Ranks 2, 4, 7, 8 and 9 of that trial shortlist each
-held 8-10 documents.
+**LARGELY RESOLVED 2026-08-31 by the clustering fix, with no weight changed.**
+On the `2026-08-31` baseline the correlations are novelty **+0.05** (was −0.80),
+coherence +0.12 (−0.54), uncertainty −0.15 (−0.37), emergence **+0.05** (−0.43).
 
-**Aggravated by issue 13.** Do not fix by tuning weights until the validation
-test in issue 1 has run; that is how a method becomes a way of confirming what
-you already thought.
+The bias was mostly a property of the *population*, not of the attributes. Under
+leader clustering the run held one 1,497-document mega-cluster and fourteen
+small topics, so "small" and "coherent/novel" were the same variable. With 120
+topics at a median of 74 documents they separate.
 
-### 13. `min_docs_per_topic` does not gate anything — NEW 2026-08-31
+**Keep the issue open, at low priority.** Two of the three mechanisms are still
+real in principle — `_normalised_entropy` still divides by observed rather than
+possible categories, and novelty is still measured against an early-corpus
+centroid — so a future corpus with a lopsided size distribution would surface
+them again. The remedy is a better-behaved topic population, which is what the
+bake-off harness is for. Do not tune weights for this: the measurement above is
+what "fix the inputs before the weights" looks like when it works.
+
+### 13. `min_docs_per_topic` does not gate anything — open, but moot on the current corpus
 
 `CLAUDE.md` states the rule as "thin topics suppressed, not scored". Stage 4
 genuinely suppresses below `opportunity_index.min_documents: 15`. Stage 2's
@@ -225,10 +286,62 @@ indications, IP enforcement and trust in institutions. It got there on novelty
 0.709 and impact 0.802, both computed from ten documents.
 
 **Fix is small** (gate in `stage2_emergence._run_inner`), but it changes the
-ranking, so it belongs behind issue 1 with the rest of issue 12. The
-alternative lever is `emergence.topics.min_topic_size`, currently 8, which is a
-clustering parameter rather than a scoring one and so is safe to sweep on the
-fresh baseline.
+ranking, so it belongs behind issue 1 with the rest of issue 12.
+
+**Moot in practice on the `2026-08-31` baseline**, which is worth knowing before
+spending effort on it: of 120 topics, exactly one falls below 20 documents and
+none below 15, so Stage 4 suppressed nothing and no thin topic reached the
+shortlist. The gate is still absent and would still matter on a smaller corpus
+or a higher threshold — but the 10-document topic at rank 5 was a symptom of the
+clustering, not of the missing gate.
+
+### 14. arXiv lost 6 of 9 frames to rate limiting — NEW 2026-08-31
+
+The `2026-08-31` baseline recorded **28 HTTP 429s** from `export.arxiv.org`.
+Three frames succeeded (679 documents); six returned nothing. The previous run
+collected 2,018 documents across 9 frames, so this is a real loss of the fastest
+emergence signal in the corpus — and the first run in which it is visible rather
+than silent.
+
+**Two things to fix, in this order.**
+
+1. **A 429 kills the whole frame, not just one year.** `_collect_year` calls
+   `fetch_text` outside any try block, so once retries are exhausted the error
+   propagates out of `collect()` and every remaining year of that frame is lost.
+   The same lesson as the GDELT windows: catch per year, record an incident,
+   keep the years already collected. A frame that lost 2024 is worth far more
+   than a frame that lost everything.
+2. **`request_delay_seconds: 3.0` may no longer be enough** from a shared
+   runner. arXiv asks for 3 s; it is evidently enforcing something stricter
+   under load. Raising the delay costs run time, which is now the binding
+   constraint (see below) — so fix (1) first and re-measure before touching it.
+
+### 15. data.gov.au descriptions keep their HTML — NEW 2026-08-31
+
+`src/collectors/datagovau.py:89` takes CKAN `notes` verbatim, where
+`crossref.py` strips markup with `_strip_markup`. CKAN descriptions carry HTML,
+so list tags become tokens: the `2026-08-31` baseline produced a topic labelled
+**`li / ul / nsw / opengov`** at rank 34 on 53 documents.
+
+It did not reach the shortlist, and data.gov.au is only 148 documents, so this
+is small — but it is exactly the class of defect that produced the peer-review
+artefacts, and the fix is one function call.
+
+### 16. `max_topics` is now binding — NEW 2026-08-31
+
+The `2026-08-31` run produced exactly **120** topics, which is
+`emergence.topics.max_topics`. More clusters passed `min_topic_size` and the
+largest 120 were kept. That is the documented behaviour and it is no longer a
+silent drop, but the cap is now deciding how much of the corpus is described
+rather than acting as a safety limit. Raise it, or raise the threshold, at the
+next sweep — and treat 120 as a number that was hit rather than chosen.
+
+### 17. Run time is now the binding constraint — NEW 2026-08-31
+
+164 minutes against a 240-minute timeout, up from 67. GDELT dominates: 4 windows
+x 18 frames at a measured 32-36 s per request. The headroom is real but no
+longer generous, and both the arXiv fix (issue 14) and any increase to
+`window_chunks` spend it. Measure before adding requests.
 
 ### 1. The ranking has never been validated — do this before trusting anything
 
@@ -492,6 +605,41 @@ not a replacement.
 ## Calibration log
 
 Append to this. Every entry should say what changed, why, and what moved.
+
+### 2026-08-31 — the fresh baseline itself (run 33345343027)
+
+**What changed.** Nothing in the config. The corpus was recollected from empty
+with every fix from the entry below live. 164 minutes.
+
+**What moved, and none of it is comparable with 2026-08-30** — a different
+corpus means a different population, and every headline score is percentile-
+ranked within its run:
+
+| | 2026-08-30 | 2026-08-31 |
+|---|---:|---:|
+| documents | 7,219 | **15,036** |
+| topics | 15 | **120** (= `max_topics`, see issue 16) |
+| largest topic, share of assigned | **57%** | **3.9%** |
+| OpenAlex documents / frames | 581 / 20 | **3,799 / 20** |
+| arXiv documents / frames | 2,018 / 9 | **678 / 3** (issue 14) |
+| GDELT span | 2026 only | **2024–2026** |
+| Stage 1 reported status | `success`, 0 failures | **`partial`, 7 failed + 9 partial** |
+| emergence vs log(size) | −0.43 | **+0.05** |
+| asset leverage range | 0.030–0.101 | 0.017–0.239 |
+
+**What is newly known.** Three things worth carrying forward.
+
+1. **Fixing the clustering removed the scoring bias by itself.** No weight was
+   touched. See issue 12 — this is the strongest evidence so far for the
+   ordering rule this project already follows: inputs before weights.
+2. **The honest collection log immediately earned its keep.** It surfaced the
+   arXiv collapse (issue 14) on its first real run. Under the previous code that
+   would have been six frames silently contributing nothing while the run
+   reported a clean sweep.
+3. **Two new artefact classes are visible now that the mega-cluster is gone**,
+   both small and both cheap to fix: HTML in CKAN descriptions (issue 15) and a
+   `kilometre / square kilometre / africa / population` cluster at rank 49 that
+   is worth a look on the evidence cards.
 
 ### 2026-08-31 — clustering method replaced; OpenAlex floor re-anchored; GDELT windowed
 
@@ -783,20 +931,18 @@ Day 5.** A ranked list nobody has interrogated is not research.
 For whoever — or whichever Claude instance — picks this up next. The first two
 come out of the `2026-08-30` baseline and are both small:
 
-1. **Collect the fresh baseline.** Issues 3, 5 and 11 are all fixed and all
-   change what is collected, so the 2026-08-30 corpus is not comparable and the
-   `corpus-*` release chain must not be restored onto it. Run `scan.yml` from an
-   empty database. Watch two things: whether the chunked GDELT window survives a
-   shared runner (lower `window_chunks` rather than reverting if not), and how
-   much of the corpus OpenAlex now accounts for.
-2. **Re-sweep the clustering threshold on that corpus**:
-   `python -m src.calibrate threshold --show-labels`. The 0.14 value was swept
-   against 2,987 OpenAlex-only documents; the real corpus will also carry
-   Crossref, arXiv and data.gov.au. Sweep `min_topic_size` at the same time —
-   average linkage produces finer clusters and 8 may now be too permissive
-   (issue 13).
-3. **Read the top evidence cards before any score.** Expect more, smaller topics
-   than the 15 of the last run.
+1. ~~**Collect the fresh baseline.**~~ Done — `2026-08-31`, run 33345343027.
+2. **Read the evidence cards for the top ten.** Nobody has done this yet for
+   this run, and on the last baseline it was the only check that caught the
+   artefacts. Start with rank 12 (`copyright / page / exception limitation`,
+   292 documents, highest emergence in the run) and rank 49
+   (`kilometre km / square kilometre / africa / population`).
+3. **Fix arXiv (issue 14).** It is the fastest emergence signal in the corpus
+   and it lost two thirds of its frames. Catch per year rather than per frame.
+4. **Re-sweep the threshold and `max_topics` on this corpus**:
+   `python -m src.calibrate threshold --show-labels`. 0.14 was swept against
+   2,987 OpenAlex-only documents; this corpus is 15,036 across five sources, and
+   the topic cap is now binding (issue 16).
 4. `python -m pytest tests/ -q` — expect 223 passing. If not, start there.
 5. Read `docs/method.md` if you have not; it is what the numbers mean.
 6. `python -m src.verify_access` — confirms the OpenAlex and R2 credentials
