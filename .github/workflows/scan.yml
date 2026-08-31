@@ -156,6 +156,9 @@ jobs:
       - name: Build the published site
         run: python -m src.report --run-id ${{ steps.runid.outputs.run_id }}
 
+      - name: Build the interactive point-cloud dashboard
+        run: python -m src.dashboard --run-id ${{ steps.runid.outputs.run_id }}
+
       # ------------------------------------------------------------------
       # Commit only the small, readable outputs: the shortlist, the evidence
       # cards, topics.csv, and the peer-review notebook the pipeline writes

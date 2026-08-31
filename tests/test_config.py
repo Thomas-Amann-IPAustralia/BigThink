@@ -48,6 +48,10 @@ def test_snapshot_omits_internal_keys():
         (lambda c: c["embeddings"].update(backend="word2vec"), "embeddings.backend"),
         (lambda c: c["notebook"].update(topics_detailed=0), "notebook.topics_detailed"),
         (lambda c: c["notebook"].update(include_verification="yes"), "must be true or false"),
+        (lambda c: c["dashboard"].update(max_points=0), "dashboard.max_points"),
+        (lambda c: c["dashboard"]["projection"].update(method="tsne"), "projection.method"),
+        (lambda c: c["dashboard"]["projection"].update(n_neighbors=1), "n_neighbors"),
+        (lambda c: c["dashboard"]["projection"].update(min_dist=1.5), "min_dist"),
     ],
 )
 def test_validation_rejects_bad_values(raw, mutate, expected):
@@ -62,6 +66,14 @@ def test_config_without_a_notebook_section_still_validates(raw):
     still load and still run the pipeline."""
     config = copy.deepcopy(raw)
     del config["notebook"]
+    _validate(config)
+
+
+def test_config_without_a_dashboard_section_still_validates(raw):
+    """The dashboard is presentation, not a score — a config predating it
+    must still load and still run the pipeline."""
+    config = copy.deepcopy(raw)
+    del config["dashboard"]
     _validate(config)
 
 

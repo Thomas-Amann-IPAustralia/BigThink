@@ -561,7 +561,7 @@ the `hashing` values have, and the agglomerative one only against an
 OpenAlex-only corpus. Run `python -m src.calibrate threshold` after switching
 backends, before trusting any score computed under it.
 
-### 9. Two Stage 3/5 outputs are computed but never persisted
+### 9. ~~Two Stage 3/5 outputs are computed but never persisted~~ — FIXED 2026-08-31
 
 `best_asset` (which agency asset a topic is closest to) and `fit_quadrant`
 (its 2×2 placement) are produced in memory and reach `topics.csv`, the evidence
@@ -578,6 +578,17 @@ is simply not recoverable and is omitted from its Stage 3 table.
 from that run's CSV is missing the asset axis's most interpretable output —
 including the notebook, which is the artefact meant to explain it. Low effort
 to fix: add both to `_SCORE_COLUMNS` in `db.py` and to the dict Stage 5 writes.
+
+**Fixed 2026-08-31**, surfaced by building the dashboard (below), which needed
+both fields for its details panel and would otherwise have inherited the same
+silent gap `report.py`'s 2×2 grid already had (`row.get("fit_quadrant")`
+always read `None` there too — same root cause, now also fixed). Added
+`fit_quadrant VARCHAR` to `topic_scores` via `ALTER TABLE ... ADD COLUMN IF
+NOT EXISTS` (a restored corpus predates the column; plain `CREATE TABLE IF NOT
+EXISTS` is a no-op against it), added both columns to `_SCORE_COLUMNS` and to
+`fetch_ranked_topics`'s select list, and Stage 5 now writes both. No score
+changes — this only makes two already-computed values readable from the
+database.
 
 ### 10. ~~The R2 key pair has no rights on `bigthink-corpus`~~ — RESOLVED 2026-08-30
 
@@ -995,6 +1006,15 @@ come out of the `2026-08-30` baseline and are both small:
    the next time it is generated.
 9. Work the day plan above from wherever it has got to.
 10. Append to the calibration log whenever you change a number.
+11. **Check the dashboard on the next real scan.** `src/dashboard.py`
+    (`docs/dashboard.html`, linked from the top of `docs/index.html`) was
+    added 2026-08-31 and exercised against synthetic fixtures and a headless
+    browser, but not yet against a real corpus — `scan.yml` builds it, but no
+    scheduled run has done so yet at time of writing. Confirm it renders on
+    the published Pages site, that UMAP (not the PCA fallback) is what
+    actually ran (`docs/dashboard.html` embeds `"projection_method"` in its
+    data — check it says `"umap"`), and that install time for `umap-learn`/
+    `scikit-learn` did not meaningfully eat into the run-time budget (issue 17).
 
 ### Things not to do
 
@@ -1017,7 +1037,7 @@ come out of the `2026-08-30` baseline and are both small:
 | `PATENTSVIEW_API_KEY` | **Not set.** No patent signal (issue 6) |
 | Crossref, arXiv, GDELT, data.gov.au | Working, no keys needed |
 | GitHub Actions | `tests.yml` on push/PR — green. `scan.yml` weekly Sun 19:00 UTC — **first ran 2026-08-30 (run 33310810297) and succeeded end to end.** Every step passed: corpus restore (no-op, nothing to restore), 66 min collection, analysis, site build, output commit, corpus release, R2 mirror, artefact upload |
-| GitHub Pages | `docs/` is built by `src.report`; Pages needs enabling in repository settings |
+| GitHub Pages | `docs/` is built by `src.report` (ranked shortlist) and, **new 2026-08-31**, `src.dashboard` (interactive point-cloud explorer, `docs/dashboard.html`, linked from the top of the shortlist). Pages needs enabling in repository settings |
 | Local corpus | `data/bigthink.duckdb`, gitignored, ~10 MB at 7,780 documents |
 | Cloudflare R2 | **Working, and now carrying a real corpus.** Verified 2026-08-30, then exercised for real by the baseline run: `Pushed data/bigthink.duckdb -> r2://bigthink-corpus/bigthink.duckdb`. Bucket `bigthink-corpus` in the **eu** jurisdiction (`storage.r2.jurisdiction: eu` — not reachable from the default endpoint; see issue 10) |
 | Corpus release | **Exists for the first time.** The baseline run published the first `corpus-*` Release asset. Before 2026-08-30 there were none, which is why that run collected from an empty database. This is the state `scan.yml` restores from |
