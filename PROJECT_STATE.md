@@ -915,6 +915,63 @@ It did not reach the shortlist, and data.gov.au is only 148 documents, so this
 is small — but it is exactly the class of defect that produced the peer-review
 artefacts, and the fix is one function call.
 
+### 33. The map legend lists topics that have no visible points — NEW 2026-09-01
+
+`src/dashboard_assets/map.js:407` builds the topic legend from the full topic
+list and gives each entry `n: counts[i] || 0`, where `counts` is computed only
+over points surviving the current filter. Nothing removes the zero entries.
+
+With no filter active every topic has points, so the defect is invisible — and
+the entries sort by descending count and cut off at 80, which hides the rest.
+The moment any filter narrows the corpus (year range, source checkbox, horizon
+or signal toggle, shortlist-only, topic search), topics whose documents were all
+filtered out remain in the rail showing `0`, and rise into the visible 80 as
+others fall away.
+
+**Why this is worth fixing rather than tolerating.** It reads as a fixed roster
+of categories that documents fall into, which is the exact inverse of what the
+method does — the topics are an output of clustering this corpus, not an input.
+Reported by the repo owner, who drew precisely that inference from the UI. It is
+the same class of defect as issue 11: nothing fails, and the reader is misled.
+
+The other legends (horizon, signal, source, STEEPV) also enumerate fixed arrays,
+but there the zero entries are correct — those categories *are* pre-defined, and
+showing one at 0 tells the reader their filter excluded it.
+
+**Fix**: drop zero-count entries when `colorBy === "topic"`, or mark them as
+filtered out. One condition.
+
+### 34. BGE silently truncates any document over 512 tokens — NEW 2026-09-01
+
+`src/embeddings.py:289` calls `SentenceTransformer.encode()` with no length
+handling. `bge-base-en-v1.5` is BERT-base, so its ceiling is 512 tokens and
+sentence-transformers truncates past it without a warning, an error or a log
+line. Roughly 350-400 English words reach the vector; anything beyond is
+discarded silently.
+
+Mostly it does not bite — GDELT carries headlines only (~70 characters, no
+abstract) and a typical research abstract is 150-300 words. The exception is
+**data.gov.au, whose `notes` are capped at 4,000 characters** in
+`datagovau.py:89`, routinely 600-900 tokens. That is the same source already
+implicated in issue 15, and plausibly part of why its clusters label badly.
+
+**Two reasons this is more than a rounding error:**
+
+* **It is silent, in a repo that is loud everywhere else.** Collectors record
+  incidents, the dashboard measures its own projection distortion, a long
+  `Retry-After` escalates and says so. This degradation leaves no trace in the
+  run log or the config snapshot.
+* **The two backends disagree, and so do the embedding and the label.**
+  `hashing` has no token ceiling and sees the whole string; `bge` sees the first
+  512 tokens. `label_topics` uses the full text for c-TF-IDF either way. So a
+  long document can be described by terms that played no part in placing it in
+  its cluster — the label and the geometry are computed over different text.
+
+**Fix**: count documents exceeding `self._model.max_seq_length` at embed time
+and log the count and the worst offender, so a run states how much text it
+dropped. Truncating deliberately (title + first N words) or chunk-and-mean are
+larger changes and should be argued separately.
+
 ### 20. BERTopic's topic set is not stable across seeds — NEW 2026-08-31
 
 The seed sweep behind the 2026-08-31 calibration entry found a bimodal result,
