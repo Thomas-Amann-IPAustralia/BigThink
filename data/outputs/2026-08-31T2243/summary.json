@@ -1,0 +1,499 @@
+{
+  "run_id": "2026-08-31T2243",
+  "generated_at": "2026-09-01T03:06:43.106430+00:00",
+  "documents": 16239,
+  "topics": 115,
+  "slices": 9,
+  "span": "2018\u20132026",
+  "backend": "bge",
+  "config_snapshot": {
+    "collection": {
+      "end_year": 2026,
+      "scan_frame_file": "data/strategy/scan_frame.yaml",
+      "sources": {
+        "arxiv": {
+          "enabled": true,
+          "max_request_delay_seconds": 20.0,
+          "max_results_per_query": 270,
+          "max_results_per_year": 30,
+          "rate_limit_backoff_factor": 1.5,
+          "request_delay_seconds": 3.0
+        },
+        "crossref": {
+          "enabled": true,
+          "exclude_titles": [
+            "references",
+            "bibliography",
+            "index"
+          ],
+          "exclude_types": [
+            "peer-review",
+            "component"
+          ],
+          "max_pages_per_query": 2,
+          "min_relative_score": 0.4,
+          "relevance_anchor_rank": 1,
+          "rows_per_query": 100
+        },
+        "datagovau": {
+          "enabled": true,
+          "rows_per_query": 50
+        },
+        "gdelt": {
+          "enabled": true,
+          "max_records_per_query": 250,
+          "timespan_months": 24,
+          "window_chunks": 4
+        },
+        "openalex": {
+          "enabled": true,
+          "max_pages_per_query": 5,
+          "min_relative_score": 0.4,
+          "min_year": 2018,
+          "per_page": 200,
+          "relevance_anchor_rank": 10
+        },
+        "patentsview": {
+          "enabled": false,
+          "max_pages_per_query": 5,
+          "rows_per_query": 1000
+        }
+      },
+      "start_year": 2018,
+      "steepv_default_by_source": {
+        "arxiv": "Technological",
+        "crossref": "Technological",
+        "datagovau": "Political",
+        "gdelt": "Social",
+        "openalex": "Technological",
+        "patentsview": "Technological"
+      }
+    },
+    "dashboard": {
+      "enabled": true,
+      "fidelity": {
+        "enabled": true,
+        "k": 15,
+        "max_points": 25000,
+        "neighbour_links": 8,
+        "sample": 2500
+      },
+      "max_points": 25000,
+      "projection": {
+        "follow_clustering": true,
+        "method": "umap",
+        "metric": "cosine",
+        "min_dist": 0.1,
+        "n_neighbors": 15,
+        "random_state": 42
+      }
+    },
+    "embeddings": {
+      "backend": "bge",
+      "bge_model": "BAAI/bge-base-en-v1.5",
+      "cache_vectors": true,
+      "hashing_dimensions": 2048
+    },
+    "emergence": {
+      "burst": {
+        "gamma": 1.0,
+        "s": 2.0
+      },
+      "min_docs_per_topic": 20,
+      "min_slices_for_growth": 4,
+      "rotolo_weights": {
+        "coherence": 0.15,
+        "growth": 0.3,
+        "impact": 0.2,
+        "novelty": 0.25,
+        "uncertainty": 0.1
+      },
+      "three_horizons": {
+        "h1_max_maturity": 0.75,
+        "h2_max_maturity": 0.35
+      },
+      "time_slice": "year",
+      "topics": {
+        "attachment_threshold_ratio": 0.6,
+        "bertopic": {
+          "cluster_selection_method": "eom",
+          "metric": "cosine",
+          "min_cluster_size": null,
+          "min_dist": 0.0,
+          "min_samples": null,
+          "n_components": 5,
+          "n_neighbors": 15,
+          "random_state": 42
+        },
+        "forming_sources": [
+          "openalex",
+          "crossref",
+          "arxiv",
+          "datagovau",
+          "patentsview"
+        ],
+        "max_topics": 120,
+        "method": "bertopic",
+        "min_distinct_terms": 3,
+        "min_topic_size": 8,
+        "similarity_thresholds": {
+          "agglomerative": {
+            "bge": 0.45,
+            "hashing": 0.14
+          },
+          "bertopic": {
+            "bge": 0.9,
+            "hashing": 0.3
+          },
+          "leader": {
+            "bge": 0.62,
+            "hashing": 0.3
+          }
+        }
+      },
+      "weak_signal": {
+        "growth_percentile_split": 50,
+        "proportion_percentile_split": 50
+      }
+    },
+    "notebook": {
+      "enabled": true,
+      "evidence_documents_per_topic": 5,
+      "include_verification": true,
+      "topics_detailed": 8
+    },
+    "opportunity_index": {
+      "components": {
+        "attention": 0.25,
+        "attention_tone": 0.1,
+        "patent_activity": 0.15,
+        "policy_salience": 0.2,
+        "research_growth": 0.3
+      },
+      "min_documents": 15
+    },
+    "pipeline": {
+      "contact_email": "thomasamann23@gmail.com",
+      "max_retries": 3,
+      "retry_base_delay_seconds": 2.0,
+      "run_label": "ipaventures-horizon-scan",
+      "sample_limit": 50,
+      "sample_mode": false,
+      "user_agent": "IPAVentures-BigThink/0.1 (horizon scanning; +https://github.com/Thomas-Amann-IPAustralia/BigThink)"
+    },
+    "scoring": {
+      "asset_leverage": {
+        "embedding_weight": 0.6,
+        "inventory_file": "data/strategy/asset_inventory.yaml",
+        "lexicon_weight": 0.4
+      },
+      "strategic_fit": {
+        "critical_tech_bonus": 0.1,
+        "critical_tech_match": {
+          "embedding_weight": 0.7,
+          "lexicon_weight": 0.3,
+          "thresholds": {
+            "bge": null,
+            "hashing": 0.25
+          }
+        },
+        "embedding_weight": 0.7,
+        "lexicon_weight": 0.3
+      }
+    },
+    "storage": {
+      "duckdb_path": "data/bigthink.duckdb",
+      "keep_raw_payloads": true,
+      "outputs_dir": "data/outputs",
+      "r2": {
+        "bucket": "bigthink-corpus",
+        "corpus_key": "bigthink.duckdb",
+        "enabled": true,
+        "jurisdiction": "eu",
+        "raw_prefix": "raw"
+      },
+      "raw_dir": "data/raw"
+    },
+    "strategy": {
+      "critical_technologies_file": "data/strategy/critical_technologies.yaml",
+      "documents": [
+        {
+          "label": "IP Australia Strategic Corporate Plan 2026-27",
+          "path": "StrategicCorporatePlan26-27.md"
+        },
+        {
+          "label": "IP Australia Annual Report 2024-25",
+          "path": "IPA-Annual-Report-2025.md"
+        }
+      ],
+      "objectives_file": "data/strategy/objectives.yaml"
+    },
+    "synthesis": {
+      "doblin_prompt_in_cards": true,
+      "evidence_documents_per_topic": 8,
+      "rank_weights": {
+        "asset_leverage": 0.25,
+        "emergence": 0.4,
+        "strategic_fit": 0.35
+      },
+      "shortlist_size": 15
+    }
+  },
+  "shortlist": [
+    {
+      "rank": 1,
+      "topic_id": "2026-08-31T2243-T0023",
+      "label": "automated decision-making / administrative / government / decision making",
+      "horizon": "H1",
+      "signal_class": "strong",
+      "emergence_score": 0.7013157894736842,
+      "strategic_fit": 0.6729205164107203,
+      "asset_leverage": 0.44710044254114817,
+      "opportunity_index": 0.7742294117647058,
+      "index_suppressed": false,
+      "composite_rank_score": 0.9364035087719298,
+      "best_objective": "SI-3 AI and Automated Decision Making in IP administration",
+      "best_asset": "AS-EXAMINATION Examination workforce and AI/ADM trials",
+      "critical_tech": null,
+      "fit_quadrant": "act"
+    },
+    {
+      "rank": 2,
+      "topic_id": "2026-08-31T2243-T0056",
+      "label": "patent retrieval / retrieval system / information retrieval / learning prior",
+      "horizon": "H2",
+      "signal_class": "strong",
+      "emergence_score": 0.8166666666666667,
+      "strategic_fit": 0.5419612141492021,
+      "asset_leverage": 0.4375253149122725,
+      "opportunity_index": 0.6377647058823529,
+      "index_suppressed": false,
+      "composite_rank_score": 0.9100877192982457,
+      "best_objective": "4.1 Innovation and adaptiveness in stewardship of the IP rights system",
+      "best_asset": "AS-PATANALYTICS Patent Analytics Hub and Office of the Chief Economist",
+      "critical_tech": null,
+      "fit_quadrant": "act"
+    },
+    {
+      "rank": 3,
+      "topic_id": "2026-08-31T2243-T0068",
+      "label": "dashboard / digital project / queensland / contribution published",
+      "horizon": "H2",
+      "signal_class": "strong",
+      "emergence_score": 0.7548245614035087,
+      "strategic_fit": 0.53166154660985,
+      "asset_leverage": 0.4046734801299165,
+      "opportunity_index": 0.5751,
+      "index_suppressed": false,
+      "composite_rank_score": 0.8403508771929825,
+      "best_objective": "4.2 Innovative digital and data-driven customer and staff services",
+      "best_asset": "AS-RAPID IP RAPID / IP Rights Overview dashboard",
+      "critical_tech": null,
+      "fit_quadrant": "act"
+    },
+    {
+      "rank": 4,
+      "topic_id": "2026-08-31T2243-T0058",
+      "label": "intellectual property / property protection / corporate / firm",
+      "horizon": "H3",
+      "signal_class": "strong",
+      "emergence_score": 0.6859649122807017,
+      "strategic_fit": 0.5910428453304492,
+      "asset_leverage": 0.3782884741405458,
+      "opportunity_index": 0.8709999999999999,
+      "index_suppressed": false,
+      "composite_rank_score": 0.8403508771929824,
+      "best_objective": "4.1 Innovation and adaptiveness in stewardship of the IP rights system",
+      "best_asset": "AS-PATANALYTICS Patent Analytics Hub and Office of the Chief Economist",
+      "critical_tech": null,
+      "fit_quadrant": "act"
+    },
+    {
+      "rank": 5,
+      "topic_id": "2026-08-31T2243-T0010",
+      "label": "intellectual property / right / property law / ip",
+      "horizon": "H1",
+      "signal_class": "strong",
+      "emergence_score": 0.6210526315789473,
+      "strategic_fit": 0.5643328587023126,
+      "asset_leverage": 0.41190964862587004,
+      "opportunity_index": 0.681635294117647,
+      "index_suppressed": false,
+      "composite_rank_score": 0.8324561403508772,
+      "best_objective": "4.1 Innovation and adaptiveness in stewardship of the IP rights system",
+      "best_asset": "AS-PATANALYTICS Patent Analytics Hub and Office of the Chief Economist",
+      "critical_tech": null,
+      "fit_quadrant": "act"
+    },
+    {
+      "rank": 6,
+      "topic_id": "2026-08-31T2243-T0065",
+      "label": "ip / law / intellectual property / chapter",
+      "horizon": "H1",
+      "signal_class": "weak",
+      "emergence_score": 0.6521929824561403,
+      "strategic_fit": 0.5394674300068664,
+      "asset_leverage": 0.42190803487298445,
+      "opportunity_index": 0.5368823529411765,
+      "index_suppressed": false,
+      "composite_rank_score": 0.8311403508771931,
+      "best_objective": "4.1 Innovation and adaptiveness in stewardship of the IP rights system",
+      "best_asset": "AS-RAPID IP RAPID / IP Rights Overview dashboard",
+      "critical_tech": null,
+      "fit_quadrant": "act"
+    },
+    {
+      "rank": 7,
+      "topic_id": "2026-08-31T2243-T0051",
+      "label": "enforcement intellectual / property right / intellectual property / right eu",
+      "horizon": "H1",
+      "signal_class": "strong",
+      "emergence_score": 0.7793859649122807,
+      "strategic_fit": 0.537710372976184,
+      "asset_leverage": 0.3664969094713941,
+      "opportunity_index": 0.5613823529411764,
+      "index_suppressed": false,
+      "composite_rank_score": 0.8184210526315789,
+      "best_objective": "4.1 Innovation and adaptiveness in stewardship of the IP rights system",
+      "best_asset": "AS-EXAMINATION Examination workforce and AI/ADM trials",
+      "critical_tech": null,
+      "fit_quadrant": "act"
+    },
+    {
+      "rank": 8,
+      "topic_id": "2026-08-31T2243-T0037",
+      "label": "adm / decision-making / ai / automated",
+      "horizon": "H1",
+      "signal_class": "strong",
+      "emergence_score": 0.5096491228070176,
+      "strategic_fit": 0.7708446143675652,
+      "asset_leverage": 0.47670879335317184,
+      "opportunity_index": 0.7636647058823529,
+      "index_suppressed": false,
+      "composite_rank_score": 0.8061403508771929,
+      "best_objective": "SI-3 AI and Automated Decision Making in IP administration",
+      "best_asset": "AS-EXAMINATION Examination workforce and AI/ADM trials",
+      "critical_tech": null,
+      "fit_quadrant": "act"
+    },
+    {
+      "rank": 9,
+      "topic_id": "2026-08-31T2243-T0006",
+      "label": "artificial intelligence / patent / inventorship / copyright",
+      "horizon": "H2",
+      "signal_class": "strong",
+      "emergence_score": 0.506578947368421,
+      "strategic_fit": 0.7194423183979178,
+      "asset_leverage": 0.48103031386509343,
+      "opportunity_index": 0.7786235294117646,
+      "index_suppressed": false,
+      "composite_rank_score": 0.7986842105263157,
+      "best_objective": "SI-3 AI and Automated Decision Making in IP administration",
+      "best_asset": "AS-PATANALYTICS Patent Analytics Hub and Office of the Chief Economist",
+      "critical_tech": null,
+      "fit_quadrant": "act"
+    },
+    {
+      "rank": 10,
+      "topic_id": "2026-08-31T2243-T0086",
+      "label": "criminal / enforcement / ip / intellectual property",
+      "horizon": "H3",
+      "signal_class": "weak",
+      "emergence_score": 0.7521929824561403,
+      "strategic_fit": 0.5378016801058899,
+      "asset_leverage": 0.358411783943304,
+      "opportunity_index": 0.6527352941176471,
+      "index_suppressed": false,
+      "composite_rank_score": 0.7899122807017543,
+      "best_objective": "4.1 Innovation and adaptiveness in stewardship of the IP rights system",
+      "best_asset": "AS-PATANALYTICS Patent Analytics Hub and Office of the Chief Economist",
+      "critical_tech": null,
+      "fit_quadrant": "act"
+    },
+    {
+      "rank": 11,
+      "topic_id": "2026-08-31T2243-T0029",
+      "label": "indigenous / intellectual / traditional knowledge / property",
+      "horizon": "H1",
+      "signal_class": "strong",
+      "emergence_score": 0.5276315789473685,
+      "strategic_fit": 0.6107004483776691,
+      "asset_leverage": 0.44670707972257534,
+      "opportunity_index": 0.8317823529411764,
+      "index_suppressed": false,
+      "composite_rank_score": 0.7872807017543859,
+      "best_objective": "SI-5 First Nations Strategy",
+      "best_asset": "AS-FIRSTNATIONS First Nations Strategy partnerships",
+      "critical_tech": null,
+      "fit_quadrant": "act"
+    },
+    {
+      "rank": 12,
+      "topic_id": "2026-08-31T2243-T0004",
+      "label": "patent / retrieval / document / classification",
+      "horizon": "H2",
+      "signal_class": "strong",
+      "emergence_score": 0.594298245614035,
+      "strategic_fit": 0.5325593129646551,
+      "asset_leverage": 0.4433947273453739,
+      "opportunity_index": 0.7386235294117647,
+      "index_suppressed": false,
+      "composite_rank_score": 0.7864035087719299,
+      "best_objective": "4.1 Innovation and adaptiveness in stewardship of the IP rights system",
+      "best_asset": "AS-PATANALYTICS Patent Analytics Hub and Office of the Chief Economist",
+      "critical_tech": null,
+      "fit_quadrant": "act"
+    },
+    {
+      "rank": 13,
+      "topic_id": "2026-08-31T2243-T0053",
+      "label": "ai / patent / invention / inventorship",
+      "horizon": "H1",
+      "signal_class": "strong",
+      "emergence_score": 0.5144736842105264,
+      "strategic_fit": 0.6227930139801918,
+      "asset_leverage": 0.4632679759868465,
+      "opportunity_index": 0.8070117647058823,
+      "index_suppressed": false,
+      "composite_rank_score": 0.7828947368421053,
+      "best_objective": "SI-3 AI and Automated Decision Making in IP administration",
+      "best_asset": "AS-PATANALYTICS Patent Analytics Hub and Office of the Chief Economist",
+      "critical_tech": null,
+      "fit_quadrant": "act"
+    },
+    {
+      "rank": 14,
+      "topic_id": "2026-08-31T2243-T0007",
+      "label": "ai / chatgpt / education / generative",
+      "horizon": "H1",
+      "signal_class": "strong",
+      "emergence_score": 0.6539473684210526,
+      "strategic_fit": 0.5378689079805221,
+      "asset_leverage": 0.36348454163818517,
+      "opportunity_index": 0.7082058823529411,
+      "index_suppressed": false,
+      "composite_rank_score": 0.7710526315789474,
+      "best_objective": "4.2 Innovative digital and data-driven customer and staff services",
+      "best_asset": "AS-EXAMINATION Examination workforce and AI/ADM trials",
+      "critical_tech": null,
+      "fit_quadrant": "act"
+    },
+    {
+      "rank": 15,
+      "topic_id": "2026-08-31T2243-T0033",
+      "label": "llm / chatgpt / medical / language",
+      "horizon": "H1",
+      "signal_class": "strong",
+      "emergence_score": 0.7592105263157896,
+      "strategic_fit": 0.5048474709471588,
+      "asset_leverage": 0.3601775617343574,
+      "opportunity_index": 0.49251764705882345,
+      "index_suppressed": false,
+      "composite_rank_score": 0.7657894736842106,
+      "best_objective": "SI-3 AI and Automated Decision Making in IP administration",
+      "best_asset": "AS-EXAMINATION Examination workforce and AI/ADM trials",
+      "critical_tech": null,
+      "fit_quadrant": "act"
+    }
+  ]
+}

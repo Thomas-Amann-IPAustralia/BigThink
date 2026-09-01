@@ -1,8 +1,8 @@
 {
-  "run_id": "2026-08-31",
-  "documents": 7501,
-  "topics": 102,
+  "run_id": "2026-08-31T2243",
+  "documents": 16239,
+  "topics": 115,
   "slices": 9,
   "span": "2018\u20132026",
-  "backend": "hashing"
+  "backend": "bge"
 }
