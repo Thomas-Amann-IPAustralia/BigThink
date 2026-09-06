@@ -1,7 +1,7 @@
 {
-  "run_id": "2026-08-31T2243",
-  "documents": 16239,
-  "topics": 115,
+  "run_id": "2026-09-06T2100",
+  "documents": 17762,
+  "topics": 117,
   "slices": 9,
   "span": "2018\u20132026",
   "backend": "bge"
