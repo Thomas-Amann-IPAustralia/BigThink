@@ -20,11 +20,14 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Generator, Iterable, Sequence
 
 import duckdb
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Schema
@@ -205,6 +208,38 @@ def get_connection(db_path: str | Path) -> Generator[duckdb.DuckDBPyConnection, 
         yield conn
     finally:
         conn.close()
+
+
+def checkpoint(conn: duckdb.DuckDBPyConnection) -> None:
+    """Fold the write-ahead log into the database file.
+
+    DuckDB writes changes to `<db>.wal` and only folds them into the `.duckdb`
+    file on a clean close or when the log grows past its own threshold. That is
+    correct for a process that exits normally and catastrophic for one that
+    does not, because **the corpus is carried between runs as the `.duckdb`
+    file alone** — `scan.yml` publishes it as a Release asset and mirrors it to
+    R2, and neither carries the `.wal`.
+
+    Measured on the cancelled 2026-09-14 run: Stage 1 collected 10,057
+    documents over six hours and was then SIGKILLed at the job timeout, so
+    `conn.close()` never ran. The `if: always()` publish step did run, reported
+    success, and uploaded a corpus byte-identical in size to the one the run
+    started from — 220.2 MB both times, with not one of the collected
+    documents in it, including every document from the new OECD source. The
+    run reported that it had persisted a corpus, and it had not.
+
+    Calling this at frame boundaries bounds the loss to a single frame. It is
+    cheap — a checkpoint writes only what the log holds — and it is the only
+    thing that makes the published artefact mean what the workflow says it
+    means.
+    """
+    try:
+        conn.execute("CHECKPOINT")
+    except duckdb.Error as exc:
+        # A checkpoint can legitimately fail while another cursor holds a
+        # transaction open. Losing one is a smaller problem than ending a
+        # six-hour collection over it, so this warns rather than raises.
+        logger.warning("Could not checkpoint the database: %s", exc)
 
 
 def now() -> datetime:

@@ -60,7 +60,13 @@ date in `PROJECT_STATE.md`.
   absence of a key — OpenAlex is keyless *and* metered.
 - Does it carry a usable date per record? Without one it cannot contribute to
   emergence detection at all.
-- Does it add a signal the existing six do not already carry?
+- Does it add a signal the existing seven do not already carry?
+- Is its search engine one you can trust to narrow? The OECD's is not — it has
+  no relevance score, no phrase operator, and a query of `intellectual
+  property` returned 100 publications in which neither word appeared. Measure
+  this before writing the collector: the answer decides whether the collector
+  needs a relevance filter, and the filter has to run over the text the
+  pipeline actually embeds, not the text the API matched on.
 
 ### 2. Write the collector
 
@@ -128,9 +134,19 @@ collection:
     mysource: "Technological"
 ```
 
+Decide too whether the source should **form topics**
+(`emergence.topics.forming_sources`). It should if its records carry real
+abstracts; it should not if they are bare headlines — GDELT is excluded
+because 70 characters of multilingual headline at 40% of the corpus dominates
+clustering and produces topics like "aus den / australien verbannt".
+
 If the source is one of research / attention / patents, also add it to the
 matching set in `src/stage4_opportunity_index.py` so it feeds the right index
-component.
+component. **If it is none of those, add it to none of them** — each set names
+a specific claim, and an institutional source added to `RESEARCH_SOURCES`
+because it is the closest fit changes what `research_growth` means without
+changing its name. `datagovau` and `oecd` are both deliberately in no set; the
+reasoning is at the top of that file.
 
 ### 4. Test it offline, then live
 

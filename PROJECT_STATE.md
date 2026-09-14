@@ -37,15 +37,15 @@ as a finding.
 | Stage | State | Notes |
 |---|---|---|
 | 0 — Strategy encoding | **Working** | 34 references: 9 objectives, 6 initiatives, 7 DISR fields, 12 assets |
-| 1 — Signal collection | **Working, five of six sources; rebuilt and exercised 2026-08-31** | OpenAlex 581 → **3,799 documents** across all 20 frames (issue 3). Crossref peer-review records excluded (issue 11). GDELT now genuinely spans 2024–2026 (issue 5). Failures recorded rather than swallowed — which immediately surfaced **arXiv losing 6 of 9 frames to HTTP 429** (issue 14, **now fixed, not yet re-measured against the live API**). PatentsView still disabled (issue 6) |
-| 2 — Emergence detection | **Working; clustering replaced twice in two days** | Now **BGE embeddings + BERTopic over seeded UMAP + HDBSCAN** (issue 2), replacing the average linkage that had itself just replaced leader clustering. Measured on the accumulated corpus: largest topic **5.2% of assigned**, 75.0% of forming documents assigned, 112 topics, so `max_topics` no longer binds (issue 16). The seed is recorded and validated, but the topic set is **not stable across seeds** — issue 20 |
+| 1 — Signal collection | **Working, six of seven sources; OECD added and frame widened to 36, run end to end 2026-09-14** | OpenAlex 581 → **3,799 documents** across all 20 frames (issue 3). Crossref peer-review records excluded (issue 11). GDELT now genuinely spans 2024–2026 (issue 5). Failures recorded rather than swallowed — which immediately surfaced **arXiv losing 6 of 9 frames to HTTP 429** (issue 14, **now fixed, not yet re-measured against the live API**). PatentsView still disabled (issue 6). **2026-09-14: a sixth working source (`oecd`, two channels, keyless) and 15 new frames — 21 → 36. Run `2026-09-14T1447` collected all 36 frames in 174 min: corpus 18,342 → 31,513, OECD 32/32 pairs success and 1,927 documents. arXiv now retires itself on a throttled runner (issue 17) and contributed nothing. See the calibration log.** |
+| 2 — Emergence detection | **Working; 117 topics on 2026-09-14T1447, and for the first time none below `min_docs_per_topic`** | Now **BGE embeddings + BERTopic over seeded UMAP + HDBSCAN** (issue 2), replacing the average linkage that had itself just replaced leader clustering. Measured on the accumulated corpus: largest topic **5.2% of assigned**, 75.0% of forming documents assigned, 112 topics, so `max_topics` no longer binds (issue 16). The seed is recorded and validated, but the topic set is **not stable across seeds** — issue 20 |
 | 3 — Fit and leverage | **Working; the fix for its weakness is in, unmeasured** | Strategic fit is usable. Asset leverage was compressed to 0.03–0.10 under `hashing`; the BGE switch is meant to widen it and **nobody has yet checked whether it did** — see Open issue 2 |
 | 4 — Opportunity index | **Working, partial** | `patent_activity` has no data without PatentsView; weight redistributes automatically |
 | 5 — Synthesis | **Working; not yet read by a human** | Shortlist, 2×2 views, evidence cards, CSV, published HTML. **No one has read the `2026-08-31` evidence cards** — the check that caught both artefacts last time |
 | Published explorer | **Rebuilt 2026-08-31; not yet run against the real corpus** | `src/dashboard.py` + `src/dashboard_assets/`. Five views over a finished run: an interactive `docs/method.md`, the point cloud, every topic and score in a sortable table, a configurable score scatter, and a browsable copy of the run's tables. The map now follows the clustering's UMAP settings and reports trustworthiness, continuity and a per-topic neighbour-purity pair. Those figures have **not yet been produced against the real corpus** — see the calibration log for what to look for in the first ones |
 | Notebook export | **Working, not yet reviewed by anyone** | `src/notebook.py`; written automatically after Stage 5. Re-derives emergence, horizon, index and composite rank from stored inputs |
-| Automation | **Fully exercised; scan.yml reworked 2026-08-31, not yet run under the new defaults** | `tests.yml` now has a second `ml` job covering the default BGE/BERTopic path, while the first job still installs `requirements.txt` only — which keeps "runs with no torch" a tested guarantee. `verify-access.yml` — **both credentials pass**. `scan.yml` installs the ML stack only when the resolved settings need it, caches the model, takes `embedding_backend`/`clustering_method` dispatch inputs, and its timeout is 300 min (issue 17) |
-| Tests | **319 (311 passing + 8 skipped without `requirements-ml.txt`)** | Offline by design — the BERTopic tests included, since BERTopic is handed embeddings and never loads a model. They skip without `requirements-ml.txt` and run in CI's `ml` job |
+| Automation | **Fully exercised; scan.yml reworked 2026-08-31, not yet run under the new defaults** | `tests.yml` now has a second `ml` job covering the default BGE/BERTopic path, while the first job still installs `requirements.txt` only — which keeps "runs with no torch" a tested guarantee. `verify-access.yml` — **both credentials pass**. `scan.yml` installs the ML stack only when the resolved settings need it, caches the model, takes `embedding_backend`/`clustering_method` dispatch inputs, and its timeout is **360 min**, raised from 300 on 2026-09-14 for the wider frame (issue 17). It also mirrors `data/manual-upload/` to R2 |
+| Tests | **350 (342 passing + 8 skipped without `requirements-ml.txt`)** | Offline by design — the BERTopic tests included, since BERTopic is handed embeddings and never loads a model. They skip without `requirements-ml.txt` and run in CI's `ml` job |
 
 **Current baseline — `2026-08-31`** (workflow run 33345343027, 164 min, from an
 empty database with all collection fixes live). **Its outputs were overwritten and have
@@ -1117,7 +1117,51 @@ What is fixed is the *silent* collision, which only ever arose from the default.
 This is the same failure shape as issue 5 — a real event that the record showed
 as normal — and the same remedy: make the machine say what happened.
 
-### 17. Run time is now the binding constraint — NEW 2026-08-31
+### 35. A cancelled run publishes a corpus containing none of what it collected — NEW 2026-09-14, FIXED 2026-09-14
+
+**The most expensive defect found so far, and it reported success while doing
+it.**
+
+Run `2026-09-14T0823` collected for six hours, reached 28,399 documents
+in-process, and hit the 360-minute job timeout during frame 32 of 36. The
+`if: always()` steps then ran exactly as designed: "Publish corpus as a data
+release" succeeded, "Mirror corpus to Cloudflare R2" succeeded, and the run
+ended looking like a timeout that had cost time but not data.
+
+It had cost the data. The published asset was **220.2 MB — byte-identical in
+size to the corpus the run started from** — and the recovery run that restored
+it analysed 18,342 documents with **zero from `oecd`**. All 10,057 newly
+collected documents were gone, including every one of the 1,734 OECD documents
+the new source had fetched.
+
+**Why.** DuckDB writes changes to `<db>.wal` and folds them into the `.duckdb`
+file only on a clean close or when the log passes its own threshold. The job
+timeout SIGKILLs the process, so `conn.close()` — and the `finally` that calls
+it — never runs. `scan.yml` publishes `data/bigthink.duckdb` and nothing else.
+The corpus travels between runs as that single file, so the write-ahead log was
+never part of the contract and nobody noticed it was carrying the run.
+
+Reproduced in a test: write a document, copy the `.duckdb` file alone, and the
+copy does not even have the `documents` table.
+
+**Fixed** by `db.checkpoint()`, called by Stage 1 around every frame. A killed
+run now loses at most one frame instead of the whole collection.
+
+**CONFIRMED 2026-09-14 by run `2026-09-14T1447`.** The corpus release it
+published is **374.6 MB against the 220.2 MB that three consecutive earlier
+releases all reported** — the clearest possible demonstration, because those
+three identical sizes were the bug: two of them were the cancelled run's
+"successful" publish and the recovery run's re-publish of the same stranded
+file.
+`test_checkpoint_folds_the_write_ahead_log_into_the_database_file` asserts it
+the way the workflow fails — by copying the file and reading the copy.
+
+**What this means for anything published before 2026-09-14.** Every clean run
+closed its connection and checkpointed, so their corpora are sound. The
+exposure was only ever to a run that died without closing, and the only one
+that has is this one.
+
+### 17. Run time is now the binding constraint — NEW 2026-08-31, worse since 2026-09-14
 
 164 minutes against a 240-minute timeout, up from 67. GDELT dominates: 4 windows
 x 18 frames at a measured 32-36 s per request. The headroom is real but no
@@ -1146,6 +1190,67 @@ should do better, but budget on that number rather than a hoped-for one.
 `collection.sources.arxiv.max_request_delay_seconds`; make sure the corpus
 release is being restored, so the vector cache is warm; then reconsider GDELT's
 `window_chunks`, which is still the single biggest consumer.
+
+**Updated 2026-09-14 — timeout raised to 360 minutes** for the widened scan
+frame (21 frames → 36) and the new OECD source, **and the run hit it anyway**,
+four frames short of the end. The estimate that justified 360 blamed GDELT.
+**That was wrong, and the measurement says so.** Run `2026-09-14T0823`, 332
+minutes of Stage 1 before the timeout:
+
+| source | pairs | minutes | share | documents | docs/min |
+|---|---:|---:|---:|---:|---:|
+| **arxiv** | 10 | **212** | **64%** | **138** | **0.7** |
+| gdelt | 24 | 110 | 33% | 7,553 | 69 |
+| oecd | 29 | 5 | 1% | 1,734 | 347 |
+| openalex | 32 | 3 | 1% | 6,767 | 2,256 |
+| crossref | 25 | 2 | 1% | 4,847 | 2,424 |
+| datagovau | 9 | 0 | 0% | 450 | — |
+
+**Every arXiv frame cost about twenty minutes whether it returned sixty
+documents or none** — 19.4, 23.5, 22.4, 22.5, 21.3, 18.7, 20.5, 20.2, 22.8,
+21.1 — because the adaptive delay was pinned at its 20-second ceiling and each
+of the nine years still spent four retry attempts against a server refusing all
+of them. 222 HTTP 429s. Seven of eleven frames returned nothing at all.
+
+GDELT is expensive and *productive*: 4.6 minutes and 315 documents per frame.
+It is not the lever. The OECD is the cheapest source here per document
+collected, and its statistics channel costs two requests for the entire run
+however many frames there are.
+
+**Fixed** by `collection.sources.arxiv.retire_after_failed_frames: 2`. arXiv's
+per-year and per-frame containment (issue 14) were both right and both local;
+together they turned a fast failure into a slow one. Stage 1's circuit breaker
+already knows that a throttled source is not a per-frame condition — arXiv just
+never told it. Replayed against this run's frame order, that retires arXiv
+after the fourth frame instead of the eleventh: ~85 minutes rather than 212.
+
+**MEASURED 2026-09-14 on run `2026-09-14T1447`, which completed in 260 minutes
+against the 360-minute timeout.** Stage 1 took 174 minutes for all 36 frames:
+
+| source | pairs | minutes | share | documents | docs/min |
+|---|---:|---:|---:|---:|---:|
+| gdelt | 26 | 129 | 82% | 8,984 | 70 |
+| **arxiv** | **2** | **18** | 11% | 0 | 0 |
+| oecd | 32 | 5 | 3% | 2,057 | 389 |
+| openalex | 35 | 3 | 2% | 7,640 | 2,388 |
+| crossref | 28 | 2 | 1% | 5,420 | 2,427 |
+| datagovau | 9 | 0 | 0% | 450 | — |
+
+**arXiv went from 212 minutes to 18 — a saving of 194.** It retired exactly as
+designed: two consecutive dead frames (`ip_admin_automation`,
+`ip_search_retrieval`, nine failed years each), 17 rate-limit responses, then
+`PermanentError` on the third frame and Stage 1's circuit breaker skipped the
+remaining ten. The run reached all 36 frames for the first time, including the
+four the previous attempt never got to.
+
+GDELT is now 82% of collection time and the only remaining lever of size, but
+it is *earning* it: 8,984 documents, 70 per minute, 22 partial and 3 clean of
+26 pairs.
+
+**Remaining levers, in order**, if a run runs long again: `gdelt.window_chunks`
+4 → 3 returns ~30 minutes at the cost of a narrower news window; then
+`arxiv.max_request_delay_seconds` 20 → 10, which would halve the 18 minutes
+arXiv now spends discovering it is throttled.
 
 ### 1. The ranking has never been validated — do this before trusting anything
 
@@ -1275,9 +1380,9 @@ changes the corpus, results before and after are not comparable — the first ru
 with OpenAlex live is effectively a new baseline, not a continuation of the
 growth curves.
 
-### 4. The scan frame is strongest exactly where the data is easiest
+### 4. The scan frame is strongest exactly where the data is easiest — PARTLY ADDRESSED 2026-09-14
 
-20 frames: 9 Technological, 3 Political, 3 Economic, 2 Legal, 1 Social,
+21 frames: 9 Technological, 3 Political, 3 Economic, 2 Legal, 1 Social,
 1 Values, 1 Environmental. That distribution mirrors where free structured data
 exists, not where opportunities are.
 
@@ -1286,6 +1391,33 @@ finding technology trends and keep missing social, values-based and
 environmental ones. **Compensate deliberately at the human synthesis session**,
 and treat a thin Social/Values shortlist as a property of the instrument rather
 than a finding about the world.
+
+**2026-09-14 — section E added, on the owner's instruction to make the scan as
+broad as AJASN's.** Fifteen frames, taking their subjects from the
+Australasian Joint Agencies Scanning Network newsletters now in
+`data/manual-upload/`: climate adaptation, circular economy, agriculture and
+food, health systems, workforce and skills, ageing and wellbeing, housing and
+construction productivity, information integrity, economic security and supply
+chains, space, oceans, water, defence and dual-use, digital platform
+competition, and strategic foresight itself. The spread across 36 frames is now
+Technological 10, Economic 7, Environmental 6, Political 5, Social 4, Legal 2,
+Values 2.
+
+**MEASURED 2026-09-14 on run `2026-09-14T1447`.** Section E is not thin. All
+16 frames collected, every one spanning 2018-2026, **11,850 documents — 38% of
+the corpus** — and four of the fifteen shortlisted topics are section E
+material. The per-frame table is in the calibration log entry.
+
+**The issue stays open anyway, because the count was the symptom and not the
+cause.** The asymmetry is in the sources: arXiv and PatentsView have no Social
+or Values equivalent, and arXiv now retires itself on a throttled runner, so
+the new frames rest on OpenAlex, Crossref, GDELT and the OECD alone. Note what
+that means concretely — `defence_dual_use` collected 841 documents and **zero**
+came from the OECD, because the OECD is not a defence body and the frame has no
+`oecd:` query. A Social or Values frame still has fewer *kinds* of evidence
+behind it than a Technological one, and now that the counts look balanced the
+shortlist may read as balanced while resting on narrower foundations. Close
+this only when the evidence cards for a section E topic have been read.
 
 ### 5. GDELT is unreliable from shared IPs, and the 2026-08-30 run hid four total failures
 
@@ -1452,6 +1584,278 @@ not a replacement.
 ## Calibration log
 
 Append to this. Every entry should say what changed, why, and what moved.
+
+### 2026-09-14 — the OECD added as a source; the scan frame widened from 21 frames to 36
+
+**No weight changed. The corpus changed, which is worse**, and the rest of this
+entry is about how to read results either side of it.
+
+**What changed**
+
+1. **A sixth source: `oecd`** (`src/collectors/oecd.py`), keyless, two channels
+   under one source name because they are one institution.
+   * *Publications* — the web CMS search RSS feed. Real 200-400 character
+     abstracts, permalinks, publication dates, policy-area categories. The
+     longest reach of anything here: a single frame's query came back spread
+     evenly across 2018-2026 (34/37/72/39/35/52/65/75/74 documents by year),
+     where arXiv needs per-year quotas to manage that and GDELT cannot do it.
+   * *Statistics* — the SDMX dataflow catalogue from the API in
+     `docs/OECD-Data-API-documentation.md`. 1,500 of 1,546 dataflows carry a
+     release date and an observation count, fetched in **two requests for the
+     whole run** and matched locally. Observations themselves are not
+     collected: a row of (country, year, value) is not a document.
+2. **Fifteen new scan frames (section E)**, taking their breadth from the AJASN
+   newsletters. See open issue 4.
+3. **`data/manual-upload/` is mirrored to R2** (`python -m src.storage
+   push-manual`, and a step in `scan.yml`).
+
+**What was measured before shipping it, and what it forced**
+
+The OECD search is *loose*, and finding that out changed the design twice.
+
+| `searchTerm` | items returned | mentioning a query word in their own title or abstract |
+|---|---:|---:|
+| `counterfeit` | 37 | 31 |
+| `trademark` | 17 | 9 |
+| `productivity` | 100 | 29 |
+| `artificial intelligence` | 100 | 18 |
+| `patent` | 100 | 4 |
+| `intellectual property` | 100 | **0** |
+
+Zero of a hundred. The feed exposes no relevance score and sorts by date, so
+there is nothing for a `min_relative_score` floor to anchor on, and it has no
+phrase operator — quotes and `AND` change nothing. A phrase whose second word
+is common returns that common word's literature instead of the phrase's.
+
+Since title + abstract is all this pipeline embeds, those items would have
+entered the corpus looking unrelated to the frame that collected them and
+clustered on whatever they were actually about. Two consequences:
+
+* `rss_min_term_matches: 2` — a kept item must carry the query in the text the
+  pipeline will read. On `intellectual property` this turns 0 usable documents
+  out of 100 into 19 genuinely-IP ones out of 500 across five pages.
+* **An `oecd:` query is one or two DISTINCTIVE words**, enforced by
+  `test_every_oecd_query_is_a_url_or_a_short_distinctive_phrase`.
+
+Second, the default content facet. Without `oecd-search-config-pillars:publications`
+the feed returns Datasets, Blogs, Podcasts and Webinars too — 42 of 100 items
+were Datasets on the measured query, carrying a *refresh* date rather than a
+publication date, which pulled the whole first page inside six months of today
+and duplicated, undated, what the SDMX channel collects properly. With the
+facet, one page reaches back eighteen months.
+
+Third, the statistics threshold. Scoring a description mention the same as a
+name match put "National CPI, growth rate" at the top of a query for energy,
+because its methodology note mentions energy prices. `sdmx_min_match_score: 3.0`
+with a name worth 3 and a description worth 1 means a dataflow must be *named*
+after something in the query. It returns nothing at all for `counterfeit` and
+`indigenous knowledge`, which is correct — the OECD has no series on either.
+
+**What each frame's OECD query actually returns** (measured against the live
+feed, 2026-09-14, after the words were chosen for yield *and* span — a query
+returning 150 documents from two years is worse for a growth curve than one
+returning 20 from nine):
+
+| query | publications kept | distinct years | dataflows |
+|---|---:|---:|---:|
+| `competition` | 256 | 9 | 1 |
+| `water` | 180 | 9 | 11 |
+| `artificial intelligence` | 179 | 3 | 0 |
+| `skills` | 149 | 2 | 0 |
+| `healthcare` | 144 | 9 | 12 |
+| `housing` | 133 | 9 | 2 |
+| `ageing` | 108 | 5 | 1 |
+| `trust institutions` | 89 | 3 | 11 |
+| `manufacturing` | 85 | 9 | 1 |
+| `agriculture` | 73 | 6 | 1 |
+| `supply chains` | 65 | 5 | 7 |
+| *(the South-East Asia feed URL)* | 54 | 9 | — |
+| `patent` | 23 | 8 | 12 |
+| `plastics` | 26 | 9 | 3 |
+| `counterfeit` | 22 | 9 | 0 |
+| `Indigenous` | 22 | 8 | 0 |
+| `satellite` | 18 | 7 | 0 |
+| `copyright` | 2 | 2 | 0 |
+
+**1,935 publications and 122 dataflows across the 32 frames that have an OECD
+query, before deduplication.** Every one of those frames returns something; the
+first draft did not, and finding that out is what the table is for.
+
+**Three frames deliberately have no `oecd:` query.** `geographical_indications`,
+`digital_identity_provenance` and `ip_search_retrieval` each returned zero
+usable publications, and the nearest broader word made it worse rather than
+better — `geographical` returned 22 documents headed by a report on
+semiconductor ecosystems. A low-precision query is worse here than no query: it
+puts documents into a frame's topic that are about something else. A source
+with nothing to say about a frame should say nothing about it, and
+`collection_log` should not have to carry the difference.
+
+**Numbers introduced (all new, none replacing anything)**
+
+| key | value | why that value |
+|---|---|---|
+| `oecd.rss_page_size` | 100 | the largest page the feed serves |
+| `oecd.rss_max_pages_per_query` | 5 | measured: page 0 of `patent` spans 2026-07 to 2025-02, page 2 spans 2021-07 to 2016-04, page 5 is empty. Five pages is the whole result set for a typical frame |
+| `oecd.rss_min_term_matches` | 2 | the table above. Lowered automatically for a shorter query; not applied to a verbatim feed URL |
+| `oecd.sdmx_min_match_score` | 3.0 | one query word in the dataflow's name. A description-only match scores 1 and does not qualify |
+| `oecd.sdmx_max_per_query` | 15 | deliberately small — see the caveat below |
+
+**The caveat that matters most: OECD release dates are salience, not timing.**
+`validFrom` is when a statistical series was last refreshed, not when the thing
+it measures began, so these records cluster in the most recent year or two
+whatever they are about. This is the same trap as data.gov.au's
+`metadata_modified` and it is why `sdmx_max_per_query` is 15 rather than 50:
+enough of them joining one topic would put a spike at the right-hand end of its
+growth curve that means nothing. The publications channel does not have this
+problem — its dates are real publication dates.
+
+**The OECD was going to form topics. A smoke run stopped that, and this is the
+most important thing in this entry.**
+
+It shipped in `forming_sources` on the reasoning that its abstracts are real —
+200-400 characters, the opposite of GDELT's bare headline. That reasoning was
+correct and the conclusion was wrong, because it asked the wrong question. The
+problem is not record quality. **It is that the OECD publishes in series.**
+
+Measured on a 4,144-document smoke corpus of which 1,284 were OECD. With
+`oecd` forming, eight of the ten largest OECD-heavy topics were publication
+artefacts:
+
+| documents | topic label |
+|---:|---|
+| 56 | talis / teaching / teacher / education system |
+| 52 | health / glance / factor access / indicator population |
+| 42 | environment glance / environmental indicator / country socio-eco |
+| 39 | homelessness / housing exclusion / available statistical / breakdown |
+| 29 | health profile / country health / state health / broader sery |
+| 24 | indicator survey / survey paris / patient-reported indicator |
+| 23 | oecd / dataset / region / unsd |
+| 22 | competition / prepared background / background note / session oecd |
+
+That is the TALIS survey, Environment at a Glance, the Country Health Profiles
+and a committee's background notes. Thirty near-identical country reports
+sharing a house style cluster tightly and score *high* on coherence, because
+they genuinely are coherent — they are a fact about OECD publishing, not about
+the world. **Every measurement correct; the input wrong** — the same shape as
+the Crossref peer-review topics in issue 11, reached from the opposite
+direction, and the reason this repository's rule is to read the evidence cards.
+
+With `oecd` attaching to the nearest topic instead, the same corpus produced
+subject topics — `competition / market / digital / dma`, `climate / adaptation
+/ infrastructure / resilience`, `patent / ai / invention / inventor`, `amr /
+antimicrobial / resistance / antibiotic` — and **all 1,284 OECD documents
+attached to one, against 637 when they were forming.**
+
+Nothing is given up. OECD evidence still counts toward every topic's document
+total, its time series and its evidence cards; it no longer decides what the
+topics are. Note this is a *different* justification from GDELT's, which is
+excluded for thinness — do not collapse the two, because the fix for one is not
+the fix for the other.
+
+**WHAT THE RUN ACTUALLY DID — `2026-09-14T1447`, the baseline for this change**
+
+The first attempt (`2026-09-14T0823`) hit the timeout and lost its collection
+to issue 35; the second (`2026-09-14T1434`) was a recovery re-analysis of the
+old corpus and contains no OECD documents. **Neither is this change's result.**
+This one is: 260 minutes, all 36 frames, every step green.
+
+**Corpus: 31,513 documents, up from 18,342. 117 topics, and for the first time
+NO topic below `min_docs_per_topic`.**
+
+| source | documents | share |
+|---|---:|---:|
+| gdelt | 14,241 | 45.2% |
+| openalex | 7,372 | 23.4% |
+| crossref | 5,318 | 16.9% |
+| arxiv | 2,214 | 7.0% |
+| **oecd** | **1,927** | **6.1%** |
+| datagovau | 441 | 1.4% |
+
+**The OECD source behaved exactly as designed.** 32 of 32 frame/source pairs
+`success`, no incidents, SDMX catalogue of 1,500 dataflows fetched in two
+requests. Of its 1,927 documents, **1,808 are publications spanning 2018-2026**
+— the full window, which is what the per-frame yield table above was chosen
+for — and **119 are statistical dataflows spanning 2023-2026**, the narrow
+recent band their release dates confine them to. At 6% of the corpus and 5
+minutes of collection it is the cheapest source here per document.
+
+**The forming-sources decision is validated under real conditions.** All 1,927
+OECD documents attached to a topic — 100%, against 637 of 1,284 when they were
+forming in the smoke run. And the topics they attached to are subjects, not
+publication series:
+
+| OECD docs / topic size | topic |
+|---:|---|
+| 179/306 | dma / competition law / digital market / draft |
+| 143/298 | trust / public / institution / citizen |
+| 133/244 | patent / innovation / firm / intellectual property |
+| 132/355 | health / digital / dht / technology |
+| 127/662 | automation / employment / worker / job |
+| 89/280 | service delivery / govtech / digital / government |
+| 77/219 | water / desalination / reuse / management |
+| 71/217 | ageing / population / older / policy |
+
+Not one TALIS, Environment at a Glance or Country Health Profile topic. The
+artefacts the smoke run produced are simply absent.
+
+**Section E collected, and it reached the shortlist.** All 16 frames returned
+documents, every one spanning 2018-2026, **11,850 documents — 38% of the whole
+corpus** against sections A-D's 19,663:
+
+| frame | docs | of which OECD | | frame | docs | of which OECD |
+|---|---:|---:|---|---|---:|---:|
+| climate_adaptation | 1,565 | 17 | | health_system_innovation | 729 | 151 |
+| digital_competition_platforms | 1,298 | 237 | | water_security | 681 | 175 |
+| workforce_skills_automation | 1,121 | 141 | | strategic_foresight_practice | 625 | 10 |
+| information_integrity | 909 | 9 | | housing_construction_productivity | 560 | 131 |
+| defence_dual_use | 841 | 0 | | space_earth_observation | 527 | 15 |
+| geoeconomics_supply_chains | 822 | 58 | | circular_economy_materials | 514 | 28 |
+| food_agriculture_systems | 750 | 69 | | ageing_wellbeing | 461 | 101 |
+| | | | | oceans_blue_economy | 400 | 26 |
+| | | | | oecd_southeast_asia_reports | 47 | 47 |
+
+**Four of the fifteen shortlisted topics are section E material** — `foresight
+/ anticipatory / scenario planning` at 4, `competition / digital platform /
+digital market` at 6, `circular / recycling / economy / product design` at 12,
+`vaccine / covid-19 / waiver / pandemic` at 15 — where before this change the
+scan could not have found any of them.
+
+**arXiv contributed nothing to this run** (retired after two dead frames; see
+issue 17). Its 2,214 documents in the corpus are all from earlier runs.
+
+**What still needs a human, and it is the same thing as always: read the
+evidence cards.** The shortlist above is a hypothesis produced by weights
+nobody has validated. Section E's arrival changes what every topic is compared
+against, so the ordering is new, not merely extended.
+
+**What to check in the first run that uses this**
+
+1. **Do OECD documents attach to sensible topics?** They no longer form any, so
+   the failure mode has moved: a document attached to a topic it has nothing to
+   do with is now the thing to look for, and the evidence cards are where it
+   shows. If OECD documents are attaching indiscriminately, the attachment
+   threshold is the lever (`python -m src.calibrate attachment`).
+2. **What did the section E frames actually collect?** Open issue 4 stays open
+   until this is known. A Social frame with 40 documents is not evidence of
+   balance.
+3. **How much of a typical topic is OECD material?** `research_growth` is
+   scaled by the share of a topic that is research evidence, and `oecd` counts
+   toward no Stage 4 component (see `src/stage4_opportunity_index.py` for why).
+   If OECD documents are a large share of the median topic, that scaling is now
+   doing something it was not designed to do, and belongs in this log as a
+   decision rather than as a side effect.
+4. **Run time.** The workflow timeout went 300 → 360 minutes. GDELT went from
+   18 frames to 26, which at a measured ~175 s per frame is the whole of the
+   expected increase.
+
+**Comparability.** Results before and after 2026-09-14 are **not comparable**.
+Fifteen new frames change what every topic is compared against, and every Stage
+4 component is a within-run percentile. This run also keeps the accumulated
+corpus rather than starting fresh, which is the right call for the 21 original
+frames — they gain history — and a known distortion for the 15 new ones, which
+get one pass where the others have had several. Expect section E topics to look
+thinner than section A-D topics for reasons that have nothing to do with the
+world. If that turns out to matter, a `fresh_baseline` run is the correction.
 
 ### 2026-08-31 — the dashboard becomes an analytical tool, and starts measuring its own map
 

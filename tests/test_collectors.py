@@ -592,3 +592,485 @@ def test_a_clean_collector_drains_with_no_failure():
     docs, failure = _drain(_collector(_PartialCollector), "q", {"key": "f"}, 2018, 2026)
     assert failure is None
     assert len(docs) == 1
+
+
+# --- OECD -----------------------------------------------------------------
+#
+# One source, two channels: the web CMS search RSS feed and the SDMX
+# statistics catalogue. Everything below is offline — the RSS and SDMX bodies
+# are trimmed copies of what the live services returned on 2026-09-14.
+
+from src.collectors.oecd import (  # noqa: E402
+    OecdCollector,
+    _clean_text,
+    _match_score,
+    _parse_rss,
+    _release_dates,
+    _rss_date,
+    _with_paging,
+    query_terms,
+)
+
+RSS_BODY = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+<title><![CDATA[OECD RSS Feed - patent]]></title>
+<item>
+  <title><![CDATA[Patent statistics for the digital age]]></title>
+  <description><![CDATA[This report reviews how patent data can be used to
+  measure digital innovation.]]></description>
+  <link>https://www.oecd.org/en/publications/patent-stats_1234-en.html</link>
+  <guid isPermaLink="true">https://www.oecd.org/en/publications/patent-stats_1234-en.html</guid>
+  <pubDate>Tue, 08 Sep 2026 22:00:00 GMT</pubDate>
+  <author>OECD</author>
+  <category domain="content-type">Report</category>
+  <category domain="policy-area">Science and technology</category>
+</item>
+<item>
+  <title><![CDATA[Tackling the housing affordability gap]]></title>
+  <description><![CDATA[Housing supply across OECD countries.]]></description>
+  <link>https://www.oecd.org/en/publications/housing_5678-en.html</link>
+  <guid isPermaLink="true">https://www.oecd.org/en/publications/housing_5678-en.html</guid>
+  <pubDate>Thu, 09 Jul 2020 09:00:00 GMT</pubDate>
+  <category domain="content-type">Policy paper</category>
+</item>
+</channel></rss>"""
+
+SDMX_FLOWS = {
+    "data": {
+        "dataflows": [
+            {
+                "id": "DSD_PAT@DF_PATENTS",
+                "version": "1.0",
+                "agencyID": "OECD.STI.STP",
+                "names": {"en": "Patents by technology"},
+                "descriptions": {"en": "<p>Counts of <b>patent</b> families.</p>"},
+            },
+            {
+                "id": "DSD_CPI@DF_CPI",
+                "version": "2.1",
+                "agencyID": "OECD.SDD.TPS",
+                "names": {"en": "National CPI, growth rate"},
+                # Mentions the query word only in the methodology prose.
+                "descriptions": {"en": "Consumer prices including energy and patent-protected goods."},
+            },
+            {
+                "id": "DSD_OLD@DF_OLD",
+                "version": "1.0",
+                "agencyID": "OECD.SDD.NAD",
+                "names": {"en": "Patents, discontinued series"},
+                "descriptions": {"en": "Retired."},
+            },
+        ]
+    }
+}
+
+SDMX_CONSTRAINTS = {
+    "data": {
+        "contentConstraints": [
+            {
+                "type": "Allowed",
+                "constraintAttachment": {
+                    "dataflows": [
+                        "urn:sdmx:org.sdmx.infomodel.datastructure."
+                        "Dataflow=OECD.STI.STP:DSD_PAT@DF_PATENTS(1.0)"
+                    ]
+                },
+            },
+            {
+                "type": "Actual",
+                "validFrom": "2026-04-16T09:14:02Z",
+                "annotations": [{"id": "obs_count", "title": "1602019", "type": "sdmx_metrics"}],
+                "constraintAttachment": {
+                    "dataflows": [
+                        "urn:sdmx:org.sdmx.infomodel.datastructure."
+                        "Dataflow=OECD.STI.STP:DSD_PAT@DF_PATENTS(1.0)"
+                    ]
+                },
+            },
+            {
+                "type": "Actual",
+                "validFrom": "2026-01-05T00:00:00Z",
+                "constraintAttachment": {
+                    "dataflows": [
+                        "urn:sdmx:org.sdmx.infomodel.datastructure."
+                        "Dataflow=OECD.SDD.TPS:DSD_CPI@DF_CPI(2.1)"
+                    ]
+                },
+            },
+            {
+                "type": "Actual",
+                "validFrom": "2011-02-02T00:00:00Z",
+                "constraintAttachment": {
+                    "dataflows": [
+                        "urn:sdmx:org.sdmx.infomodel.datastructure."
+                        "Dataflow=OECD.SDD.NAD:DSD_OLD@DF_OLD(1.0)"
+                    ]
+                },
+            },
+        ]
+    }
+}
+
+
+def _oecd(**settings):
+    config = {
+        "pipeline": {"contact_email": "x@example.org"},
+        "storage": {"raw_dir": "data/raw", "keep_raw_payloads": False},
+        "collection": {"sources": {"oecd": settings}},
+    }
+    collector = OecdCollector(config, "test-run")
+    collector.begin_frame()
+    return collector
+
+
+def _offline(collector, *, rss=RSS_BODY):
+    """Serve both channels from the fixtures above instead of the network."""
+    collector.fetch_text = lambda url, params=None, headers=None: rss
+    collector.fetch_json = lambda url, params=None, headers=None: (
+        SDMX_FLOWS if "/dataflow/" in url else SDMX_CONSTRAINTS
+    )
+    return collector
+
+
+FRAME = {"key": "ip_search_retrieval", "steepv": "Technological"}
+
+
+# -- RSS parsing -----------------------------------------------------------
+
+
+def test_rss_items_are_parsed_with_their_categories():
+    items = _parse_rss(RSS_BODY, "http://x", "oecd")
+    assert len(items) == 2
+    assert items[0]["guid"].endswith("patent-stats_1234-en.html")
+    assert items[0]["categories"] == ["Report", "Science and technology"]
+
+
+def test_rss_bodies_that_are_not_xml_are_a_permanent_failure():
+    """An HTML error page must not be parsed as an empty feed — that would read
+    downstream as 'the OECD published nothing about this'."""
+    with pytest.raises(PermanentError):
+        _parse_rss("<html>502 Bad Gateway", "http://x", "oecd")
+
+
+def test_rfc822_dates_are_parsed():
+    """The RSS date format, which base.parse_date does not cover — left to it,
+    every OECD publication would fall out of the year window undated."""
+    assert _rss_date("Tue, 08 Sep 2026 22:00:00 GMT").isoformat() == "2026-09-08"
+    assert parse_date("Tue, 08 Sep 2026 22:00:00 GMT") is None  # why the above exists
+    assert _rss_date("not a date") is None
+    assert _rss_date(None) is None
+
+
+def test_html_is_stripped_from_descriptions():
+    assert _clean_text("<p>Counts of <b>patent</b> families &amp; more.</p>") == (
+        "Counts of patent families & more."
+    )
+    assert _clean_text(None) == ""
+
+
+# -- RSS relevance ---------------------------------------------------------
+#
+# The feed exposes no relevance score and sorts by date, and its matching is
+# loose: measured 2026-09-14, `searchTerm=patent` returned 100 items of which
+# 4 mentioned "patent" in their own title or abstract, and `intellectual
+# property` returned 100 of which none mentioned either word. The pipeline
+# embeds title + abstract and nothing else, so those items would arrive
+# looking unrelated to the frame that collected them.
+
+
+def test_publications_not_carrying_the_query_are_dropped():
+    collector = _offline(_oecd(rss_max_pages_per_query=1, sdmx_enabled=False))
+    docs = list(collector.collect("patent", FRAME, 2018, 2026))
+    assert [d["title"] for d in docs] == ["Patent statistics for the digital age"]
+
+
+def test_a_verbatim_feed_url_keeps_everything_and_skips_the_statistics_channel():
+    """A faceted feed is a deliberate slice with no search term to check items
+    against, and widening it back out with a keyword match over the statistics
+    catalogue would misrepresent what its author asked for."""
+    collector = _offline(_oecd(rss_max_pages_per_query=1))
+    docs = list(collector.collect("https://api.oecd.org/webcms/search/rss?facets=x", FRAME, 2018, 2026))
+    assert len(docs) == 2
+    assert not any(d["native_id"].startswith("sdmx:") for d in docs)
+
+
+def test_publications_outside_the_year_window_are_dropped():
+    collector = _offline(_oecd(rss_max_pages_per_query=1, sdmx_enabled=False))
+    assert list(collector.collect("housing patent", FRAME, 2024, 2026)) == []
+
+
+def test_rss_documents_carry_the_permalink_as_a_stable_native_id():
+    collector = _offline(_oecd(rss_max_pages_per_query=1, sdmx_enabled=False))
+    doc = next(iter(collector.collect("patent", FRAME, 2018, 2026)))
+    assert doc["native_id"] == "https://www.oecd.org/en/publications/patent-stats_1234-en.html"
+    assert doc["venue"] == "OECD"
+    assert doc["concepts"] == ["Report", "Science and technology"]
+
+
+def test_paging_preserves_repeated_facet_parameters():
+    """The OECD search UI emits one `facets` parameter per facet and the API
+    comma-joins them. Rebuilding the query string through a dict would keep
+    only the last one and silently widen the feed."""
+    paged = _with_paging(
+        "https://api.oecd.org/webcms/search/rss?facets=a&facets=b&page=9", 2, 100
+    )
+    assert paged.count("facets=") == 2
+    assert "page=2" in paged and "page=9" not in paged
+    assert "pageSize=100" in paged
+
+
+# -- query terms -----------------------------------------------------------
+
+
+def test_query_terms_strip_other_engines_syntax():
+    """Frame queries are written for the API they address; the SDMX channel
+    matches locally and has to read them as words."""
+    assert query_terms("abs:(patent AND (classification OR retrieval))") == [
+        "patent", "classification", "retrieval",
+    ]
+    assert query_terms("cat:cs.RO AND abs:(autonomous OR navigation)") == [
+        "autonomous", "navigation",
+    ]
+    assert query_terms("") == []
+
+
+# -- SDMX ------------------------------------------------------------------
+
+
+def test_a_name_match_outscores_a_description_match():
+    """The whole statistics filter. A dataflow whose methodology note mentions
+    the query is not a dataflow about the query."""
+    named = {"name": "Patents by technology", "description": ""}
+    mentioned = {"name": "National CPI, growth rate", "description": "including patent goods"}
+    assert _match_score(["patent"], named) > _match_score(["patent"], mentioned)
+    assert _match_score(["patent"], mentioned) < 3.0  # below the shipped threshold
+
+
+def test_release_dates_prefer_the_constraint_that_has_one():
+    """Each dataflow carries an Allowed constraint with no timestamp and an
+    Actual one with it; parsing order must not decide which wins."""
+    releases = _release_dates(SDMX_CONSTRAINTS)
+    assert releases[("OECD.STI.STP", "DSD_PAT@DF_PATENTS", "1.0")] == (
+        "2026-04-16T09:14:02Z", "1602019",
+    )
+
+
+def test_statistics_are_matched_on_the_name_and_dated_from_the_release():
+    collector = _offline(_oecd(rss_max_pages_per_query=1, sdmx_max_per_query=10))
+    docs = [d for d in collector.collect("patent", FRAME, 2018, 2026)
+            if d["native_id"].startswith("sdmx:")]
+    # "National CPI" only mentions patents in prose; the 2011 series predates
+    # the window. Only the one named after the query survives both.
+    assert [d["title"] for d in docs] == ["Patents by technology"]
+    assert docs[0]["published_date"].isoformat() == "2026-04-16"
+    assert "1602019 observations" in docs[0]["abstract"]
+    assert docs[0]["native_id"] == "sdmx:OECD.STI.STP:DSD_PAT@DF_PATENTS(1.0)"
+
+
+def test_an_unavailable_catalogue_records_an_incident_and_keeps_the_publications():
+    """The two channels are different services on different hosts. SDMX being
+    down must cost the statistics, not the frame."""
+    collector = _offline(_oecd(rss_max_pages_per_query=1))
+
+    def explode(url, params=None, headers=None):
+        raise RetryableError("connection reset by peer")
+
+    collector.fetch_json = explode
+    docs = list(collector.collect("patent", FRAME, 2018, 2026))
+    assert len(docs) == 1 and not docs[0]["native_id"].startswith("sdmx:")
+    assert collector.incidents and "sdmx catalogue" in collector.incidents[0]
+
+
+def test_the_catalogue_is_fetched_once_per_run_not_once_per_frame():
+    """Two requests cover every frame in the scan frame. The OECD allows 60
+    downloads an hour and asks for consolidated queries; a per-frame fetch
+    would spend that budget on an answer it already had."""
+    collector = _offline(_oecd(rss_max_pages_per_query=1))
+    calls = []
+    inner = collector.fetch_json
+    collector.fetch_json = lambda url, params=None, headers=None: (
+        calls.append(url) or inner(url, params, headers)
+    )
+    for frame_key in ("f1", "f2", "f3"):
+        collector.begin_frame()
+        list(collector.collect("patent", {"key": frame_key, "steepv": "Technological"}, 2018, 2026))
+    assert len(calls) == 2
+
+
+def test_every_oecd_query_is_a_url_or_a_short_distinctive_phrase():
+    """The scan-frame contract for this source. Its search has no phrase
+    operator and no relevance score, so a generic extra word replaces the
+    query rather than narrowing it — `intellectual property` returned 100
+    items mentioning neither word. Long queries are the failure mode."""
+    from src.config import load_config
+    from src.stage1_collect import load_scan_frame
+
+    offenders = [
+        (frame["key"], query)
+        for frame in load_scan_frame(load_config())
+        for query in [(frame.get("queries") or {}).get("oecd")]
+        if query
+        and not query.startswith("https://")
+        and len(query_terms(query)) > 2
+    ]
+    assert not offenders, f"OECD queries should be one or two distinctive words: {offenders}"
+
+
+# --- arXiv source retirement ----------------------------------------------
+#
+# The 2026-09-14 run hit its six-hour timeout four frames short of the end of
+# the scan frame. arXiv took 212 of the 332 collection minutes — 64% — and
+# returned 138 documents. Every frame cost ~20 minutes whether it returned 60
+# documents or none, because the adaptive delay was pinned at its ceiling and
+# each of the nine years still spent four retry attempts against a server
+# refusing all of them.
+#
+# Per-year and per-frame containment (issue 14) were both correct and both
+# local; together they turned a fast failure into a slow one. These tests pin
+# the missing observation: a throttled IP is not a per-frame condition.
+
+def _throttled_arxiv(**settings):
+    config = {
+        "pipeline": {"contact_email": "x@example.org"},
+        "storage": {"raw_dir": "data/raw", "keep_raw_payloads": False},
+        "collection": {"sources": {"arxiv": settings}},
+    }
+    from src.collectors.arxiv import ArxivCollector
+
+    collector = ArxivCollector(config, "test-run")
+    collector.request_delay = 0.0   # no real sleeping in tests
+    return collector
+
+
+def _dead_frame(collector, key):
+    """A frame where every request fails, as a rate-limited runner sees it."""
+    collector.begin_frame()
+    collector.fetch_text = _raise_429
+    return list(collector.collect("q", {"key": key, "steepv": "Technological"}, 2024, 2024))
+
+
+def _raise_429(url, params=None, headers=None):
+    raise RetryableError("HTTP 429", context={"status_code": 429, "url": url})
+
+
+def test_arxiv_retires_itself_after_consecutive_dead_frames():
+    collector = _throttled_arxiv(retire_after_failed_frames=2, max_results_per_year=25)
+    assert _dead_frame(collector, "f1") == []
+    assert _dead_frame(collector, "f2") == []
+    # The third frame must not spend twenty minutes rediscovering this.
+    collector.begin_frame()
+    with pytest.raises(PermanentError, match="consecutive frames"):
+        next(iter(collector.collect("q", {"key": "f3"}, 2024, 2024)))
+
+
+def test_retirement_is_raised_before_any_request_is_made():
+    """Retirement has to be free. Confirming it by spending one more frame is
+    the cost this exists to avoid."""
+    collector = _throttled_arxiv(retire_after_failed_frames=1, max_results_per_year=25)
+    _dead_frame(collector, "f1")
+
+    calls = []
+    collector.begin_frame()
+    collector.fetch_text = lambda *a, **k: calls.append(a) or ""
+    with pytest.raises(PermanentError):
+        next(iter(collector.collect("q", {"key": "f2"}, 2024, 2024)))
+    assert calls == []
+
+
+def test_a_frame_that_simply_matched_nothing_does_not_count_as_dead():
+    """Evidence about the query, not about the server. Counting it would retire
+    arXiv over a narrow scan frame rather than over a rate limit."""
+    collector = _throttled_arxiv(retire_after_failed_frames=2, max_results_per_year=25)
+    empty = "<feed xmlns='http://www.w3.org/2005/Atom'></feed>"
+    for key in ("f1", "f2", "f3"):
+        collector.begin_frame()
+        collector.fetch_text = lambda *a, **k: empty
+        assert list(collector.collect("q", {"key": key}, 2024, 2024)) == []
+    assert collector._dead_frames == 0
+
+
+def test_a_productive_frame_resets_the_counter():
+    """One bad frame between two good ones is a blip, not a throttle."""
+    collector = _throttled_arxiv(retire_after_failed_frames=2, max_results_per_year=25)
+    _dead_frame(collector, "f1")
+    assert collector._dead_frames == 1
+
+    entry = (
+        "<feed xmlns='http://www.w3.org/2005/Atom'><entry>"
+        "<id>http://arxiv.org/abs/2401.00001v1</id><title>A paper</title>"
+        "<summary>Text.</summary><published>2024-01-05T00:00:00Z</published>"
+        "</entry></feed>"
+    )
+    collector.begin_frame()
+    collector.fetch_text = lambda *a, **k: entry
+    assert len(list(collector.collect("q", {"key": "f2"}, 2024, 2024))) == 1
+    assert collector._dead_frames == 0
+
+
+def test_retirement_is_off_when_the_threshold_is_zero():
+    """The pre-2026-09-14 behaviour, kept reachable so an old run's config
+    snapshot still describes what that run did."""
+    collector = _throttled_arxiv(retire_after_failed_frames=0, max_results_per_year=25)
+    for key in ("f1", "f2", "f3"):
+        assert _dead_frame(collector, key) == []  # no raise
+
+
+def test_the_shipped_config_retires_arxiv():
+    from src.config import load_config as _load, get as _get
+
+    assert _get(_load(), "collection", "sources", "arxiv",
+                "retire_after_failed_frames", default=0) >= 1
+
+
+# --- the corpus must survive the job being killed --------------------------
+
+
+def test_checkpoint_folds_the_write_ahead_log_into_the_database_file(tmp_path):
+    """The cancelled 2026-09-14 run collected 10,057 documents over six hours,
+    was SIGKILLed at the job timeout before `conn.close()` could run, and
+    published a corpus byte-identical in size to the one it started from — the
+    `.duckdb` file the workflow uploads held none of them, because they were
+    still in the `.wal` that nothing uploads.
+
+    So this tests what the workflow actually does: copy the `.duckdb` file and
+    nothing else, then read the copy. Without the checkpoint that copy does not
+    even have the schema.
+    """
+    import shutil
+
+    import duckdb
+
+    from src import db
+
+    live = tmp_path / "corpus.duckdb"
+    conn = db.init_db(live)
+    db.upsert_documents(
+        conn, [build_document(source="oecd", native_id="1", title="A report")]
+    )
+
+    # What `scan.yml` uploads, before the fix: the database file alone.
+    shutil.copy(live, tmp_path / "before.duckdb")
+    stranded = duckdb.connect(str(tmp_path / "before.duckdb"))
+    with pytest.raises(duckdb.CatalogException):
+        stranded.execute("SELECT count(*) FROM documents")
+    stranded.close()
+
+    db.checkpoint(conn)
+
+    shutil.copy(live, tmp_path / "after.duckdb")
+    published = duckdb.connect(str(tmp_path / "after.duckdb"))
+    assert published.execute("SELECT count(*) FROM documents").fetchone()[0] == 1
+    published.close()
+    conn.close()
+
+
+def test_stage1_checkpoints_around_every_frame():
+    """Bounds the loss to one frame rather than the whole collection."""
+    import inspect
+
+    from src import stage1_collect
+
+    source = inspect.getsource(stage1_collect._run_inner)
+    assert source.count("db.checkpoint(conn)") >= 2, (
+        "Stage 1 must checkpoint inside the frame loop and once after it"
+    )

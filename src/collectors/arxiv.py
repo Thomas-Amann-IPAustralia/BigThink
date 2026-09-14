@@ -24,6 +24,22 @@ that:
     arXiv is healthy and climbs only when arXiv says to. Without it, per-year
     containment alone just spends the retry budget 81 times over — nine frames
     by nine years — against a server that is refusing all of them.
+  * `retire_after_failed_frames` gives up on the source, and exists because the
+    two mechanisms above turned a fast failure into a slow one. Measured on the
+    2026-09-14 run: **every arXiv frame cost about twenty minutes whether it
+    returned sixty documents or none**, because the delay was pinned at its
+    ceiling and each of the nine years still spent four retry attempts against
+    a server refusing all of them. Ten frames, 212 minutes, 138 documents —
+    64% of a six-hour collection for 1% of the corpus, and the run hit its
+    timeout four frames from the end of the scan frame.
+
+    Per-year and per-frame containment were both correct and both local. What
+    was missing is the observation Stage 1's own circuit breaker already makes:
+    a source rate-limiting this runner is *not a per-frame fact*. The next
+    frame will fail identically. So after N consecutive frames that collected
+    nothing but recorded failures, this collector raises PermanentError, which
+    is the signal `stage1_collect` retires a source on — the same path an
+    exhausted OpenAlex budget takes, and for the same reason.
 
 SAMPLING (this is a methodological point, not an implementation detail).
 The obvious way to query arXiv is to sort by submission date descending and
@@ -44,7 +60,7 @@ import xml.etree.ElementTree as ET
 from typing import Any, Iterator
 
 from src.collectors.base import Collector, build_document, register
-from src.errors import BigThinkError, RetryableError
+from src.errors import BigThinkError, PermanentError, RetryableError
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +92,11 @@ class ArxivCollector(Collector):
             self.settings.get("rate_limit_backoff_factor", 1.5)
         )
         self._rate_limit_hits = 0
+        # Consecutive frames that collected nothing AND recorded a failure.
+        # A frame that legitimately matched no papers does not count: that is
+        # a fact about the query, not about the server.
+        self._dead_frames = 0
+        self._retire_after = int(self.settings.get("retire_after_failed_frames", 0))
 
     # -- adaptive throttling ---------------------------------------------
     def _note_rate_limit(self, exc: BigThinkError) -> bool:
@@ -113,6 +134,21 @@ class ArxivCollector(Collector):
     def collect(
         self, query: str, frame: dict[str, Any], start_year: int, end_year: int
     ) -> Iterator[dict[str, Any]]:
+        # Raised before a single request, so retirement is free rather than
+        # costing one more twenty-minute frame to confirm what the previous
+        # ones established. Stage 1 catches PermanentError, marks this frame
+        # `skipped`, and skips arXiv for every frame after it.
+        if self._retire_after and self._dead_frames >= self._retire_after:
+            raise PermanentError(
+                f"arXiv returned nothing for {self._dead_frames} consecutive frames "
+                f"after {self._rate_limit_hits} rate-limit response(s). This runner's "
+                "IP is throttled, which is not a per-frame condition — the remaining "
+                "frames would fail identically at roughly twenty minutes each. "
+                "Retiring the source for this run.",
+                context={"collector": self.name, "dead_frames": self._dead_frames,
+                         "rate_limit_hits": self._rate_limit_hits},
+            )
+
         total_budget = int(self.settings.get("max_results_per_query", 200))
         years = list(range(start_year, end_year + 1))
         # Spread the budget evenly across years so the corpus carries a history
@@ -127,7 +163,23 @@ class ArxivCollector(Collector):
                 yield doc
                 emitted += 1
                 if self.cap(emitted):
+                    self._dead_frames = 0
                     return
+
+        # A frame that produced nothing AND recorded a failure is evidence
+        # about the server. A frame that produced nothing quietly is evidence
+        # about the query, and must not count toward retirement.
+        if emitted == 0 and self.incidents:
+            self._dead_frames += 1
+            logger.warning(
+                "arXiv collected nothing for %r and recorded %d failure(s) — "
+                "%d consecutive dead frame(s)%s.",
+                frame.get("key", query), len(self.incidents), self._dead_frames,
+                f" of {self._retire_after} before this source is retired"
+                if self._retire_after else " (retirement disabled)",
+            )
+        else:
+            self._dead_frames = 0
 
     def _collect_year(
         self, query: str, frame: dict[str, Any], steepv: str, year: int, quota: int

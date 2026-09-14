@@ -12,6 +12,14 @@ already covers CI. This module adds R2 as a mirror of that corpus for local
 use (pull it once, then iterate on Stages 3-5 with --skip-collect instead of
 re-collecting) and as the first durable home raw payloads have had.
 
+It also mirrors data/manual-upload/ — documents a human put into the scan by
+hand rather than a collector fetching them. Those are in git, which is the
+opposite of the case for the corpus and the payloads, so the mirror is for a
+different reason: they are source material for the scan frame, they are read
+by people rather than by the pipeline, and a repository is an awkward place to
+hand a colleague a folder of newsletters from. The push is idempotent, so
+running it repeatedly costs a listing and nothing else.
+
 R2 is S3-compatible, so boto3's S3 client works unmodified against it with a
 per-account endpoint URL. See README.md for the one-time Cloudflare setup.
 
@@ -28,6 +36,8 @@ Run directly:
     python -m src.storage push-corpus
     python -m src.storage push-raw --run-id 2026-08-29
     python -m src.storage pull-raw --run-id 2026-08-29
+    python -m src.storage push-manual
+    python -m src.storage pull-manual
 """
 
 from __future__ import annotations
@@ -238,6 +248,68 @@ def pull_raw(config: dict[str, Any], run_id: str, raw_dir: str | Path | None = N
     return count
 
 
+# ---------------------------------------------------------------------------
+# Manual uploads (data/manual-upload/)
+# ---------------------------------------------------------------------------
+
+
+def push_manual(config: dict[str, Any], manual_dir: str | Path | None = None, client=None) -> int:
+    """Upload every file under data/manual-upload/. Returns the count uploaded.
+
+    Unlike the corpus and the raw payloads, these are *inputs* — the AJASN
+    newsletters the section E scan frames were derived from, and anything else
+    a human adds by hand. Mirroring them keeps the evidence for a frame
+    reachable from the same place as the run that frame produced.
+    """
+    if not is_enabled(config):
+        logger.info("R2 disabled (storage.r2.enabled: false) — not pushing manual uploads.")
+        return 0
+    base = Path(manual_dir) if manual_dir else resolve_path(config, "storage", "manual_upload_dir")
+    if not base.exists():
+        logger.warning("No manual uploads at %s to push.", base)
+        return 0
+    bucket = _bucket(config)
+    prefix = str(get(config, "storage", "r2", "manual_prefix", default="manual-upload")).strip("/")
+    client = client or get_client(config)
+    count = 0
+    for file_path in sorted(base.rglob("*")):
+        if not file_path.is_file():
+            continue
+        key = f"{prefix}/{file_path.relative_to(base).as_posix()}"
+        client.upload_file(str(file_path), bucket, key)
+        count += 1
+    logger.info(
+        "Pushed %d manual-upload file(s) -> r2://%s/%s/", count, bucket, prefix
+    )
+    return count
+
+
+def pull_manual(config: dict[str, Any], manual_dir: str | Path | None = None, client=None) -> int:
+    """Download every mirrored manual-upload file. Returns the count downloaded."""
+    if not is_enabled(config):
+        logger.info("R2 disabled (storage.r2.enabled: false) — not pulling manual uploads.")
+        return 0
+    base = Path(manual_dir) if manual_dir else resolve_path(config, "storage", "manual_upload_dir")
+    bucket = _bucket(config)
+    prefix = str(get(config, "storage", "r2", "manual_prefix", default="manual-upload")).strip("/")
+    client = client or get_client(config)
+    remote_prefix = f"{prefix}/"
+    count = 0
+    paginator = client.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix=remote_prefix):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            rel = key[len(remote_prefix):]
+            if not rel:
+                continue
+            dest = base / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            client.download_file(bucket, key, str(dest))
+            count += 1
+    logger.info("Pulled %d manual-upload file(s) <- r2://%s/%s", count, bucket, remote_prefix)
+    return count
+
+
 def _is_not_found(exc: Exception) -> bool:
     response = getattr(exc, "response", None)
     if not isinstance(response, dict):
@@ -264,6 +336,8 @@ def main(argv: list[str] | None = None) -> int:
     ):
         p = sub.add_parser(name, help=help_text)
         p.add_argument("--run-id", required=True)
+    sub.add_parser("push-manual", help="Upload data/manual-upload/ to R2.")
+    sub.add_parser("pull-manual", help="Download the mirrored manual uploads from R2.")
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=args.log_level.upper(), format="%(levelname)-7s %(name)s: %(message)s")
@@ -277,6 +351,10 @@ def main(argv: list[str] | None = None) -> int:
         ok = push_raw(config, args.run_id) > 0
     elif args.command == "pull-raw":
         ok = pull_raw(config, args.run_id) > 0
+    elif args.command == "push-manual":
+        ok = push_manual(config) > 0
+    elif args.command == "pull-manual":
+        ok = pull_manual(config) > 0
     else:  # pragma: no cover - argparse enforces the choices above
         parser.error(f"Unknown command {args.command!r}")
         return 2

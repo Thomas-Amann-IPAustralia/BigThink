@@ -69,7 +69,24 @@ output. Read it before reading any result.
 | arXiv | Preprints | days | Fastest signal for AI/CS/quantum. No citation counts |
 | GDELT | News attention and tone | ~hours | Free, keyless, and heavily IP rate-limited — expect failures |
 | data.gov.au | Policy salience, IP Australia's own datasets | years | CKAN. Registration date lags the policy it serves |
+| OECD (publications) | Comparative policy analysis | ~weeks | Free, keyless. The longest reach of any source here — one query came back spread evenly across 2018-2026. Loose matching, so a relevance filter keeps only items whose own title or abstract carries the query |
+| OECD (statistics) | Salience, **not timing** | n/a | The dataflow catalogue, two requests per run. A release date, not a start date: read it as "the OECD publishes a series on this", the same way data.gov.au is read |
 | PatentsView | US patent grants | ~18 months | Needs a key; US only. Australian filing behaviour is in IP RAPID |
+
+Both OECD channels are registered under the single source name `oecd`, so a
+shortlist shows one provenance. Neither counts toward the research, attention
+or patent components of the Stage 4 index — like data.gov.au, this is
+institutional evidence rather than any of those three. See
+`src/stage4_opportunity_index.py`.
+
+**The OECD attaches to topics rather than forming them**, which is the second
+source after GDELT to be treated this way and for an unrelated reason. GDELT's
+records are too thin to cluster. The OECD's are not — they are excluded because
+the OECD publishes in *series*, and thirty near-identical country reports form
+a tight, high-coherence topic that is a fact about OECD publishing rather than
+about the world. Its documents still count toward every topic's totals, time
+series and evidence cards. See the 2026-09-14 calibration log entry for the
+measurement.
 
 Every document is tagged with a STEEPV category and the frame key that found
 it, and deduplicated on a stable `doc_id`.

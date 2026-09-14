@@ -316,3 +316,33 @@ def test_config_without_a_critical_tech_match_block_still_validates(raw):
     config = copy.deepcopy(raw)
     del config["scoring"]["strategic_fit"]["critical_tech_match"]
     _validate(config)
+
+
+# --- which sources may decide what a topic is -----------------------------
+
+
+def test_only_sources_that_cluster_into_subjects_may_form_topics():
+    """Two sources are deliberately excluded, for two unrelated reasons.
+
+    GDELT: its records are bare multilingual headlines, ~70 characters against
+    arXiv's 1,400, and at 40% of a corpus they dominate clustering.
+
+    OECD: its records are NOT thin — real 200-400 character abstracts. It is
+    excluded because the OECD publishes in *series*. Measured 2026-09-14 on a
+    4,144-document corpus of which 1,284 were OECD: with `oecd` forming, eight
+    of the ten largest OECD-heavy topics were publication artefacts — the TALIS
+    survey, Environment at a Glance, the Country Health Profiles, a committee's
+    background notes. Thirty near-identical country reports score *high* on
+    coherence because they genuinely are coherent, and a horizon scan then
+    ranks a fact about OECD publishing as a trend.
+
+    Both still attach to the nearest topic, so their evidence is counted. This
+    test exists because re-adding either would look like an obvious
+    improvement and would not fail anything.
+    """
+    from src.config import load_config as _load, get as _get
+
+    forming = set(_get(_load(), "emergence", "topics", "forming_sources", default=[]) or [])
+    assert "gdelt" not in forming
+    assert "oecd" not in forming
+    assert {"openalex", "crossref", "arxiv"} <= forming
