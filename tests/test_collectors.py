@@ -914,3 +914,163 @@ def test_every_oecd_query_is_a_url_or_a_short_distinctive_phrase():
         and len(query_terms(query)) > 2
     ]
     assert not offenders, f"OECD queries should be one or two distinctive words: {offenders}"
+
+
+# --- arXiv source retirement ----------------------------------------------
+#
+# The 2026-09-14 run hit its six-hour timeout four frames short of the end of
+# the scan frame. arXiv took 212 of the 332 collection minutes — 64% — and
+# returned 138 documents. Every frame cost ~20 minutes whether it returned 60
+# documents or none, because the adaptive delay was pinned at its ceiling and
+# each of the nine years still spent four retry attempts against a server
+# refusing all of them.
+#
+# Per-year and per-frame containment (issue 14) were both correct and both
+# local; together they turned a fast failure into a slow one. These tests pin
+# the missing observation: a throttled IP is not a per-frame condition.
+
+def _throttled_arxiv(**settings):
+    config = {
+        "pipeline": {"contact_email": "x@example.org"},
+        "storage": {"raw_dir": "data/raw", "keep_raw_payloads": False},
+        "collection": {"sources": {"arxiv": settings}},
+    }
+    from src.collectors.arxiv import ArxivCollector
+
+    collector = ArxivCollector(config, "test-run")
+    collector.request_delay = 0.0   # no real sleeping in tests
+    return collector
+
+
+def _dead_frame(collector, key):
+    """A frame where every request fails, as a rate-limited runner sees it."""
+    collector.begin_frame()
+    collector.fetch_text = _raise_429
+    return list(collector.collect("q", {"key": key, "steepv": "Technological"}, 2024, 2024))
+
+
+def _raise_429(url, params=None, headers=None):
+    raise RetryableError("HTTP 429", context={"status_code": 429, "url": url})
+
+
+def test_arxiv_retires_itself_after_consecutive_dead_frames():
+    collector = _throttled_arxiv(retire_after_failed_frames=2, max_results_per_year=25)
+    assert _dead_frame(collector, "f1") == []
+    assert _dead_frame(collector, "f2") == []
+    # The third frame must not spend twenty minutes rediscovering this.
+    collector.begin_frame()
+    with pytest.raises(PermanentError, match="consecutive frames"):
+        next(iter(collector.collect("q", {"key": "f3"}, 2024, 2024)))
+
+
+def test_retirement_is_raised_before_any_request_is_made():
+    """Retirement has to be free. Confirming it by spending one more frame is
+    the cost this exists to avoid."""
+    collector = _throttled_arxiv(retire_after_failed_frames=1, max_results_per_year=25)
+    _dead_frame(collector, "f1")
+
+    calls = []
+    collector.begin_frame()
+    collector.fetch_text = lambda *a, **k: calls.append(a) or ""
+    with pytest.raises(PermanentError):
+        next(iter(collector.collect("q", {"key": "f2"}, 2024, 2024)))
+    assert calls == []
+
+
+def test_a_frame_that_simply_matched_nothing_does_not_count_as_dead():
+    """Evidence about the query, not about the server. Counting it would retire
+    arXiv over a narrow scan frame rather than over a rate limit."""
+    collector = _throttled_arxiv(retire_after_failed_frames=2, max_results_per_year=25)
+    empty = "<feed xmlns='http://www.w3.org/2005/Atom'></feed>"
+    for key in ("f1", "f2", "f3"):
+        collector.begin_frame()
+        collector.fetch_text = lambda *a, **k: empty
+        assert list(collector.collect("q", {"key": key}, 2024, 2024)) == []
+    assert collector._dead_frames == 0
+
+
+def test_a_productive_frame_resets_the_counter():
+    """One bad frame between two good ones is a blip, not a throttle."""
+    collector = _throttled_arxiv(retire_after_failed_frames=2, max_results_per_year=25)
+    _dead_frame(collector, "f1")
+    assert collector._dead_frames == 1
+
+    entry = (
+        "<feed xmlns='http://www.w3.org/2005/Atom'><entry>"
+        "<id>http://arxiv.org/abs/2401.00001v1</id><title>A paper</title>"
+        "<summary>Text.</summary><published>2024-01-05T00:00:00Z</published>"
+        "</entry></feed>"
+    )
+    collector.begin_frame()
+    collector.fetch_text = lambda *a, **k: entry
+    assert len(list(collector.collect("q", {"key": "f2"}, 2024, 2024))) == 1
+    assert collector._dead_frames == 0
+
+
+def test_retirement_is_off_when_the_threshold_is_zero():
+    """The pre-2026-09-14 behaviour, kept reachable so an old run's config
+    snapshot still describes what that run did."""
+    collector = _throttled_arxiv(retire_after_failed_frames=0, max_results_per_year=25)
+    for key in ("f1", "f2", "f3"):
+        assert _dead_frame(collector, key) == []  # no raise
+
+
+def test_the_shipped_config_retires_arxiv():
+    from src.config import load_config as _load, get as _get
+
+    assert _get(_load(), "collection", "sources", "arxiv",
+                "retire_after_failed_frames", default=0) >= 1
+
+
+# --- the corpus must survive the job being killed --------------------------
+
+
+def test_checkpoint_folds_the_write_ahead_log_into_the_database_file(tmp_path):
+    """The cancelled 2026-09-14 run collected 10,057 documents over six hours,
+    was SIGKILLed at the job timeout before `conn.close()` could run, and
+    published a corpus byte-identical in size to the one it started from — the
+    `.duckdb` file the workflow uploads held none of them, because they were
+    still in the `.wal` that nothing uploads.
+
+    So this tests what the workflow actually does: copy the `.duckdb` file and
+    nothing else, then read the copy. Without the checkpoint that copy does not
+    even have the schema.
+    """
+    import shutil
+
+    import duckdb
+
+    from src import db
+
+    live = tmp_path / "corpus.duckdb"
+    conn = db.init_db(live)
+    db.upsert_documents(
+        conn, [build_document(source="oecd", native_id="1", title="A report")]
+    )
+
+    # What `scan.yml` uploads, before the fix: the database file alone.
+    shutil.copy(live, tmp_path / "before.duckdb")
+    stranded = duckdb.connect(str(tmp_path / "before.duckdb"))
+    with pytest.raises(duckdb.CatalogException):
+        stranded.execute("SELECT count(*) FROM documents")
+    stranded.close()
+
+    db.checkpoint(conn)
+
+    shutil.copy(live, tmp_path / "after.duckdb")
+    published = duckdb.connect(str(tmp_path / "after.duckdb"))
+    assert published.execute("SELECT count(*) FROM documents").fetchone()[0] == 1
+    published.close()
+    conn.close()
+
+
+def test_stage1_checkpoints_around_every_frame():
+    """Bounds the loss to one frame rather than the whole collection."""
+    import inspect
+
+    from src import stage1_collect
+
+    source = inspect.getsource(stage1_collect._run_inner)
+    assert source.count("db.checkpoint(conn)") >= 2, (
+        "Stage 1 must checkpoint inside the frame loop and once after it"
+    )

@@ -45,7 +45,7 @@ as a finding.
 | Published explorer | **Rebuilt 2026-08-31; not yet run against the real corpus** | `src/dashboard.py` + `src/dashboard_assets/`. Five views over a finished run: an interactive `docs/method.md`, the point cloud, every topic and score in a sortable table, a configurable score scatter, and a browsable copy of the run's tables. The map now follows the clustering's UMAP settings and reports trustworthiness, continuity and a per-topic neighbour-purity pair. Those figures have **not yet been produced against the real corpus** — see the calibration log for what to look for in the first ones |
 | Notebook export | **Working, not yet reviewed by anyone** | `src/notebook.py`; written automatically after Stage 5. Re-derives emergence, horizon, index and composite rank from stored inputs |
 | Automation | **Fully exercised; scan.yml reworked 2026-08-31, not yet run under the new defaults** | `tests.yml` now has a second `ml` job covering the default BGE/BERTopic path, while the first job still installs `requirements.txt` only — which keeps "runs with no torch" a tested guarantee. `verify-access.yml` — **both credentials pass**. `scan.yml` installs the ML stack only when the resolved settings need it, caches the model, takes `embedding_backend`/`clustering_method` dispatch inputs, and its timeout is **360 min**, raised from 300 on 2026-09-14 for the wider frame (issue 17). It also mirrors `data/manual-upload/` to R2 |
-| Tests | **341 (333 passing + 8 skipped without `requirements-ml.txt`)** | Offline by design — the BERTopic tests included, since BERTopic is handed embeddings and never loads a model. They skip without `requirements-ml.txt` and run in CI's `ml` job |
+| Tests | **350 (342 passing + 8 skipped without `requirements-ml.txt`)** | Offline by design — the BERTopic tests included, since BERTopic is handed embeddings and never loads a model. They skip without `requirements-ml.txt` and run in CI's `ml` job |
 
 **Current baseline — `2026-08-31`** (workflow run 33345343027, 164 min, from an
 empty database with all collection fixes live). **Its outputs were overwritten and have
@@ -1117,6 +1117,43 @@ What is fixed is the *silent* collision, which only ever arose from the default.
 This is the same failure shape as issue 5 — a real event that the record showed
 as normal — and the same remedy: make the machine say what happened.
 
+### 35. A cancelled run publishes a corpus containing none of what it collected — NEW 2026-09-14, FIXED 2026-09-14
+
+**The most expensive defect found so far, and it reported success while doing
+it.**
+
+Run `2026-09-14T0823` collected for six hours, reached 28,399 documents
+in-process, and hit the 360-minute job timeout during frame 32 of 36. The
+`if: always()` steps then ran exactly as designed: "Publish corpus as a data
+release" succeeded, "Mirror corpus to Cloudflare R2" succeeded, and the run
+ended looking like a timeout that had cost time but not data.
+
+It had cost the data. The published asset was **220.2 MB — byte-identical in
+size to the corpus the run started from** — and the recovery run that restored
+it analysed 18,342 documents with **zero from `oecd`**. All 10,057 newly
+collected documents were gone, including every one of the 1,734 OECD documents
+the new source had fetched.
+
+**Why.** DuckDB writes changes to `<db>.wal` and folds them into the `.duckdb`
+file only on a clean close or when the log passes its own threshold. The job
+timeout SIGKILLs the process, so `conn.close()` — and the `finally` that calls
+it — never runs. `scan.yml` publishes `data/bigthink.duckdb` and nothing else.
+The corpus travels between runs as that single file, so the write-ahead log was
+never part of the contract and nobody noticed it was carrying the run.
+
+Reproduced in a test: write a document, copy the `.duckdb` file alone, and the
+copy does not even have the `documents` table.
+
+**Fixed** by `db.checkpoint()`, called by Stage 1 around every frame. A killed
+run now loses at most one frame instead of the whole collection.
+`test_checkpoint_folds_the_write_ahead_log_into_the_database_file` asserts it
+the way the workflow fails — by copying the file and reading the copy.
+
+**What this means for anything published before 2026-09-14.** Every clean run
+closed its connection and checkpointed, so their corpora are sound. The
+exposure was only ever to a run that died without closing, and the only one
+that has is this one.
+
 ### 17. Run time is now the binding constraint — NEW 2026-08-31, worse since 2026-09-14
 
 164 minutes against a 240-minute timeout, up from 67. GDELT dominates: 4 windows
@@ -1148,23 +1185,42 @@ release is being restored, so the vector cache is warm; then reconsider GDELT's
 `window_chunks`, which is still the single biggest consumer.
 
 **Updated 2026-09-14 — timeout raised to 360 minutes** for the widened scan
-frame (21 frames → 36) and the new OECD source. Against the same 164-minute
-baseline:
+frame (21 frames → 36) and the new OECD source, **and the run hit it anyway**,
+four frames short of the end. The estimate that justified 360 blamed GDELT.
+**That was wrong, and the measurement says so.** Run `2026-09-14T0823`, 332
+minutes of Stage 1 before the timeout:
 
-| Addition | Cost |
-|---|---|
-| GDELT, 18 frames → 26, at ~175 s each | **+23 min** |
-| arXiv, 9 frames → 12, at its 20 s backoff ceiling | up to +11 min |
-| OECD, 35 frames x up to 5 RSS pages at 1 s, plus 2 catalogue requests for the whole run | +4 min |
-| OpenAlex and Crossref over 15 more frames | +6 min |
-| BGE and BERTopic over a larger corpus | +10 min |
+| source | pairs | minutes | share | documents | docs/min |
+|---|---:|---:|---:|---:|---:|
+| **arxiv** | 10 | **212** | **64%** | **138** | **0.7** |
+| gdelt | 24 | 110 | 33% | 7,553 | 69 |
+| oecd | 29 | 5 | 1% | 1,734 | 347 |
+| openalex | 32 | 3 | 1% | 6,767 | 2,256 |
+| crossref | 25 | 2 | 1% | 4,847 | 2,424 |
+| datagovau | 9 | 0 | 0% | 450 | — |
 
-~218 minutes expected, past 280 in the worst case. GDELT is again the whole of
-the increase and again the first lever to pull: it is 26 of the 36 frames at
-four windows each, and dropping `window_chunks` to 3 would return ~19 minutes
-for a narrower news window. The OECD, by contrast, is the cheapest source in
-the pipeline per document collected — its statistics channel costs two requests
-for the entire run however many frames there are.
+**Every arXiv frame cost about twenty minutes whether it returned sixty
+documents or none** — 19.4, 23.5, 22.4, 22.5, 21.3, 18.7, 20.5, 20.2, 22.8,
+21.1 — because the adaptive delay was pinned at its 20-second ceiling and each
+of the nine years still spent four retry attempts against a server refusing all
+of them. 222 HTTP 429s. Seven of eleven frames returned nothing at all.
+
+GDELT is expensive and *productive*: 4.6 minutes and 315 documents per frame.
+It is not the lever. The OECD is the cheapest source here per document
+collected, and its statistics channel costs two requests for the entire run
+however many frames there are.
+
+**Fixed** by `collection.sources.arxiv.retire_after_failed_frames: 2`. arXiv's
+per-year and per-frame containment (issue 14) were both right and both local;
+together they turned a fast failure into a slow one. Stage 1's circuit breaker
+already knows that a throttled source is not a per-frame condition — arXiv just
+never told it. Replayed against this run's frame order, that retires arXiv
+after the fourth frame instead of the eleventh: ~85 minutes rather than 212.
+
+**Remaining levers, in order**, if a run still runs long: `gdelt.window_chunks`
+4 → 3 returns ~19 minutes at the cost of a narrower news window; then
+`arxiv.max_request_delay_seconds` 20 → 10, which halves the cost of the frames
+before retirement.
 
 ### 1. The ranking has never been validated — do this before trusting anything
 
@@ -1658,6 +1714,30 @@ total, its time series and its evidence cards; it no longer decides what the
 topics are. Note this is a *different* justification from GDELT's, which is
 excluded for thinness — do not collapse the two, because the fix for one is not
 the fix for the other.
+
+**WHAT THE FIRST RUN ACTUALLY DID (run `2026-09-14T0823`, and read this before
+the checklist below)**
+
+It hit the 360-minute timeout during frame 32 of 36 and **its collection was
+then lost to issue 35** — the published corpus contained none of the 10,057
+documents it had gathered. So the OECD's behaviour below is measured from the
+run log, not from a corpus anyone can now query, and the shortlist published
+for `2026-09-14T1434` is the pre-existing 18,342-document corpus re-analysed:
+**it contains no OECD documents and none of section E's collection.** Do not
+read it as a result of this change.
+
+What the log does establish, and it is the part worth keeping:
+
+* **The OECD collector worked, on every frame it reached.** 29 of 29
+  frame/source pairs `success`, 1,734 documents, no incidents. The SDMX
+  catalogue fetch succeeded from an Actions runner. At 5 minutes for 1,734
+  documents it is the cheapest source in the pipeline per document.
+* **Section E collected heavily.** `water_security` 191 OECD publications,
+  `health_system_innovation` 156, `workforce_skills_automation` 149,
+  `housing_construction_productivity` 135, and GDELT returned 174-682 articles
+  for each of the new frames it reached. The corpus went from 19,749 at the end
+  of section D to 28,399 when the job was killed.
+* **arXiv spent 64% of the run to collect 138 documents.** See issue 17.
 
 **What to check in the first run that uses this**
 

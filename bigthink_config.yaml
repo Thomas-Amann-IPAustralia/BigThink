@@ -185,6 +185,34 @@ collection:
       # 20 s. Run time is the binding constraint now (PROJECT_STATE issue 17),
       # so this is the number to lower if the job starts running long.
       max_request_delay_seconds: 20.0
+      # Retire arXiv for the rest of the run after this many CONSECUTIVE frames
+      # that collected nothing and recorded a failure. 0 disables it.
+      #
+      # Measured on the 2026-09-14 run, which hit its six-hour timeout four
+      # frames short of the end of the scan frame:
+      #
+      #   source     pairs   minutes   share   documents
+      #   arxiv         10       212     64%         138
+      #   gdelt         24       110     33%       7,553
+      #   oecd          29         5      1%       1,734
+      #   openalex      32         3      1%       6,767
+      #   crossref      25         2      1%       4,847
+      #
+      # Every arXiv frame cost ~20 minutes whether it returned 60 documents or
+      # zero, because the adaptive delay above was pinned at its ceiling and
+      # each of the nine years still spent four retry attempts against a server
+      # refusing all of them. Seven of eleven frames returned nothing.
+      #
+      # The per-year and per-frame containment added for issue 14 were both
+      # right and both local; together they converted a fast failure into a
+      # slow one. This is the missing observation, and it is the one Stage 1's
+      # circuit breaker already makes: a throttled IP is not a per-frame
+      # condition. 2, rather than 1, because a single frame can legitimately
+      # fail on a transient blip; two consecutive is the server talking.
+      #
+      # Replayed against the 2026-09-14 sequence this retires arXiv after the
+      # fourth frame instead of the eleventh — ~85 minutes rather than 212.
+      retire_after_failed_frames: 2
     crossref:
       enabled: true
       rows_per_query: 100

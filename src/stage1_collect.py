@@ -218,6 +218,15 @@ def _run_inner(
 
     for frame in frames:
         frame_key = str(frame["key"])
+        # Every frame, not every run. See db.checkpoint: the corpus travels
+        # between runs as the .duckdb file alone, and DuckDB leaves recent
+        # writes in a .wal that no one uploads. The cancelled 2026-09-14 run
+        # collected 10,057 documents in six hours, was killed at the timeout
+        # before it could close the connection, and published a corpus
+        # containing none of them — at the same byte size as the one it
+        # started from. Collection is the expensive half of this pipeline and
+        # it must survive the job being killed.
+        db.checkpoint(conn)
         for source, collector in collectors.items():
             query = (frame.get("queries") or {}).get(source)
             if not query:
@@ -295,6 +304,10 @@ def _run_inner(
                 frame_key, source, status, len(docs), new, db.count_documents(conn),
                 f" — {'; '.join(incidents)}" if incidents else "",
             )
+
+    # The last frame's documents are still only in the write-ahead log at this
+    # point — the per-frame call above runs before each frame, not after it.
+    db.checkpoint(conn)
 
     elapsed = time.monotonic() - started
     for source, reason in retired.items():
