@@ -214,23 +214,44 @@ class Collector:
         raise NotImplementedError
 
     # -- HTTP ------------------------------------------------------------
-    def fetch_json(self, url: str, params: dict[str, Any] | None = None) -> Any:
-        """GET returning parsed JSON, with rate limiting and retry."""
+    def fetch_json(
+        self,
+        url: str,
+        params: dict[str, Any] | None = None,
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> Any:
+        """GET returning parsed JSON, with rate limiting and retry.
+
+        `headers` overrides the session defaults for one request. It exists for
+        content-negotiated APIs: SDMX serves several incompatible JSON schemas
+        from one URL and picks between them on the `Accept` header, so a
+        collector that does not pin the version it parses is one server upgrade
+        away from silently reading a different shape.
+        """
         return retry_call(
             self._fetch_json_once,
             url,
             params,
+            headers=headers,
             max_retries=int(self.config.get("pipeline", {}).get("max_retries", 3)),
             base_delay=float(
                 self.config.get("pipeline", {}).get("retry_base_delay_seconds", 2.0)
             ),
         )
 
-    def fetch_text(self, url: str, params: dict[str, Any] | None = None) -> str:
+    def fetch_text(
+        self,
+        url: str,
+        params: dict[str, Any] | None = None,
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> str:
         return retry_call(
             self._fetch_text_once,
             url,
             params,
+            headers=headers,
             max_retries=int(self.config.get("pipeline", {}).get("max_retries", 3)),
             base_delay=float(
                 self.config.get("pipeline", {}).get("retry_base_delay_seconds", 2.0)
@@ -244,10 +265,17 @@ class Collector:
         if elapsed < self.request_delay:
             time.sleep(self.request_delay - elapsed)
 
-    def _request(self, url: str, params: dict[str, Any] | None) -> requests.Response:
+    def _request(
+        self,
+        url: str,
+        params: dict[str, Any] | None,
+        headers: dict[str, str] | None = None,
+    ) -> requests.Response:
         self._throttle()
         try:
-            response = self._session.get(url, params=params, timeout=DEFAULT_TIMEOUT)
+            response = self._session.get(
+                url, params=params, headers=headers, timeout=DEFAULT_TIMEOUT
+            )
         except requests.Timeout as exc:
             raise RetryableError(f"Timeout fetching {url}", context={"url": url}) from exc
         except requests.RequestException as exc:
@@ -286,8 +314,13 @@ class Collector:
             raise err
         return response
 
-    def _fetch_json_once(self, url: str, params: dict[str, Any] | None) -> Any:
-        response = self._request(url, params)
+    def _fetch_json_once(
+        self,
+        url: str,
+        params: dict[str, Any] | None,
+        headers: dict[str, str] | None = None,
+    ) -> Any:
+        response = self._request(url, params, headers)
         try:
             return response.json()
         except ValueError as exc:
@@ -295,8 +328,13 @@ class Collector:
                 self.name, url, f"response is not JSON ({response.text[:120]!r})"
             ) from exc
 
-    def _fetch_text_once(self, url: str, params: dict[str, Any] | None) -> str:
-        return self._request(url, params).text
+    def _fetch_text_once(
+        self,
+        url: str,
+        params: dict[str, Any] | None,
+        headers: dict[str, str] | None = None,
+    ) -> str:
+        return self._request(url, params, headers).text
 
     # -- raw payload persistence -----------------------------------------
     def save_raw(self, frame_key: str, page: int, payload: Any) -> str | None:

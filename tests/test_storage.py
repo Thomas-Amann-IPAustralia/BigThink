@@ -245,3 +245,65 @@ def test_get_client_uses_the_jurisdiction_endpoint(r2_config, monkeypatch):
     monkeypatch.setattr(boto3, "client", fake_client)
     storage.get_client(r2_config)
     assert captured["endpoint_url"] == f"https://{ACCOUNT}.eu.r2.cloudflarestorage.com"
+
+
+# ---------------------------------------------------------------------------
+# Manual uploads (data/manual-upload/)
+#
+# Unlike the corpus and the raw payloads these are committed, so the mirror is
+# not about durability — it is so the source material a scan frame was derived
+# from is reachable from the same place as the runs that frame produced.
+# ---------------------------------------------------------------------------
+
+
+def test_push_then_pull_manual_round_trips(r2_config, tmp_path):
+    client = FakeS3Client()
+    manual = tmp_path / "manual-upload"
+    (manual / "nested").mkdir(parents=True)
+    (manual / "ajasn-newsletter-01-2026.md").write_text("# AJASN")
+    (manual / "nested" / "ajasn-ff-1-aug-25.md").write_text("# Friday Foresight")
+
+    pushed = storage.push_manual(r2_config, manual_dir=manual, client=client)
+    assert pushed == 2
+    assert ("test-bucket", "manual-upload/ajasn-newsletter-01-2026.md") in client.objects
+    assert ("test-bucket", "manual-upload/nested/ajasn-ff-1-aug-25.md") in client.objects
+
+    dest = tmp_path / "restored-manual"
+    assert storage.pull_manual(r2_config, manual_dir=dest, client=client) == 2
+    assert (dest / "nested" / "ajasn-ff-1-aug-25.md").read_text() == "# Friday Foresight"
+
+
+def test_push_manual_is_idempotent(r2_config, tmp_path):
+    """It runs on every scan; a second push must cost a re-upload and nothing
+    else — no duplicated keys, no growth."""
+    client = FakeS3Client()
+    manual = tmp_path / "manual-upload"
+    manual.mkdir()
+    (manual / "a.md").write_text("a")
+    storage.push_manual(r2_config, manual_dir=manual, client=client)
+    keys = set(client.objects)
+    storage.push_manual(r2_config, manual_dir=manual, client=client)
+    assert set(client.objects) == keys
+
+
+def test_push_manual_missing_directory_returns_zero(r2_config, tmp_path):
+    assert storage.push_manual(r2_config, manual_dir=tmp_path / "nope", client=FakeS3Client()) == 0
+
+
+def test_manual_sync_noops_when_disabled(disabled_config, tmp_path):
+    manual = tmp_path / "manual-upload"
+    manual.mkdir()
+    (manual / "a.md").write_text("a")
+    assert storage.push_manual(disabled_config, manual_dir=manual, client=FakeS3Client()) == 0
+    assert storage.pull_manual(disabled_config, manual_dir=manual, client=FakeS3Client()) == 0
+
+
+def test_the_shipped_manual_upload_directory_exists_and_holds_the_ajasn_set():
+    """Section E of the scan frame cites these files as the source of its
+    breadth. A frame whose stated evidence is not in the repository is a frame
+    nobody can argue with."""
+    from src.config import load_config as _load, resolve_path
+
+    manual = resolve_path(_load(), "storage", "manual_upload_dir")
+    assert manual.is_dir()
+    assert len(list(manual.glob("ajasn-*.md"))) >= 20

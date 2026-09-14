@@ -38,6 +38,7 @@ _KNOWN_SOURCES = {
     "crossref",
     "gdelt",
     "datagovau",
+    "oecd",
     "patentsview",
 }
 # STEEPV: the horizon-scanning taxonomy from the UK GO-Science Futures Toolkit,

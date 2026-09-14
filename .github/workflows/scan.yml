@@ -98,7 +98,21 @@ jobs:
     # ~212 minutes in the worst case, which 240 does not comfortably hold. The
     # cost of being wrong here is losing a three-hour collection outright, so
     # this buys headroom rather than spending it.
-    timeout-minutes: 300
+    #
+    # Raised again from 300 on 2026-09-14, when the scan frame went from 21
+    # frames to 36 (section E) and the OECD source was added. Against the same
+    # 164-minute baseline, per-source:
+    #   +23 min    GDELT, from 18 frames to 26 at a measured ~175 s each
+    #              (4 windows plus a tone call). This is the whole cost.
+    #   +11 min    arXiv, from 9 frames to 12, at its 20 s backoff ceiling
+    #   +4 min     OECD, 35 frames at up to 5 RSS pages and 1 s between
+    #              requests, plus two catalogue requests for the entire run
+    #   +6 min     OpenAlex and Crossref over 15 more frames
+    #   +10 min    BGE and BERTopic over a corpus that is larger by however
+    #              much section E collects
+    # ~218 minutes expected and past 280 in the worst case, which 300 does not
+    # comfortably hold either. Same reasoning as every raise above it.
+    timeout-minutes: 360
 
     steps:
       - name: Checkout
@@ -316,6 +330,24 @@ jobs:
           if [ -f data/bigthink.duckdb ]; then
             python -m src.storage push-corpus || echo "R2 mirror skipped or failed — Release asset above remains the source of truth."
           fi
+
+      # ------------------------------------------------------------------
+      # Mirror data/manual-upload/ to R2 as well. These are inputs a human
+      # added by hand — the AJASN newsletters section E of the scan frame was
+      # derived from — and unlike the corpus they are committed, so this is not
+      # about durability. It is so the source material for a frame is
+      # reachable from the same place as the runs that frame produced, without
+      # cloning the repository. Idempotent, seconds, and best-effort like the
+      # corpus mirror above.
+      # ------------------------------------------------------------------
+      - name: Mirror manual uploads to Cloudflare R2
+        if: always()
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          python -m src.storage push-manual || echo "R2 manual-upload mirror skipped or failed — the files remain in git."
 
       - name: Upload run logs
         if: always()

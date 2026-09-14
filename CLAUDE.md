@@ -150,6 +150,13 @@ follow the rule; if you need this exception, say why at the call site.
 | **A relevance floor is anchored on rank 10, not the maximum** | OpenAlex relevance blends text match with citation count, so a query naming a well-known field returns one enormous score and a normal tail. Anchoring on that maximum made a frame's yield a function of how much of an outlier its top hit was — 3 records for `ct_quantum`, 110 for `ct_biotech`, on comparable literature. Crossref stays on rank 1, where its gentler decay makes the floor near-inert |
 | **A collector that handles its own error records an incident** | `collect` is a generator drained with `list()`, so raising after the first yield discards the documents already produced. A partial window is worth keeping. But an unrecorded failure is how four GDELT frames were logged `success` with zero records, and the run reported a clean sweep it did not have |
 | **GDELT's window is split into date-range chunks** | `timespan` does not do what it says: `artlist` sorts most-recent-first and `maxrecords` caps at 250, so one request returns the newest 250 articles however wide the window. Every GDELT document on the 2026-08-30 run carried a 2026 date |
+| **The OECD is one source with two channels, not two sources** | The publications RSS feed and the SDMX statistics catalogue are different services on different hosts and fail independently, but they are one institution and a shortlist should show one provenance. `src/collectors/oecd.py` runs both; an `https://` query is read as a verbatim faceted feed and skips the statistics channel |
+| **The OECD statistics catalogue is fetched whole, twice per run** | The API allows 60 downloads an hour and its own documentation asks for consolidated queries and local caching. Two requests — every dataflow, every content constraint — cover every frame however many there are, and the matching is done locally. A per-frame query would have spent the budget to learn the same thing repeatedly |
+| **OECD publications are filtered on the text the pipeline will embed** | The feed exposes no relevance score and sorts by date, so there is nothing for a `min_relative_score` floor to anchor on, and the matching is loose: `searchTerm=patent` returned 100 items of which 4 mentioned patents in their own title or abstract, and `intellectual property` returned 100 of which none mentioned either word. Since title + abstract is all that gets embedded, an item matching on text the pipeline never sees arrives looking unrelated to the frame that collected it. Hence `rss_min_term_matches`, and hence the rule that an `oecd:` query is one or two DISTINCTIVE words |
+| **An OECD dataflow must be NAMED after the query, not merely mention it** | `sdmx_min_match_score: 3.0`, where a query word in the name scores 3 and one in the description scores 1. Counting description hits put "National CPI, growth rate" at the top of a query for energy. It also means a frame the OECD has no series for collects nothing and says so, instead of being handed the nearest thing |
+| **The OECD attaches to topics, it does not form them** | For a different reason than GDELT, and the difference is the point. GDELT is excluded because its records are too thin to cluster; OECD records carry real abstracts. They are excluded because **the OECD publishes in series** — TALIS, Environment at a Glance, the Country Health Profiles, a committee's background notes — and thirty near-identical country reports cluster into a high-coherence topic that is a publishing artefact, not a trend. Measured on 1,284 OECD documents: eight of the ten largest OECD-heavy topics were series. Attaching instead of forming produced subject topics and attached **all 1,284** documents, against 637 when they were forming — so nothing is lost |
+| **OECD release dates are salience, never timing** | `validFrom` records the last refresh of a statistical series, not when the phenomenon started, so these records cluster in the most recent year or two whatever they measure — the same trap as data.gov.au's `metadata_modified`. `sdmx_max_per_query` is deliberately small so they cannot put a spike at the right-hand end of every growth curve they join |
+| **Institutional sources count toward no Stage 4 component** | `datagovau` and `oecd` are in none of `RESEARCH_SOURCES` / `ATTENTION_SOURCES` / `PATENT_SOURCES`. Each component names a specific claim, and an OECD report is not a paper nor a dataflow a filing; counting either as research would make `research_growth` mean "publication growth, plus whatever the OECD released this year". They still form topics, still count toward `min_documents`, and still reach `policy_salience` through the strategy corpus |
 | **Impact percentiles computed within source** | arXiv reports no citations. Ranked globally, every preprint sits at the bottom and the fastest-moving evidence is systematically penalised |
 | **Opportunity index excluded from the ranking** | It is the weakest-founded number here. Folding it into the headline order would launder that weakness |
 | **Thin topics suppressed, not scored** — *at Stage 4 only* | A composite on 8 documents looks identical to one on 800. That is how a horizon scan misleads people. Note the gate is real in Stage 4 (`opportunity_index.min_documents`) and **absent in Stage 2**: `emergence.min_docs_per_topic` only logs a warning, so a thin topic is still scored, ranked and published with an emergence score. Open issue 13 |
@@ -184,8 +191,8 @@ able to critique them without reading Python:
 
 ## Environment variables
 
-Neither is required; the pipeline runs on Crossref, arXiv, GDELT and
-data.gov.au with no keys at all.
+Neither is required; the pipeline runs on Crossref, arXiv, GDELT, data.gov.au
+and the OECD with no keys at all.
 
 | Variable | Effect if unset |
 |---|---|
@@ -193,6 +200,14 @@ data.gov.au with no keys at all.
 | `PATENTSVIEW_API_KEY` | PatentsView stays disabled; the `patent_activity` index component has no data and its weight is redistributed |
 | `BIGTHINK_CONTACT_EMAIL` | Falls back to `pipeline.contact_email` in the config. Used for OpenAlex/Crossref polite pools |
 | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Required together only when `storage.r2.enabled` is true, where a missing one raises rather than skipping — a run that believes it is persisting a corpus and is not would be worse than one that never tried |
+
+Three things are mirrored to R2: the corpus, the raw payloads, and
+`data/manual-upload/` (`python -m src.storage push-manual`). The last is the
+odd one out because those files are *committed* — they are inputs a human
+added by hand, currently the AJASN newsletters that section E of the scan
+frame was derived from, and the mirror exists so the evidence for a frame is
+reachable from the same place as the runs it produced. The `scan.yml` workflow
+pushes them on every run.
 
 ## Conventions
 
@@ -213,7 +228,11 @@ data.gov.au with no keys at all.
 
 - **A new scan query** → edit `data/strategy/scan_frame.yaml`. No code. But it
   changes the corpus, so results before and after are not comparable — record
-  it in `PROJECT_STATE.md`.
+  it in `PROJECT_STATE.md`. Note the per-source query conventions in that
+  file's header: GDELT needs every OR'd group parenthesised, and OECD wants
+  one or two distinctive words rather than a phrase. Both are enforced by a
+  test in `tests/test_collectors.py`, because both fail by collecting the
+  wrong thing quietly rather than by erroring.
 - **A new source** → see `docs/runbook-add-source.md`. Register in three
   places: `collectors/__init__.py`, `_KNOWN_SOURCES` in `config.py`, and the
   config. If it is research/attention/patent evidence, also add it to the

@@ -27,7 +27,8 @@ ranking — as code that runs unattended, rather than as a workshop.
 Stage 0  Strategy encoding    Corporate Plan + DISR critical tech + asset inventory
                               → reference vectors and lexicons
 Stage 1  Signal collection    OpenAlex · Crossref · arXiv · GDELT · data.gov.au
-                              · PatentsView → DuckDB, STEEPV-tagged, deduplicated
+                              · OECD · PatentsView
+                              → DuckDB, STEEPV-tagged, deduplicated
 Stage 2  Emergence detection  Topics → Kleinberg bursts → logistic growth curves
                               → Rotolo five-attribute score → Three Horizons
 Stage 3  Fit and leverage     Strategic fit × asset leverage, per topic
@@ -133,8 +134,8 @@ and reviewable without reading any Python:
 
 ## API keys
 
-The pipeline runs with no keys at all, on Crossref, arXiv, GDELT and
-data.gov.au. Two sources are better with them:
+The pipeline runs with no keys at all, on Crossref, arXiv, GDELT, data.gov.au
+and the OECD. Two sources are better with them:
 
 | Variable | Source | Why |
 |---|---|---|
@@ -285,6 +286,9 @@ src/
   notebook.py                  Peer-review notebook for a finished run
 data/
   strategy/                    The four YAML inputs above (committed)
+  manual-upload/               Documents added by hand — the AJASN newsletters
+                               section E of the scan frame was derived from
+                               (committed, and mirrored to R2)
   raw/                         Raw API payloads (gitignored)
   outputs/<run_id>/            Shortlist, evidence cards, topics.csv,
                                horizon-scan-<run_id>.ipynb (committed)

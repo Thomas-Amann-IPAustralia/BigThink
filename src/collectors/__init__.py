@@ -11,6 +11,7 @@ from src.collectors import (  # noqa: F401
     crossref,
     datagovau,
     gdelt,
+    oecd,
     openalex,
     patentsview,
 )

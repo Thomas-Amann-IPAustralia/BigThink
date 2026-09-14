@@ -66,6 +66,28 @@ STAGE = "stage4_opportunity_index"
 
 # Sources that count as research vs attention vs patents when splitting a
 # topic's documents into component signals.
+#
+# `datagovau` and `oecd` are deliberately in none of the three, and the
+# omission is a decision rather than an oversight. Each component names a
+# specific claim — peer-reviewed publication growth, news attention, patent
+# filing — and an institutional source is not weak evidence for one of them, it
+# is evidence for something else. An OECD report is not a paper and a
+# statistical dataflow is not a filing; counting either as research would make
+# `research_growth` mean "publication growth, plus whatever the OECD released
+# this year", which is a different number wearing the same name.
+#
+# They are not therefore ignored. Both form topics, both count toward a
+# topic's document total and its `min_documents` gate, both feed strategic fit
+# and asset leverage at Stage 3, and their vocabulary reaches `policy_salience`
+# through the strategy corpus. What they do not do is silently redefine a
+# component.
+#
+# The visible cost: `research_growth` is scaled by research_share (research
+# documents over all documents), so a topic carrying a lot of OECD evidence
+# scores lower on it than the same topic without. That is already true of
+# GDELT and data.gov.au and is the honest reading — the topic *is* proportion-
+# ally less research-driven — but it is worth re-examining once a run has
+# shown how much OECD material a typical topic carries. PROJECT_STATE.md.
 RESEARCH_SOURCES = frozenset({"openalex", "crossref", "arxiv"})
 ATTENTION_SOURCES = frozenset({"gdelt"})
 PATENT_SOURCES = frozenset({"patentsview"})

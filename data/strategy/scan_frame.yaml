@@ -23,17 +23,40 @@
 #             GDELT requires every OR'd group to be wrapped in parentheses —
 #             an unwrapped OR returns a plain-text error, not JSON, and the
 #             frame silently collects nothing from that source
+#             OECD wants one or two DISTINCTIVE words, not a phrase. Its search
+#             has no relevance score and no phrase operator, and a generic
+#             second word replaces the query rather than narrowing it:
+#             `intellectual property` returned 100 items in which neither word
+#             appeared, `counterfeit` returned 37 of which 31 were on topic.
+#             An https:// value is instead used as a verbatim faceted feed.
+#             See the measurements in src/collectors/oecd.py.
+#             Every oecd query below was measured against the live feed on
+#             2026-09-14 and chosen for yield AND span: "patent" keeps 23
+#             publications across 8 distinct years, "healthcare" 144 across 9,
+#             "satellite" 18 across 7. Three frames have NO oecd query on
+#             purpose — geographical indications, content provenance and
+#             prior-art retrieval each returned zero usable publications, and
+#             the nearest broader word ("geographical") returned semiconductor
+#             ecosystem reports. A source that has nothing to say about a
+#             frame should say nothing about it
 #   rationale why this is in the frame at all
 #
-# KNOWN BIAS: the frame is stronger on Technological than on Social, Values or
-# Environmental. That mirrors where free structured data exists, not where the
-# opportunities are. Treat the non-technological entries as under-powered and
-# compensate at the human synthesis session (Stage 5). This is recorded as an
-# open issue in PROJECT_STATE.md.
+# KNOWN BIAS, and what was done about it on 2026-09-14. This file was stronger
+# on Technological than on Social, Values or Environmental — a bias inherited
+# from where free structured data exists rather than from where the
+# opportunities are. Section E was added to answer it, taking its breadth from
+# the AJASN newsletters the Australian public sector's own foresight community
+# circulates. The spread across the 36 frames is now Technological 10,
+# Economic 7, Environmental 6, Political 5, Social 4, Legal 2, Values 2.
+#
+# The bias is reduced, not gone. The underlying asymmetry has not changed:
+# arXiv and PatentsView have no Social or Values equivalent, so those frames
+# still rest on OpenAlex, Crossref, GDELT and now the OECD. Treat them as
+# thinner evidence and compensate at the human synthesis session (Stage 5).
 # =============================================================================
 
-version: "0.1"
-last_reviewed: "2026-08-29"
+version: "0.2"
+last_reviewed: "2026-09-14"
 
 frames:
 
@@ -53,6 +76,7 @@ frames:
       crossref: "patent examination artificial intelligence"
       gdelt: "(patent office OR trademark office) AND (artificial intelligence OR automation)"
       patentsview: "patent classification machine learning"
+      oecd: "patent"
 
   - key: "ip_search_retrieval"
     label: "Prior-art search, semantic retrieval and patent NLP"
@@ -76,6 +100,7 @@ frames:
       crossref: "intellectual property policy regulatory reform"
       gdelt: "intellectual property reform AND (regulation OR productivity)"
       datagovau: "intellectual property"
+      oecd: "intellectual property"
 
   - key: "ip_enforcement_counterfeit"
     label: "Counterfeiting, enforcement and online marketplaces"
@@ -87,6 +112,7 @@ frames:
       openalex: "counterfeit detection OR trademark infringement online marketplace"
       gdelt: "counterfeit goods AND (marketplace OR enforcement OR brand)"
       crossref: "counterfeiting enforcement intellectual property"
+      oecd: "counterfeit"
 
   - key: "ip_sme_access"
     label: "SME and start-up access to the IP system"
@@ -98,6 +124,7 @@ frames:
       openalex: "small and medium enterprise intellectual property OR startup patenting"
       crossref: "SME intellectual property access"
       gdelt: "small business AND (trademark OR patent OR intellectual property)"
+      oecd: "entrepreneurship"
 
   - key: "ip_finance_valuation"
     label: "IP as a financial asset: valuation, collateral, insurance"
@@ -110,6 +137,7 @@ frames:
       openalex: "intellectual property valuation OR patent collateral OR IP backed finance"
       crossref: "intellectual property valuation finance"
       gdelt: "intellectual property AND (valuation OR collateral OR securitisation)"
+      oecd: "intangible"
 
   # ---------------------------------------------------------------------
   # B. Contested frontiers — where IP law is under active pressure.
@@ -126,6 +154,7 @@ frames:
       arxiv: "abs:(copyright AND (generative OR training data))"
       crossref: "artificial intelligence inventorship copyright"
       gdelt: "(AI OR artificial intelligence) AND (copyright OR inventor OR authorship)"
+      oecd: "copyright"
 
   - key: "indigenous_knowledge"
     label: "Indigenous Knowledge, ICIP and traditional cultural expression"
@@ -138,6 +167,7 @@ frames:
       openalex: "Indigenous knowledge intellectual property OR traditional cultural expression"
       crossref: "Indigenous cultural and intellectual property"
       gdelt: "Indigenous knowledge AND (intellectual property OR cultural heritage)"
+      oecd: "Indigenous"
 
   - key: "geographical_indications"
     label: "Geographical indications and provenance"
@@ -176,6 +206,7 @@ frames:
       crossref: "digital government service delivery"
       gdelt: "digital government services AND (Australia OR public sector)"
       datagovau: "digital government"
+      oecd: "digital government"
 
   - key: "ai_governance_assurance"
     label: "AI governance, assurance and automated decision making in government"
@@ -190,6 +221,7 @@ frames:
       crossref: "automated decision making government accountability"
       gdelt: "automated decision making AND (government OR regulation)"
       datagovau: "artificial intelligence"
+      oecd: "artificial intelligence"
 
   - key: "trust_institutions"
     label: "Public trust in institutions and evidence"
@@ -201,6 +233,7 @@ frames:
       openalex: "public trust in government OR institutional trust evidence"
       crossref: "public trust institutions"
       gdelt: "public trust AND (government OR institutions OR regulator)"
+      oecd: "trust institutions"
 
   # ---------------------------------------------------------------------
   # D. DISR critical technology fields.
@@ -216,6 +249,7 @@ frames:
       openalex: "foundation model OR large language model OR generative artificial intelligence"
       arxiv: "cat:cs.AI AND abs:(foundation model OR agent)"
       gdelt: "artificial intelligence AND Australia"
+      oecd: "generative AI"
 
   - key: "ct_quantum"
     label: "Critical technology: quantum technologies"
@@ -226,6 +260,7 @@ frames:
       openalex: "quantum computing OR quantum sensing OR quantum communication"
       arxiv: "cat:quant-ph AND abs:(computing OR sensing OR error correction)"
       gdelt: "quantum computing AND (Australia OR investment OR patent)"
+      oecd: "quantum"
 
   - key: "ct_biotech"
     label: "Critical technology: biotechnologies"
@@ -236,6 +271,7 @@ frames:
       openalex: "synthetic biology OR gene editing OR biomanufacturing"
       crossref: "synthetic biology intellectual property"
       gdelt: "biotechnology AND (patent OR regulation OR Australia)"
+      oecd: "biotechnology"
 
   - key: "ct_energy"
     label: "Critical technology: clean energy generation and storage"
@@ -245,6 +281,7 @@ frames:
     queries:
       openalex: "energy storage battery OR green hydrogen OR grid integration renewable"
       gdelt: "clean energy technology AND (Australia OR patent OR investment)"
+      oecd: "renewable energy"
 
   - key: "ct_autonomous"
     label: "Critical technology: autonomous systems, robotics, PNT and sensing"
@@ -254,6 +291,7 @@ frames:
     queries:
       openalex: "autonomous systems robotics OR positioning navigation timing OR remote sensing"
       arxiv: "cat:cs.RO AND abs:(autonomous OR navigation)"
+      oecd: "robotics"
 
   - key: "ct_advanced_manufacturing"
     label: "Critical technology: advanced manufacturing and materials"
@@ -263,6 +301,7 @@ frames:
     queries:
       openalex: "additive manufacturing OR advanced materials OR critical minerals processing"
       gdelt: "advanced manufacturing AND Australia"
+      oecd: "manufacturing"
 
   - key: "ct_advanced_ict"
     label: "Critical technology: advanced ICT, cyber and post-quantum cryptography"
@@ -273,3 +312,267 @@ frames:
       openalex: "post-quantum cryptography OR privacy enhancing technologies OR edge computing"
       arxiv: "abs:(post-quantum cryptography OR privacy enhancing)"
       gdelt: "(post-quantum cryptography OR cyber security standards)"
+      oecd: "cyber"
+
+  # ---------------------------------------------------------------------
+  # E. The wider operating environment.
+  #
+  # Added 2026-09-14. Sections A-D ask what is happening TO THE IP SYSTEM.
+  # This section asks what is happening to the country the IP system serves,
+  # and it exists because sections A-D could not have found most of it.
+  #
+  # The breadth is taken from the AJASN (Australasian Joint Agencies Scanning
+  # Network) newsletters and Friday Foresight issues in data/manual-upload/ —
+  # the scanning output of the Australian public sector's own foresight
+  # community, and the nearest thing to a benchmark for what a horizon scan run
+  # out of a Commonwealth agency is expected to cover. Their standing sections
+  # are Public sector, Agriculture and food, Defence and geopolitics, Foresight,
+  # Health, Science and technology, Society, Economy and Environment; counted
+  # across the whole set, their most persistent subjects are climate (230
+  # mentions), health (163), trust (94), oceans (53), regulation (39), cyber
+  # (38), space (33), misinformation (32), productivity (30) and housing (26).
+  # Sections A-D above had a frame for none of those.
+  #
+  # Every frame here still has to earn its place against IP Australia's own
+  # mandate, and the rationale says how — usually because the agency holds a
+  # register, a dataset or a relationship that the field in question needs. A
+  # frame that could not answer that question is not in this file.
+  #
+  # This section is the direct answer to the KNOWN BIAS note at the top of the
+  # file, which has stood since 2026-08-29: the frame was stronger on
+  # Technological than on Social, Values or Environmental. Of the sixteen
+  # frames below, four are Environmental, three Social, four Economic, three
+  # Political, one Values and one Technological.
+  # ---------------------------------------------------------------------
+  - key: "climate_adaptation"
+    label: "Climate adaptation, resilience and disaster risk"
+    steepv: "Environmental"
+    rationale: >-
+      AJASN's single most persistent subject, and absent from sections A-D.
+      Adaptation technology is a fast-growing green-patent cluster where IP
+      Australia already publishes analytics, and the insurance and
+      infrastructure responses to physical risk are where those filings get
+      commercialised or do not.
+    queries:
+      openalex: "climate adaptation OR climate resilience OR disaster risk reduction"
+      crossref: "climate adaptation resilience infrastructure policy"
+      gdelt: "(climate adaptation OR climate resilience) AND (Australia OR insurance)"
+      datagovau: "climate"
+      oecd: "climate adaptation"
+
+  - key: "circular_economy_materials"
+    label: "Circular economy, materials recovery and product stewardship"
+    steepv: "Environmental"
+    rationale: >-
+      Recurs across the AJASN issues as materials innovation — coffee-ground
+      bricks, food-waste printing, plastics policy. Design rights and
+      provenance marking are the IP instruments a circular supply chain
+      actually runs on, and both are IP Australia registers.
+    queries:
+      openalex: "circular economy OR material recovery OR product stewardship OR recycled content"
+      crossref: "circular economy product stewardship design for recycling"
+      oecd: "plastics"
+      datagovau: "recycling"
+
+  - key: "food_agriculture_systems"
+    label: "Agricultural technology, food systems and biosecurity"
+    steepv: "Environmental"
+    rationale: >-
+      IP Australia administers Plant Breeder's Rights, which is the only
+      register the agency holds that is specific to a single industry — so a
+      shift in agricultural innovation lands on this agency's desk in a way
+      that a shift in, say, semiconductors does not. AJASN tracks it as a
+      standing section.
+    queries:
+      openalex: "precision agriculture OR agricultural biotechnology OR food security OR plant breeding"
+      crossref: "precision agriculture plant breeding food systems"
+      gdelt: "(precision agriculture OR agtech OR food security) AND Australia"
+      datagovau: "agriculture"
+      oecd: "agriculture"
+
+  - key: "health_system_innovation"
+    label: "Health system innovation, digital health and antimicrobial resistance"
+    steepv: "Social"
+    rationale: >-
+      AJASN's second most persistent subject. Pharmaceutical patents carry the
+      only term extension in the Australian Patents Act, so the agency's
+      workload is directly exposed to where health innovation goes next, and
+      the Patent Analytics Hub has published in this space before.
+    queries:
+      openalex: "digital health OR health technology assessment OR antimicrobial resistance"
+      crossref: "digital health technology assessment antimicrobial resistance"
+      gdelt: "(digital health OR health technology) AND (Australia OR regulation)"
+      oecd: "healthcare"
+
+  - key: "workforce_skills_automation"
+    label: "Labour markets, skills and automation"
+    steepv: "Economic"
+    rationale: >-
+      Serves Strategic Objective 4.1 twice over: the agency's own examiner
+      workforce is exactly the kind of expert, credential-heavy role the
+      generative-AI exposure studies put at the top of their lists, and the
+      skills of the firms it serves decide whether they can use the IP system
+      at all.
+    queries:
+      openalex: "labour market automation OR skills demand artificial intelligence OR task displacement"
+      arxiv: "abs:(labor market AND (automation OR large language model))"
+      crossref: "automation employment skills displacement"
+      gdelt: "(job displacement OR reskilling OR workforce shortage) AND (artificial intelligence OR automation)"
+      oecd: "skills"
+
+  - key: "ageing_wellbeing"
+    label: "Ageing, wellbeing and social connection"
+    steepv: "Social"
+    rationale: >-
+      The slowest-moving material in the scan and the reason to collect it
+      early. AJASN returns to it constantly (loneliness, wellbeing policy,
+      aged care). It shapes both the customer base and the workforce the
+      agency will have in a decade, and Horizon 3 is where a scan is supposed
+      to be looking.
+    queries:
+      openalex: "population ageing OR wellbeing policy OR social isolation loneliness"
+      crossref: "wellbeing measurement population ageing policy"
+      oecd: "ageing"
+
+  - key: "housing_construction_productivity"
+    label: "Housing supply, construction and the productivity agenda"
+    steepv: "Economic"
+    rationale: >-
+      Serves significant initiative SI-2 directly — SI-2 is the productivity
+      agenda, and construction is where Australia's measured productivity
+      problem is most concentrated. Modular and prefabricated construction is
+      also a live design-right and standards question.
+    queries:
+      openalex: "housing supply OR construction productivity OR modular prefabricated construction"
+      crossref: "construction productivity modular housing supply"
+      datagovau: "housing"
+      oecd: "housing"
+
+  - key: "information_integrity"
+    label: "Information integrity, online safety and age assurance"
+    steepv: "Social"
+    rationale: >-
+      The demand side of the provenance frame in section B. A registry
+      operator's authority rests on the public believing the register, so the
+      general collapse or repair of confidence in verifiable information is
+      not somebody else's problem. Australia's age-assurance and online-safety
+      regime is the near-term forcing function.
+    queries:
+      openalex: "misinformation OR disinformation OR online safety age assurance"
+      crossref: "misinformation online platform governance age verification"
+      gdelt: "(misinformation OR disinformation OR online safety) AND (Australia OR regulation)"
+      oecd: "online safety"
+
+  - key: "geoeconomics_supply_chains"
+    label: "Economic security, supply chains and critical minerals"
+    steepv: "Political"
+    rationale: >-
+      AJASN's defence-and-geopolitics section, read for its economic edge.
+      Export controls and technology-transfer restrictions are IP instruments
+      applied to foreign policy, and the agency's secrecy-direction power over
+      patent applications sits on exactly that boundary.
+    queries:
+      openalex: "supply chain resilience OR export controls technology OR economic security"
+      crossref: "supply chain resilience critical minerals export control"
+      gdelt: "(critical minerals OR export controls OR supply chain resilience) AND Australia"
+      datagovau: "critical minerals"
+      oecd: "supply chains"
+
+  - key: "space_earth_observation"
+    label: "Space, satellites and earth observation"
+    steepv: "Technological"
+    rationale: >-
+      A DISR-adjacent field the critical-technology frames in section D do not
+      reach, and one where Australia's comparative advantage is in the ground
+      segment and the data rather than in launch — which makes it a licensing
+      and data-rights question more than a hardware one.
+    queries:
+      openalex: "earth observation satellite OR space situational awareness OR small satellite"
+      arxiv: "abs:(satellite AND (earth observation OR constellation))"
+      crossref: "earth observation satellite data policy"
+      oecd: "satellite"
+
+  - key: "oceans_blue_economy"
+    label: "Oceans, marine resources and the blue economy"
+    steepv: "Environmental"
+    rationale: >-
+      Fifty-three mentions across the AJASN set and nothing in sections A-D.
+      Australia governs the world's third-largest marine jurisdiction;
+      aquaculture breeding, marine biotechnology and offshore energy are all
+      registrable-IP-generating and all under-scanned here.
+    queries:
+      openalex: "blue economy OR marine spatial planning OR ocean governance OR marine biotechnology"
+      crossref: "ocean governance blue economy marine resources"
+      oecd: "ocean"
+
+  - key: "water_security"
+    label: "Water security, drought and catchment management"
+    steepv: "Environmental"
+    rationale: >-
+      The adaptation frame's most Australian specific case, and one with its
+      own technology stack — reuse, desalination, sensing, trading platforms.
+      Water entitlements are also the country's most developed market in a
+      registered intangible right that IP Australia does not administer, which
+      makes it a useful comparator rather than a competitor.
+    queries:
+      openalex: "water security OR drought management OR water reuse desalination"
+      crossref: "water security drought policy catchment"
+      datagovau: "water"
+      oecd: "water"
+
+  - key: "defence_dual_use"
+    label: "Defence innovation, dual-use technology and uncrewed systems"
+    steepv: "Political"
+    rationale: >-
+      A standing AJASN section, and the one place where IP Australia holds a
+      coercive power rather than a service role: the Commissioner can direct
+      that a patent application be kept secret in the national interest.
+      Knowing which fields are heading that way is operational, not academic.
+    queries:
+      openalex: "dual use technology OR defence innovation OR uncrewed autonomous systems"
+      arxiv: "abs:(unmanned aerial OR counter-drone OR autonomous swarm)"
+      crossref: "defence innovation dual use export control"
+      gdelt: "(defence technology OR uncrewed systems OR AUKUS) AND Australia"
+
+  - key: "digital_competition_platforms"
+    label: "Digital platform competition, algorithmic pricing and cloud concentration"
+    steepv: "Economic"
+    rationale: >-
+      Where competition policy and IP policy meet, and the frame most likely to
+      constrain any data product the lab builds. AJASN tracks it through
+      personalised pricing and the cloud-market inquiries; the OECD competition
+      committee is the best single source on it anywhere.
+    queries:
+      openalex: "digital platform competition OR algorithmic pricing OR cloud market concentration"
+      crossref: "digital platform competition policy algorithmic pricing"
+      gdelt: "(digital platforms OR cloud computing) AND (competition OR regulator)"
+      oecd: "competition"
+
+  - key: "strategic_foresight_practice"
+    label: "Strategic foresight and anticipatory governance"
+    steepv: "Values"
+    rationale: >-
+      The method this repository implements, scanned as a subject in its own
+      right. AJASN runs a Foresight section in every issue. If anticipatory
+      governance is becoming an expectation of Commonwealth agencies rather
+      than a speciality, IPAVentures' own mandate changes shape — and this is
+      the frame that would show it.
+    queries:
+      openalex: "strategic foresight OR anticipatory governance OR scenario planning public policy"
+      crossref: "strategic foresight anticipatory governance public sector"
+      oecd: "foresight"
+
+  - key: "oecd_southeast_asia_reports"
+    label: "OECD reports on South-East Asia"
+    steepv: "Economic"
+    rationale: >-
+      Australia's region, read through the one institution that publishes
+      comparable policy analysis across all of it. Unlike every other frame in
+      this file, this one is not a keyword search — it is a faceted feed
+      composed in the OECD search interface and pinned here verbatim, so it
+      collects what an analyst browsing that interface would have seen. The
+      OECD collector recognises an https:// query as a feed URL, paginates it
+      in place, applies no keyword filter to it, and does not widen it with a
+      statistics match. See src/collectors/oecd.py.
+    queries:
+      oecd: "https://api.oecd.org/webcms/search/rss?siteName=oecd&interfaceLanguage=en&hiddenFacets=oecd-search-config-pillars%3Apublications&facets=oecd-content-types%3Apublications%2Freports&facets=oecd-languages%3Aen&facets=oecd-regions%3Asouth-eastern-asia"

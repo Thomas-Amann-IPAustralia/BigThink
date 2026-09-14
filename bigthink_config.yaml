@@ -29,6 +29,12 @@ storage:
   duckdb_path: "data/bigthink.duckdb"
   raw_dir: "data/raw"
   outputs_dir: "data/outputs"
+  # Documents a human put into the scan by hand — the AJASN newsletters the
+  # section E scan frames were derived from, and anything added later. These
+  # are committed, unlike the corpus and the raw payloads; they are mirrored
+  # to R2 as well (`python -m src.storage push-manual`) because they are
+  # source material a colleague should be able to read without a clone.
+  manual_upload_dir: "data/manual-upload"
   # Raw payloads are large and reproducible; they are gitignored by default.
   # Set to true only if you have Cloudflare R2 (or similar) configured.
   keep_raw_payloads: true
@@ -52,6 +58,7 @@ storage:
     jurisdiction: "eu"
     corpus_key: "bigthink.duckdb"
     raw_prefix: "raw"
+    manual_prefix: "manual-upload"
 
 embeddings:
   # Two backends, same interface (see src/embeddings.py):
@@ -224,6 +231,88 @@ collection:
       # CKAN at https://data.gov.au/data/api/3 — policy + IP Australia's own
       # published datasets (IP RAPID, IPGOD).
       rows_per_query: 50
+    oecd:
+      # One source, two channels (src/collectors/oecd.py): OECD publications
+      # via the web CMS search RSS feed, and the OECD statistical dataflow
+      # catalogue via the SDMX API documented in
+      # docs/OECD-Data-API-documentation.md. Keyless, both of them.
+      enabled: true
+
+      # --- publications (RSS) ---
+      # 100 is the largest page the feed serves. The feed sorts
+      # most-recent-first rather than by relevance — the same shape as GDELT's
+      # artlist, and the same trap: one page is the newest 100 items whatever
+      # window you think you asked for. Unlike GDELT there is a way out, because
+      # the result set for a keyword is small and paging walks it back through
+      # time. Measured 2026-09-14 on `searchTerm=patent` with the publications
+      # facet below: page 0 spans 2026-07 to 2025-02, page 2 spans 2021-07 to
+      # 2016-04, and page 5 is empty. Five pages therefore takes the whole
+      # result set for a typical frame, which is what a growth curve needs, and
+      # costs five seconds. The collector stops early on a short or empty page,
+      # so a narrow query does not pay for all five.
+      rss_page_size: 100
+      rss_max_pages_per_query: 5
+      rss_site_name: "oecd"
+      rss_interface_language: "en"
+      # Facets applied to every keyword search, in the form the OECD search UI
+      # emits them.
+      #
+      # The publications pillar is doing real work, not tidying. Without it the
+      # feed also returns Datasets, Blogs, Podcasts and Webinars: on the same
+      # measured query that was 42 of 100 items Datasets, carrying a refresh
+      # date rather than a publication date, which pulled the whole first page
+      # inside six months of today and duplicated — worse, and undated — what
+      # the SDMX channel below already collects properly. With it, the page is
+      # country notes, working papers, reports, policy papers and case studies,
+      # and reaches back eighteen months in one page.
+      #
+      # English only, for the same reason GDELT is filtered to English: a
+      # French abstract still contributes tokens the embedder cannot model.
+      #
+      # A frame that wants a different slice pins its own full feed URL in the
+      # scan frame instead, and these are then not applied.
+      rss_facets:
+        - "oecd-languages:en"
+      rss_hidden_facets:
+        - "oecd-search-config-pillars:publications"
+      # The relevance control, and the reason this source is usable at all.
+      # The feed exposes no relevance score and sorts by date, so there is
+      # nothing to put a `min_relative_score` floor on; what it does give is a
+      # loose match, measured at 4 of 100 items mentioning "patent" anywhere in
+      # their own title or abstract and 0 of 100 for "intellectual property".
+      # The pipeline embeds title + abstract and nothing else, so an item that
+      # matched on text the pipeline never sees arrives looking unrelated to
+      # the frame that collected it. A kept item must carry this many of the
+      # query's distinct words in that text; substring, so "counterfeit" finds
+      # "counterfeiting". Automatically lowered for a query with fewer words,
+      # and not applied at all to a verbatim faceted feed URL, which has no
+      # search term to check against. See src/collectors/oecd.py.
+      rss_min_term_matches: 2
+
+      # --- statistics (SDMX) ---
+      # The whole dataflow catalogue is fetched twice per RUN, not per frame —
+      # one request for the 1,546 dataflows and one for the content
+      # constraints that carry their release dates — and matched locally. The
+      # API allows 60 downloads an hour and its documentation asks for
+      # consolidated queries and local caching; this is that.
+      sdmx_enabled: true
+      # The match a dataflow must clear, where a query word in the dataflow's
+      # NAME scores 3 and one in its description scores 1. At 3.0 that means
+      # "the OECD named a series after something in this query"; a dataflow
+      # that merely mentions the query in its methodology note does not
+      # qualify. Measured 2026-09-14: counting description hits put "National
+      # CPI, growth rate" top of a query for energy. It also means a frame the
+      # OECD has no series for — `counterfeit`, `indigenous knowledge` —
+      # collects nothing here and says so, rather than being handed the
+      # nearest thing.
+      sdmx_min_match_score: 3.0
+      # Per frame, best match first. Deliberately small. These records carry a
+      # RELEASE date, not a date the phenomenon began — they cluster in the
+      # most recent year or two whatever they measure, exactly like
+      # data.gov.au's metadata_modified — so a large number of them would put a
+      # spike at the right-hand end of every growth curve they join. Read OECD
+      # statistics as salience, never as timing.
+      sdmx_max_per_query: 15
     patentsview:
       # Requires a free API key from https://patentsview.org (env: PATENTSVIEW_API_KEY).
       # Disabled by default so a run without the key is clean rather than noisy.
@@ -240,6 +329,10 @@ collection:
     crossref: "Technological"
     gdelt: "Social"
     datagovau: "Political"
+    # Intergovernmental policy analysis and official statistics. A frame's own
+    # steepv always wins; this is only the fallback for a frame that declares
+    # none, and the OECD's output is policy evidence before it is anything else.
+    oecd: "Political"
     patentsview: "Technological"
 
 # -----------------------------------------------------------------------------
@@ -272,6 +365,37 @@ emergence:
     # Documents from excluded sources are still attached to the nearest topic
     # afterwards, so they count toward attention and the time series without
     # having distorted the topic that they are being counted against.
+    # `oecd` is excluded for a DIFFERENT reason than GDELT, and the difference
+    # matters. GDELT is excluded because its records are too thin to cluster.
+    # OECD records are not thin — they carry real 200-400 character abstracts.
+    # They are excluded because **the OECD publishes in series**, and a series
+    # clusters beautifully into something that is not a trend.
+    #
+    # Measured 2026-09-14 on a 4,144-document corpus of which 1,284 were OECD.
+    # With `oecd` forming, eight of the ten largest OECD-heavy topics were
+    # publication artefacts:
+    #
+    #   56 docs  talis / teaching / teacher / education system
+    #   52       health / glance / factor access / indicator population
+    #   42       environment glance / environmental indicator / country socio-eco
+    #   29       health profile / country health / state health
+    #   23       oecd / dataset / region / unsd
+    #   22       competition / prepared background / background note / session oecd
+    #
+    # Those are the TALIS survey, Environment at a Glance, the Country Health
+    # Profiles and a committee's background notes — thirty near-identical
+    # country reports sharing a house style, scoring high on coherence because
+    # they genuinely are coherent. Every measurement correct, the input wrong:
+    # the same shape as the Crossref peer-review topics in PROJECT_STATE issue
+    # 11, arrived at from the opposite direction.
+    #
+    # With `oecd` attaching instead of forming, the same corpus produced
+    # subject topics — competition/market/digital/dma, climate/adaptation/
+    # infrastructure/resilience, patent/ai/invention/inventor, amr/antimicrobial
+    # /resistance — and **all 1,284 OECD documents attached to one, against 637
+    # when they were forming**. Nothing is lost by this: OECD evidence still
+    # counts toward every topic's document total, its time series and its
+    # evidence cards. What it no longer does is decide what the topics are.
     forming_sources: ["openalex", "crossref", "arxiv", "datagovau", "patentsview"]
     # `bertopic` is BERTopic over a seeded UMAP + HDBSCAN pair, and the default
     # since 2026-08-31. It needs requirements-ml.txt; without those installed
