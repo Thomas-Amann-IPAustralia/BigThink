@@ -473,6 +473,63 @@ details.more > div { margin-top: 11px; }
 .toolbar .field { margin: 0; }
 .toolbar .grow { flex: 1 1 220px; min-width: 150px; }
 
+/* ------------------------------------------------------------- stability
+
+   The weight simplex and the panel that re-ranks beside it. The canvas keeps
+   a fixed aspect ratio because an equilateral triangle in a box that is not
+   roughly square wastes most of the box — BT.makeCanvas sizes from the parent,
+   so the parent is what has to hold the shape. */
+
+.simplexgrid {
+  display: grid; gap: 18px; align-items: start;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+}
+.simplexbox { position: relative; width: 100%; aspect-ratio: 1 / 0.8; min-height: 300px; }
+.simplexbox canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
+.simplexbox canvas:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+.simplexgrid .legendrow { margin-top: 10px; }
+.simplexgrid .legendrow b { margin-left: 2px; color: var(--fg); }
+/* The swatch sits against the label in a table cell without this. */
+td .swatch { margin-right: 6px; }
+
+.livepanel .livehead { margin-bottom: 10px; }
+.livepanel .livehead .lbl {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--faint); font-weight: 650;
+}
+.livepanel .wts { display: flex; gap: 14px; margin: 6px 0 4px; flex-wrap: wrap; }
+.livepanel .wt { display: flex; flex-direction: column; font-size: 11px; color: var(--muted); }
+.livepanel .wt b { font-size: 17px; font-weight: 650; color: var(--fg); font-variant-numeric: tabular-nums; }
+.livepanel .note { font-size: 11.5px; color: var(--faint); }
+.livepanel .note .btn { margin-left: 4px; }
+.livepanel .tablewrap { max-height: 460px; }
+
+/* Where a topic's rank can go across the whole simplex: the span is the range,
+   the tick is where the published weights put it. A dot-and-whisker rather
+   than a bar, because the quantity being shown is an interval and drawing it
+   as a magnitude from zero would say something false about it. */
+.rangebar { display: flex; align-items: center; gap: 8px; min-width: 130px; }
+.rangebar u {
+  position: relative; display: block; flex: 1 1 auto; height: 7px;
+  background: var(--sunken); border: 1px solid var(--line); border-radius: 4px;
+}
+.rangebar i { position: absolute; top: 0; bottom: 0; background: var(--accent); opacity: 0.4; border-radius: 3px; }
+.rangebar b {
+  position: absolute; top: -2px; width: 2px; height: 11px;
+  background: var(--fg); border-radius: 1px; transform: translateX(-1px);
+}
+.rangebar .ends {
+  font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums;
+  white-space: nowrap; flex: 0 0 auto;
+}
+
+tbody tr.hi td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
+
+@media (max-width: 1080px) {
+  .simplexgrid { grid-template-columns: 1fr; }
+}
+
 /* ----------------------------------------------------------- responsive */
 
 @media (max-width: 1180px) {

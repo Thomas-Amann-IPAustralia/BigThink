@@ -111,14 +111,43 @@ BT.cssVar = function (name) {
 var HUES = [212, 28, 146, 320, 258, 45, 188, 350, 100, 276,
             14, 168, 300, 62, 232, 128, 338, 200, 82, 248];
 
-BT.catColor = function (i, alpha) {
+function catHSL(i) {
   var dark = BT.theme() === "dark";
-  var hue = HUES[i % HUES.length];
   var tier = Math.floor(i / HUES.length) % 3;
-  var sat = [64, 44, 78][tier];
-  var light = (dark ? 62 : 45) + [0, 9, -7][tier];
-  return "hsla(" + hue + "," + sat + "%," + light + "%," + (alpha == null ? 1 : alpha) + ")";
+  return {
+    h: HUES[i % HUES.length],
+    s: [64, 44, 78][tier],
+    l: (dark ? 62 : 45) + [0, 9, -7][tier]
+  };
+}
+
+BT.catColor = function (i, alpha) {
+  var c = catHSL(i);
+  return "hsla(" + c.h + "," + c.s + "%," + c.l + "%," + (alpha == null ? 1 : alpha) + ")";
 };
+
+/* The same colour as catColor, as [r, g, b] in 0..255. The weight simplex in
+   stability.js fills an ImageData buffer a pixel at a time and so cannot go
+   through a CSS colour string. Both derive from catHSL rather than from two
+   copies of the hue table, because a topic that wears one colour on the map
+   and a slightly different one on the simplex is a bug nobody would report. */
+BT.catRGB = function (i) {
+  var c = catHSL(i), hh = c.h / 360, s = c.s / 100, l = c.l / 100;
+  if (s === 0) { var g = Math.round(l * 255); return [g, g, g]; }
+  var q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  var pp = 2 * l - q;
+  return [hue2rgb(pp, q, hh + 1 / 3), hue2rgb(pp, q, hh), hue2rgb(pp, q, hh - 1 / 3)];
+};
+
+function hue2rgb(p, q, t) {
+  if (t < 0) t += 1;
+  if (t > 1) t -= 1;
+  var v = t < 1 / 6 ? p + (q - p) * 6 * t
+    : t < 1 / 2 ? q
+      : t < 2 / 3 ? p + (q - p) * (2 / 3 - t) * 6
+        : p;
+  return Math.round(v * 255);
+}
 
 /* Viridis, nine stops. Sequential, perceptually ordered and colour-vision
    safe, and it reads on both the light and the dark canvas — which a
@@ -225,7 +254,9 @@ BT.FIELDS = [
   { key: "document_count", label: "Documents", dp: 0, int: true,
     why: "Documents assigned to the topic." },
   { key: "best_objective_sim", label: "Objective similarity", dp: 2,
-    why: "Similarity to the best-matching objective, before the reference's own priority weight is applied." }
+    why: "Similarity to the best-matching objective, before the reference's own priority weight is applied." },
+  { key: "rank_stability", label: "Rank stability", dp: 2,
+    why: "Share of all possible rank weightings that still put this topic in the shortlist. Low means its place was bought by the configured weights rather than by the corpus." }
 ];
 
 BT.field = function (key) {

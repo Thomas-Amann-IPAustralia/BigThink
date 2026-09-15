@@ -42,10 +42,10 @@ as a finding.
 | 3 — Fit and leverage | **Working; the fix for its weakness is in, unmeasured** | Strategic fit is usable. Asset leverage was compressed to 0.03–0.10 under `hashing`; the BGE switch is meant to widen it and **nobody has yet checked whether it did** — see Open issue 2 |
 | 4 — Opportunity index | **Working, partial** | `patent_activity` has no data without PatentsView; weight redistributes automatically |
 | 5 — Synthesis | **Working; not yet read by a human** | Shortlist, 2×2 views, evidence cards, CSV, published HTML. **No one has read the `2026-08-31` evidence cards** — the check that caught both artefacts last time |
-| Published explorer | **Rebuilt 2026-08-31; not yet run against the real corpus** | `src/dashboard.py` + `src/dashboard_assets/`. Five views over a finished run: an interactive `docs/method.md`, the point cloud, every topic and score in a sortable table, a configurable score scatter, and a browsable copy of the run's tables. The map now follows the clustering's UMAP settings and reports trustworthiness, continuity and a per-topic neighbour-purity pair. Those figures have **not yet been produced against the real corpus** — see the calibration log for what to look for in the first ones |
+| Published explorer | **Rebuilt 2026-08-31; not yet run against the real corpus** | `src/dashboard.py` + `src/dashboard_assets/`. **Six** views over a finished run: an interactive `docs/method.md`, the point cloud, every topic and score in a sortable table, a configurable score scatter, **the rank-weight simplex swept for stability (added 2026-09-14)**, and a browsable copy of the run's tables. The map now follows the clustering's UMAP settings and reports trustworthiness, continuity and a per-topic neighbour-purity pair. Those figures have **not yet been produced against the real corpus** — see the calibration log for what to look for in the first ones |
 | Notebook export | **Working, not yet reviewed by anyone** | `src/notebook.py`; written automatically after Stage 5. Re-derives emergence, horizon, index and composite rank from stored inputs |
 | Automation | **Fully exercised; scan.yml reworked 2026-08-31, not yet run under the new defaults** | `tests.yml` now has a second `ml` job covering the default BGE/BERTopic path, while the first job still installs `requirements.txt` only — which keeps "runs with no torch" a tested guarantee. `verify-access.yml` — **both credentials pass**. `scan.yml` installs the ML stack only when the resolved settings need it, caches the model, takes `embedding_backend`/`clustering_method` dispatch inputs, and its timeout is **360 min**, raised from 300 on 2026-09-14 for the wider frame (issue 17). It also mirrors `data/manual-upload/` to R2 |
-| Tests | **350 (342 passing + 8 skipped without `requirements-ml.txt`)** | Offline by design — the BERTopic tests included, since BERTopic is handed embeddings and never loads a model. They skip without `requirements-ml.txt` and run in CI's `ml` job |
+| Tests | **362 (354 passing + 8 skipped without `requirements-ml.txt`)** | Offline by design — the BERTopic tests included, since BERTopic is handed embeddings and never loads a model. They skip without `requirements-ml.txt` and run in CI's `ml` job |
 
 **Current baseline — `2026-08-31`** (workflow run 33345343027, 164 min, from an
 empty database with all collection fixes live). **Its outputs were overwritten and have
@@ -972,6 +972,51 @@ and log the count and the worst offender, so a run states how much text it
 dropped. Truncating deliberately (title + first N words) or chunk-and-mean are
 larger changes and should be argued separately.
 
+### 36. The size bias issue 12 recorded as resolved has returned on the wider corpus — NEW 2026-09-14
+
+Found while gathering figures for the Stability view, from
+`data/outputs/2026-09-14T1447/topics.csv` alone — no database access needed, so
+it is cheap to re-check on any run.
+
+Correlation of each topic-level score with `log(document_count)`, against the
+values issue 12 recorded for the `2026-08-31` baseline:
+
+| attribute | 2026-08-30 | 2026-08-31 | **2026-09-14T1447** |
+|---|---:|---:|---:|
+| novelty | −0.80 | +0.05 | −0.20 |
+| coherence | −0.54 | +0.12 | **−0.66** |
+| uncertainty | −0.37 | −0.15 | −0.36 |
+| **emergence score** | **−0.43** | **+0.05** | **−0.36** |
+| opportunity index | — | — | **+0.61** |
+
+Two separate things, pulling opposite ways:
+
+- **Emergence is biased toward small topics again**, at −0.36, close to where it
+  was before the clustering fix. Coherence at −0.66 is doing most of it, which
+  is mechanically unsurprising — mean cosine to a centroid falls as a cluster
+  grows — but issue 12 concluded the confound was a *clustering* artefact that
+  average linkage had removed, and that conclusion no longer holds on this
+  corpus. What changed between the two runs is the frame (21 → 36) and the
+  addition of 1,927 OECD documents, not the scoring.
+- **The opportunity index is substantially a size measure**, at +0.61. That is
+  less surprising — several of its components count documents — but it has
+  never been written down, and it means the index and the emergence score are
+  biased in *opposite* directions on the same axis.
+
+**Why it matters.** The two scores disagree about size systematically, and the
+ranking uses one of them and excludes the other. Nobody reading the shortlist
+can see this.
+
+**Not yet diagnosed.** Whether this is the wider frame, the OECD documents
+(which attach rather than form, so they enlarge existing topics — exactly the
+shape that would depress coherence for big topics), or the larger topic count,
+is unknown. The cheapest discriminating test is to recompute the correlations
+on the `2026-08-31` topic set restricted to the same sources.
+
+**Do not re-tune the Rotolo weights in response to this.** That was the argument
+in issue 12 and it still holds: if the cause is what documents are in the
+topics, a weight change hides it rather than fixing it.
+
 ### 20. BERTopic's topic set is not stable across seeds — NEW 2026-08-31
 
 The seed sweep behind the 2026-08-31 calibration entry found a bimodal result,
@@ -1585,6 +1630,69 @@ not a replacement.
 
 Append to this. Every entry should say what changed, why, and what moved.
 
+### 2026-09-14 — the Stability view: the ranking, swept across every weighting it could have had
+
+**No weight changed and no score moved.** This adds a measurement of a number
+that was already there, and the measurement is not flattering.
+
+**Why.** Two facts were both true and both invisible in the published output.
+The composite that orders the shortlist is a weighted sum of three
+percentile-ranked axes on weights nobody has validated (open issue 1). And
+because the axes are percentile ranks, the composites sit almost on top of each
+other: on `2026-09-14T1447` the **median gap between consecutively ranked
+topics is 0.0047**, and **11 of the 20 gaps inside the top 20 are under 0.01** —
+less than one rank position on one axis. A ranked table presents that as an
+order and says nothing about either.
+
+**What was built.** A sixth dashboard view. `dashboard.rank_stability()` sweeps
+a barycentric lattice over the rank-weight simplex — every triple summing to 1,
+1,891 of them at `dashboard.stability.resolution: 60` — ranks the run at each,
+and reports per topic the share of the simplex that keeps it in the shortlist,
+the best and worst rank it reaches anywhere, and its rank at the configured
+weights. The page draws the simplex coloured by which topic ranks first where,
+and a probe re-ranks the run live at any weighting.
+
+It computes nothing of its own: the percentile ranks come from the production
+`composite_scores`, and the sweep re-derives the run's stored
+`composite_rank_score` and refuses to look confident if it cannot — the page
+carries a warning and the build logs one. Same rule as `notebook.py`, for the
+same reason.
+
+**What it found on `2026-09-14T1447`** (117 topics, weights 0.40 / 0.35 / 0.25):
+
+| Figure | Value |
+|---|---|
+| Median gap between consecutive composites | **0.0047** |
+| Topics that reach rank 1 somewhere in the simplex | **6** |
+| Share of the simplex held by the published rank 1 | **55.3%** |
+| Share held by the published rank 2 | 34.8% |
+| Shortlist members holding top-15 across the whole simplex | 0.33-0.99, median **0.66** |
+| Shortlist members holding top-15 within L1 0.15 of the weights | **13 of 15** |
+| Topics outside the top 15 that reach it somewhere | **30** |
+
+**The useful distinction it draws: membership is fairly robust, the order is
+not.** Within a plausible re-weighting — 61 lattice points inside L1 0.15 of
+the configured triple — 13 of the 15 shortlisted topics never leave the
+shortlist. Across the whole simplex the picture is different: the published
+rank 10 ranges from **1st to 65th**, and rank 7 from 1st to 62nd. Two topics at
+published ranks 21 and 23 reach the top 15 in 41% and 50% of weightings, which
+is more often than several topics currently in it.
+
+**How to read a shortlist now.** Take membership of the top 15 as a claim worth
+testing and the order inside it as close to arbitrary. Do not present "rank 3"
+as meaning anything against "rank 6"; four of the top ten are separated by gaps
+under 0.01. The evidence cards remain the check that matters
+(`docs/runbook-calibration.md` Step 1 remains undone).
+
+**What this does not do.** It measures sensitivity to the weights, not their
+correctness. A perfectly stable ranking can still measure the wrong thing —
+every axis rests on the same corpus and the same embedding. This is a necessary
+condition for trusting an order, not a sufficient one, and it does not
+substitute for issue 1.
+
+**Cost.** One matrix multiply and an argsort, 22 ms for 117 topics against
+1,891 weight triples. No new dependency; no change to any stage.
+
 ### 2026-09-14 — the OECD added as a source; the scan frame widened from 21 frames to 36
 
 **No weight changed. The corpus changed, which is worse**, and the rest of this
@@ -1861,7 +1969,8 @@ world. If that turns out to matter, a `fresh_baseline` run is the correction.
 
 **No score changes.** Every number in `topics`, `topic_scores` and
 `pipeline_runs` is untouched. What changed is `src/dashboard.py`, which now
-renders five views over a finished run instead of one point cloud, and two new
+renders five views over a finished run instead of one point cloud (a sixth, Stability,
+was added 2026-09-14), and two new
 config blocks that change how the map is *laid out* and what it reports about
 itself.
 

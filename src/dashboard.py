@@ -1,13 +1,14 @@
 """
 src/dashboard.py — build the interactive explorer published to GitHub Pages.
 
-Renders docs/dashboard.html: a five-view analytical tool over one finished run.
+Renders docs/dashboard.html: a six-view analytical tool over one finished run.
 
-    Method   docs/method.md made interactive and grounded in this run's numbers
-    Map      every collected document as a 2D point cloud, with a fidelity readout
-    Topics   every topic and every score, sortable, filterable, expandable
-    Scores   any score against any other, with the meaningful pairs preset
-    Data     the run's tables, browsable and exportable
+    Method     docs/method.md made interactive and grounded in this run's numbers
+    Map        every collected document as a 2D point cloud, with a fidelity readout
+    Topics     every topic and every score, sortable, filterable, expandable
+    Scores     any score against any other, with the meaningful pairs preset
+    Stability  the ranking swept across every weighting it could have had
+    Data       the run's tables, browsable and exportable
 
 Self-contained, like src/report.py — one HTML file with the data and every
 line of CSS and JS inlined, no CDN and no build step, because it is served
@@ -77,6 +78,10 @@ from src.config import (
     resolve_path,
 )
 from src.embeddings import build_embedder, encode_with_cache
+from src.normalise import percentile_rank
+# The production ranking, not a second implementation of it — see
+# rank_stability() and the notebook rule in CLAUDE.md.
+from src.stage5_synthesis import RANK_AXES, composite_scores
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +96,7 @@ _JS_ASSETS = (
     "map.js",
     "topics.js",
     "scores.js",
+    "stability.js",
     "data.js",
     "boot.js",
 )
@@ -399,6 +405,200 @@ def _select_points(
     return sorted(int(i) for i in keep)
 
 
+# ---------------------------------------------------------------------------
+# Rank stability
+# ---------------------------------------------------------------------------
+#
+# WHY THIS EXISTS. `PROJECT_STATE.md` says the ranking is a hypothesis: no
+# weight in it has been validated against a known past opportunity. What it did
+# not say, because nothing measured it, is that the ordering is also very
+# nearly tied — on 2026-09-14T1447 the median gap between consecutive composite
+# scores is 0.005, and 11 of the top 20 consecutive gaps are under 0.01. On a
+# percentile-ranked composite that is well under one rank position of one axis.
+#
+# So the headline order is partly a property of the corpus and partly a
+# property of three numbers in bigthink_config.yaml, and a reader cannot tell
+# which from the shortlist. This sweeps the whole space of those three numbers
+# and reports, per topic, how much of it keeps the topic where the run put it.
+# A topic that holds a top-N place across most of the simplex is a finding; one
+# that holds it in a sliver is an artefact of the weights.
+#
+# It lives here rather than in Stage 5 for the same reason the projection
+# fidelity measures do: it is a diagnostic *about* a finished run, computed
+# from numbers already stored, and storing it would invite comparing it across
+# runs whose populations differ. Nothing here changes a score.
+
+def simplex_grid(resolution: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """The barycentric lattice over the three rank weights.
+
+    Returns (i, j, weights) where weights[g] = (i[g], j[g], resolution - i - j)
+    / resolution. The three integers sum to `resolution` exactly, so every
+    triple is a genuine convex combination rather than three numbers that
+    happen to be close to one — which matters, because config.py rejects a
+    rank-weight set that does not sum to 1 and this sweep has to stay inside
+    the rule whose sensitivity it is measuring. The division leaves the float
+    sum within an ulp of 1.0, well inside that validator's tolerance.
+
+    i and j are shipped to the page alongside the results so the renderer
+    places each cell from the payload rather than regenerating the lattice and
+    trusting two implementations to agree on its ordering.
+    """
+    if resolution < 1:
+        raise ValueError("resolution must be >= 1")
+    ii, jj = [], []
+    for i in range(resolution + 1):
+        for j in range(resolution + 1 - i):
+            ii.append(i)
+            jj.append(j)
+    i_arr = np.asarray(ii, dtype=np.int32)
+    j_arr = np.asarray(jj, dtype=np.int32)
+    k_arr = resolution - i_arr - j_arr
+    weights = np.stack([i_arr, j_arr, k_arr], axis=1).astype(np.float64) / float(resolution)
+    return i_arr, j_arr, weights
+
+
+def rank_stability(
+    rows: list[dict[str, Any]],
+    weights: dict[str, float],
+    shortlist_size: int,
+    resolution: int = 60,
+    neighbourhood: float = 0.15,
+) -> dict[str, Any]:
+    """Sweep the rank weights across their whole simplex and see what moves.
+
+    `rows` must be in the order the page shows them, which is the order
+    `db.fetch_ranked_topics` returns — the payload indexes topics by position,
+    and every array here is parallel to it.
+
+    The percentile ranks come from the production `composite_scores` path
+    rather than a second implementation of it, for the reason notebook.py
+    gives: a check that reimplements the thing it checks can drift away from it
+    and still pass. The composite at the configured weights is recomputed the
+    same way and compared against the stored `composite_rank_score`, so the
+    view states whether it reproduced the run's own arithmetic instead of
+    asking a reader to assume it did.
+    """
+    n = len(rows)
+    # Name and column together: the name is what synthesis.rank_weights keys
+    # on, the column is what BT.FIELDS in the page keys on, and the page needs
+    # both to label an axis with the same words the rest of it uses.
+    axes = [{"name": name, "field": column} for name, column in RANK_AXES]
+    empty = {
+        "available": False,
+        "resolution": resolution,
+        "axes": axes,
+        "cells": 0,
+        "i": [], "j": [], "winner": [],
+        "topics": [],
+        "winners": [],
+        "weights": {name: float(weights.get(name, 0.0)) for name, _c in RANK_AXES},
+        "neighbourhood": neighbourhood,
+    }
+    if n < 2:
+        # One topic is rank 1 everywhere and the picture would say nothing.
+        return empty
+
+    # Percentile-rank each axis exactly as Stage 5 does. percentile_rank is the
+    # same function stage5_synthesis.composite_scores calls; using it directly
+    # here is what lets the grid sweep be a weighted sum rather than a rerun of
+    # the whole ranking for every one of ~1,900 weight triples.
+    ranked = np.stack([
+        np.asarray(
+            percentile_rank([float(r.get(column) or 0.0) for r in rows]),
+            dtype=np.float64,
+        )
+        for _name, column in RANK_AXES
+    ], axis=0)                                   # (3, n)
+
+    i_arr, j_arr, grid = simplex_grid(resolution)
+    scores = grid @ ranked                       # (cells, n)
+
+    # Descending order per cell. Ties break by position, which is arbitrary but
+    # deterministic; a tie between two topics at one weight triple is exactly
+    # the fragility this view is about, and it shows up as a boundary either
+    # way.
+    order = np.argsort(-scores, axis=1, kind="stable")
+    ranks = np.empty_like(order)
+    np.put_along_axis(ranks, order, np.arange(n)[None, :], axis=1)
+
+    cells = scores.shape[0]
+    winner = order[:, 0].astype(np.int32)
+    top_n = max(1, min(int(shortlist_size), n))
+    share_top_n = (ranks < top_n).mean(axis=0)
+    share_first = (ranks == 0).mean(axis=0)
+    best = ranks.min(axis=0) + 1
+    worst = ranks.max(axis=0) + 1
+
+    # The configured weights, and the run's own ordering re-derived at them.
+    configured = np.asarray(
+        [float(weights.get(name, 0.0)) for name, _c in RANK_AXES], dtype=np.float64
+    )
+    at_config = configured @ ranked
+    config_rank = np.empty(n, dtype=np.int64)
+    config_rank[np.argsort(-at_config, kind="stable")] = np.arange(n) + 1
+
+    stored = np.asarray(
+        [float(r.get("composite_rank_score") or 0.0) for r in rows], dtype=np.float64
+    )
+    produced = np.asarray(composite_scores(rows, weights), dtype=np.float64)
+    max_drift = float(np.max(np.abs(produced - stored))) if n else 0.0
+
+    # Cells near the configured weights, for a "how fragile is it right here"
+    # readout that does not require believing every corner of the simplex is a
+    # defensible weighting. L1 on the simplex: 0.15 is a 7.5-point move of one
+    # weight into another.
+    near = np.abs(grid - configured[None, :]).sum(axis=1) <= neighbourhood
+    near_count = int(near.sum())
+    share_top_n_near = (
+        (ranks[near] < top_n).mean(axis=0) if near_count else np.zeros(n)
+    )
+
+    gaps = np.diff(np.sort(stored)[::-1])
+    order_by_share = np.argsort(-share_first)
+
+    return {
+        "available": True,
+        "resolution": resolution,
+        "cells": cells,
+        "axes": axes,
+        "weights": {name: float(configured[a]) for a, (name, _c) in enumerate(RANK_AXES)},
+        "neighbourhood": neighbourhood,
+        "neighbourhood_cells": near_count,
+        "top_n": top_n,
+        "i": [int(v) for v in i_arr],
+        "j": [int(v) for v in j_arr],
+        "winner": [int(v) for v in winner],
+        "inputs": [
+            {name: _round(float(ranked[a, t]), 5) for a, (name, _c) in enumerate(RANK_AXES)}
+            for t in range(n)
+        ],
+        "topics": [
+            {
+                "rank_stability": _round(float(share_top_n[t]), 4),
+                "rank_stability_local": _round(float(share_top_n_near[t]), 4),
+                "rank_first_share": _round(float(share_first[t]), 4),
+                "rank_best": int(best[t]),
+                "rank_worst": int(worst[t]),
+                "rank_at_config": int(config_rank[t]),
+            }
+            for t in range(n)
+        ],
+        "winners": [
+            {"topic": int(t), "share": _round(float(share_first[t]), 4)}
+            for t in order_by_share if share_first[t] > 0
+        ],
+        # Two figures about the ordering itself, so the page can say plainly
+        # how close together the composite scores are before it shows anyone a
+        # ranked list.
+        "gap_median": _round(float(np.median(-gaps)), 5) if gaps.size else None,
+        "gap_top": [_round(float(-g), 5) for g in gaps[: max(0, top_n - 1)]],
+        # Did this reproduce the run's own composite? A view that re-derives a
+        # stored number should say whether it matched, not imply it.
+        "verified": bool(max_drift <= 1e-9),
+        "max_drift": _round(max_drift, 12),
+    }
+
+
 def _method_facts(config: dict[str, Any], backend: str) -> dict[str, Any]:
     """Every threshold and weight the page explains, read from the live config.
 
@@ -627,6 +827,26 @@ def build_dashboard(config: dict[str, Any], run_id: str) -> dict[str, Any]:
     point_topics = np.asarray(topic_col, dtype=np.int32)
     fidelity = compute_fidelity(vectors, coords, point_topics, config)
 
+    stability = rank_stability(
+        ranked_topics,
+        get(config, "synthesis", "rank_weights", default={}) or {},
+        shortlist_size,
+        resolution=int(get(config, "dashboard", "stability", "resolution", default=60)),
+        neighbourhood=float(
+            get(config, "dashboard", "stability", "neighbourhood", default=0.15)
+        ),
+    )
+    if stability["available"] and not stability["verified"]:
+        # Loud, not silent. The sweep starts from the same percentile ranks the
+        # run's own composite did, so a mismatch means the stored score was
+        # produced by different weights or a different population — which makes
+        # every stability figure below describe a ranking nobody published.
+        logger.warning(
+            "Rank stability: recomputed composite differs from the stored one by "
+            "%.3g — the run's config snapshot and synthesis.rank_weights disagree",
+            stability["max_drift"],
+        )
+
     topics_out = []
     for i, t in enumerate(ranked_topics):
         member_idx = np.flatnonzero(point_topics == i)
@@ -708,6 +928,7 @@ def build_dashboard(config: dict[str, Any], run_id: str) -> dict[str, Any]:
             ),
             "map_purity": fidelity["topic_map_purity"].get(i),
             "space_purity": fidelity["topic_space_purity"].get(i),
+            **(stability["topics"][i] if stability["available"] else {}),
         })
 
     years = [y for y in year_col if y]
@@ -721,6 +942,7 @@ def build_dashboard(config: dict[str, Any], run_id: str) -> dict[str, Any]:
         "projection_method": projection_method,
         "projection": {**projection_used, "resolved": projection_method},
         "fidelity": fidelity["summary"],
+        "stability": stability,
         "neighbours": fidelity["neighbours"],
         "shortlist_size": shortlist_size,
         "documents_total": total_documents,
