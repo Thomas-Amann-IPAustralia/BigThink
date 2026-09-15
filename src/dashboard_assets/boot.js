@@ -9,7 +9,7 @@
 
 (function () {
   var h = BT.h, D = BT.D;
-  var VIEWS = ["method", "map", "topics", "scores", "data"];
+  var VIEWS = ["method", "map", "topics", "scores", "stability", "data"];
   var current = null;
 
   /* ---------------------------------------------------------------- theme */
@@ -139,7 +139,7 @@
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     var tag = (e.target.tagName || "").toLowerCase();
     if (tag === "input" || tag === "select" || tag === "textarea") return;
-    var idx = ["1", "2", "3", "4", "5"].indexOf(e.key);
+    var idx = ["1", "2", "3", "4", "5", "6"].indexOf(e.key);
     if (idx >= 0) { e.preventDefault(); BT.go(VIEWS[idx]); }
   });
 })();

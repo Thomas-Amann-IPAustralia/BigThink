@@ -11,6 +11,7 @@
     <button class="tab" role="tab" id="tab-map" aria-controls="view-map" data-view="map">Map</button>
     <button class="tab" role="tab" id="tab-topics" aria-controls="view-topics" data-view="topics">Topics</button>
     <button class="tab" role="tab" id="tab-scores" aria-controls="view-scores" data-view="scores">Scores</button>
+    <button class="tab" role="tab" id="tab-stability" aria-controls="view-stability" data-view="stability">Stability</button>
     <button class="tab" role="tab" id="tab-data" aria-controls="view-data" data-view="data">Data</button>
   </nav>
 
@@ -68,6 +69,11 @@
       </div>
       <aside class="inspector" id="scoreInspector" aria-live="polite" aria-label="Topic details"></aside>
     </div>
+  </section>
+
+  <!-- --------------------------------------------------------- Stability -->
+  <section class="view" id="view-stability" role="tabpanel" aria-labelledby="tab-stability" tabindex="-1">
+    <div class="scroller"><div class="page wide" id="stabilityPage"></div></div>
   </section>
 
   <!-- -------------------------------------------------------------- Data -->

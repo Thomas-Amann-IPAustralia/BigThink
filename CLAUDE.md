@@ -61,7 +61,7 @@ python -m src.stage3_scoring   --run-id RUN     # prints only; does not persist
 python -m src.stage4_opportunity_index --run-id RUN
 python -m src.stage5_synthesis --run-id RUN     # runs 3 and 4, then persists all
 python -m src.report           --run-id RUN     # build docs/index.html
-python -m src.dashboard        --run-id RUN     # build docs/dashboard.html (five-view explorer)
+python -m src.dashboard        --run-id RUN     # build docs/dashboard.html (six-view explorer)
 python -m src.notebook         --run-id RUN     # peer-review .ipynb for that run
 
 # Calibration. Nothing here writes; all of it reads the accumulated corpus.
@@ -100,7 +100,7 @@ Stage 3  stage3_scoring.py            Strategic fit × asset leverage
 Stage 4  stage4_opportunity_index.py  Relative composite index
 Stage 5  stage5_synthesis.py          Ranking, evidence cards, outputs
          report.py                    GitHub Pages site (ranked shortlist)
-         dashboard.py                 GitHub Pages site (five-view interactive explorer)
+         dashboard.py                 GitHub Pages site (six-view interactive explorer)
            dashboard_assets/          Its CSS, page shell and JS, inlined at build time
          notebook.py                  Peer-review .ipynb (reads a run back out)
 ```
@@ -169,6 +169,7 @@ follow the rule; if you need this exception, say why at the call site.
 | **UMAP with a numpy-only PCA fallback, not a hard `umap-learn` requirement** | Same graceful-degradation shape as the `bge` embedding backend: the dashboard must still render a real map if the optional dependency is missing, just a flatter one |
 | **The map follows the clustering's UMAP settings, and measures its own distortion** | Projecting with settings unrelated to the ones the clusters were found in answers a different question, and the disagreement reads as a topic scattered for no visible reason. `dashboard.projection.follow_clustering` takes `n_neighbors`, `metric` and `random_state` from the BERTopic block — never `min_dist`, which the clustering runs at 0.0 and which would draw every topic as one dot. On top of that the page ships trustworthiness, continuity, a per-topic neighbour-purity pair and every point's true high-dimensional neighbours, because the honest answer to "a 2D map of 768 dimensions lies" is a measurement, not a disclaimer |
 | **The dashboard's CSS and JS live in `src/dashboard_assets/`, not in a Python string** | The published page is still one self-contained file — the assets are inlined at build time, and a test asserts the page fetches nothing from the network. What moved is the source: a few thousand lines of CSS and JS inside a Python string cannot be linted, folded or diffed, and this page is now the main way anyone reads a run. The "no CDN" decision is about what the browser fetches, and that is unchanged |
+| **The ranking is published with a measurement of how much of it is the weights** | The composite is a weighted sum of three percentile-ranked axes on weights nobody has validated, and on 2026-09-14T1447 the median gap between consecutive composite scores is 0.005 — under one rank position of one axis. A ranked table shows an order and hides both facts. The Stability view sweeps the whole rank-weight simplex, so a topic's place is reported with the share of weightings that keep it there and the range of ranks it reaches. Computed in `dashboard.py` through the production `composite_scores`, and it re-derives the run's own stored composite and says so if it cannot |
 | **The dashboard shows the run's tables rather than shipping DuckDB-WASM** | Two hard blockers, not fussiness: the WASM bundle only exists on a CDN, and this page is CDN-free because it is read behind corporate proxies where a silent script-load failure takes the whole page down; and the database is gitignored precisely because it is a large binary that does not diff, so Pages could not serve it anyway. The Data view browses, sorts, filters and exports the rows the payload already carries, and tells a reader how to query the real database |
 
 ## Configuration

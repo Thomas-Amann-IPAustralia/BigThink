@@ -281,7 +281,7 @@ src/
   stage4_opportunity_index.py  Stage 4
   stage5_synthesis.py          Stage 5 (invokes 3 and 4)
   report.py                    GitHub Pages site: the ranked shortlist
-  dashboard.py                 GitHub Pages site: the five-view explorer
+  dashboard.py                 GitHub Pages site: the six-view explorer
   dashboard_assets/            Its CSS, page shell and JS, inlined at build time
   notebook.py                  Peer-review notebook for a finished run
 data/

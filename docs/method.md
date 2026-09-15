@@ -337,7 +337,7 @@ and expensive to miss.
 
 ## The published explorer — and what it measures about itself
 
-`python -m src.dashboard --run-id RUN` writes `docs/dashboard.html`: five views
+`python -m src.dashboard --run-id RUN` writes `docs/dashboard.html`: six views
 over one finished run, served from GitHub Pages.
 
 | View | What it is for |
@@ -346,6 +346,7 @@ over one finished run, served from GitHub Pages.
 | Map | Every collected document as a 2D point cloud |
 | Topics | Every topic and every score, sortable, filterable, expandable to the arithmetic |
 | Scores | Any score against any other, with the four pairs this method reasons about preset |
+| Stability | The published ranking swept across every weighting the rank weights could have had |
 | Data | The run's tables, browsable, filterable and exportable |
 
 Two things about it are worth stating here rather than leaving to the code.
@@ -389,6 +390,48 @@ None of this makes the map trustworthy. It makes the map's untrustworthiness
 measurable, which is the most that can honestly be claimed for any projection —
 and a trustworthiness figure well below 1.0 should be read as an instruction to
 check a grouping in the evidence cards before believing it.
+
+**The Stability view answers a question the shortlist cannot.** The composite
+that orders the shortlist is a weighted sum of three percentile-ranked axes
+(Stage 5), on weights that are a judgement call. A ranked table shows the order
+those weights produced and says nothing about how much of it survives a
+different, equally defensible choice — and because the axes are percentile
+ranks, the composite scores sit very close together, so a small change of
+weights can reorder several places.
+
+So the page sweeps the whole space of weightings. Every triple of rank weights
+that sums to 1 is a point in a triangle; the view samples a lattice over it
+(`dashboard.stability.resolution`, 1,891 points at the default 60), ranks the
+run at each, and colours each point by the topic that comes first there. From
+that sweep it reports, per topic:
+
+- **Rank stability** — the share of the whole triangle at which the topic is
+  still inside the shortlist. This is the number to read before presenting a
+  topic: a place held across most weightings is a property of the corpus, one
+  held in a sliver is a property of `synthesis.rank_weights`.
+- **Rank range** — the best and worst position the topic reaches anywhere in
+  the triangle, with a tick at the published weighting. A rank-7 topic whose
+  range is 1–62 is not really seventh; it is somewhere in the upper half.
+- **Gap to next** — the plain distance in composite score to the topic ranked
+  below, flagged when it is under 0.01, which is less than one rank position on
+  one axis.
+
+Dragging the probe re-ranks the run live at any weighting, so "what if fit
+mattered more than emergence?" is a question the page answers rather than one a
+reader has to take away. Two things keep it honest. The sweep re-derives each
+run's own `composite_rank_score` from its stored inputs through the production
+`composite_scores`, and the page says plainly if the two disagree — which would
+mean the run was ranked under weights other than the ones on display. And the
+live probe's ordering is checked against the swept ordering at the configured
+weights when the view opens, so the interactive half and the computed half
+cannot quietly diverge.
+
+**What it does not say.** It measures sensitivity to the weights, not
+correctness of them. A ranking can be perfectly stable across every weighting
+and still be measuring the wrong thing, because all three axes rest on the same
+corpus and the same embedding. Stability is a necessary condition for trusting
+an order, not a sufficient one — validation against a known past opportunity is
+still the missing test.
 
 **Why it is not a DuckDB query console.** The obvious way to let a reader
 interrogate the data is to ship duckdb-wasm and the database. Two things rule

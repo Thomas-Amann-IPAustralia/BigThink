@@ -16,6 +16,7 @@ import pytest
 
 from src import dashboard, db
 from src.config import load_config
+from src.stage5_synthesis import RANK_AXES, composite_scores
 
 
 # ---------------------------------------------------------------------------
@@ -393,6 +394,7 @@ def _build_run(config, run_id: str) -> None:
         for i, topic in enumerate(stored):
             rows.append({
                 "topic_id": topic["topic_id"],
+                "emergence_score": topic["emergence_score"],
                 "strategic_fit": 0.1 + 0.05 * i,
                 "best_objective": f"Objective {i}",
                 "best_objective_sim": 0.4,
@@ -402,10 +404,20 @@ def _build_run(config, run_id: str) -> None:
                 "opportunity_index": 0.5 + 0.05 * i,
                 "index_components": {},
                 "index_suppressed": False,
-                "composite_rank_score": 1.0 - 0.1 * i,
-                "rank": i + 1,
                 "fit_quadrant": ("act", "watch", "on-strategy, no right-to-play")[i % 3],
             })
+        # The composite and the rank come from the production ranking rather
+        # than from invented numbers. A fixture whose stored composite does not
+        # follow from its own stored inputs is not the "small but faithful run"
+        # this module claims to build, and the dashboard's stability sweep
+        # re-derives exactly this arithmetic — so inventing it here would mean
+        # testing the check against data it is right to reject.
+        for row, score in zip(rows, composite_scores(rows, config["synthesis"]["rank_weights"])):
+            row["composite_rank_score"] = score
+        for rank, row in enumerate(
+            sorted(rows, key=lambda r: -r["composite_rank_score"]), start=1
+        ):
+            row["rank"] = rank
         db.replace_topic_scores(conn, run_id, rows)
     finally:
         conn.close()
@@ -615,6 +627,174 @@ def test_render_html_contains_title_and_data():
     assert "<title>" in html
     assert "__DASHBOARD_DATA__" in html
     assert "A normal title" in html
+
+
+# ---------------------------------------------------------------------------
+# Rank stability
+# ---------------------------------------------------------------------------
+#
+# The view built on these numbers exists to say how much of the published
+# ordering is the corpus and how much is three numbers in the config. That
+# claim is only worth anything if the sweep reproduces the run's own ranking
+# at the run's own weights, so that is the first thing tested here.
+
+_WEIGHTS = {"emergence": 0.40, "strategic_fit": 0.35, "asset_leverage": 0.25}
+
+
+def _score_rows(triples):
+    """Topic rows carrying only what the ranking reads, plus the composite."""
+    rows = [
+        {
+            "topic_id": f"T{i:04d}",
+            "emergence_score": e,
+            "strategic_fit": f,
+            "asset_leverage": a,
+        }
+        for i, (e, f, a) in enumerate(triples)
+    ]
+    for row, score in zip(rows, composite_scores(rows, _WEIGHTS)):
+        row["composite_rank_score"] = score
+    return rows
+
+
+def test_simplex_grid_is_the_whole_simplex_and_nothing_else():
+    i, j, weights = dashboard.simplex_grid(12)
+    assert len(i) == len(j) == len(weights) == (12 + 1) * (12 + 2) // 2
+    assert np.all(weights >= 0)
+    # Every triple is a genuine convex combination: config.py rejects a
+    # rank-weight set that does not sum to 1, and a sweep that wandered outside
+    # that rule would be measuring weightings the pipeline would refuse to run.
+    # The integers are exact; the division off them is within an ulp.
+    assert np.all(i + j + (12 - i - j) == 12)
+    assert np.allclose(weights.sum(axis=1), 1.0, atol=1e-12)
+    # The three corners are present — the sweep includes putting all the weight
+    # on one axis, which is the most informative part of the picture.
+    corners = {(1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)}
+    assert corners <= {tuple(w) for w in weights}
+
+
+def test_simplex_grid_rejects_a_resolution_with_no_interior():
+    with pytest.raises(ValueError):
+        dashboard.simplex_grid(0)
+
+
+def test_rank_stability_reproduces_the_runs_own_composite():
+    rows = _score_rows([(0.9, 0.2, 0.3), (0.4, 0.8, 0.5), (0.6, 0.5, 0.9)])
+    out = dashboard.rank_stability(rows, _WEIGHTS, shortlist_size=2, resolution=20)
+    assert out["available"] and out["verified"]
+    assert out["max_drift"] == 0.0
+    # And the ordering it re-derives is the ordering the run stored.
+    expected = sorted(range(len(rows)), key=lambda i: -rows[i]["composite_rank_score"])
+    for position, topic in enumerate(expected, start=1):
+        assert out["topics"][topic]["rank_at_config"] == position
+
+
+def test_rank_stability_says_so_when_it_cannot_reproduce_the_composite():
+    """A stored composite produced under other weights must not pass silently.
+
+    This is the failure that would make every figure in the view describe a
+    ranking nobody published, and it is invisible in the picture itself.
+    """
+    rows = _score_rows([(0.9, 0.2, 0.3), (0.4, 0.8, 0.5), (0.6, 0.5, 0.9)])
+    rows[0]["composite_rank_score"] += 0.25
+    out = dashboard.rank_stability(rows, _WEIGHTS, shortlist_size=2, resolution=20)
+    assert out["verified"] is False
+    assert out["max_drift"] == pytest.approx(0.25, abs=1e-9)
+
+
+def test_rank_stability_gives_a_topic_that_wins_on_every_axis_the_whole_simplex():
+    """No weighting can dislodge a topic that leads on all three axes, so the
+    picture must be one colour and the range a single rank."""
+    rows = _score_rows([(0.9, 0.9, 0.9), (0.5, 0.4, 0.3), (0.2, 0.1, 0.1)])
+    out = dashboard.rank_stability(rows, _WEIGHTS, shortlist_size=1, resolution=30)
+    best = out["topics"][0]
+    assert best["rank_first_share"] == 1.0
+    assert best["rank_stability"] == 1.0
+    assert best["rank_best"] == best["rank_worst"] == 1
+    assert set(out["winner"]) == {0}
+    assert [w["topic"] for w in out["winners"]] == [0]
+
+
+def test_rank_stability_finds_the_topic_each_corner_of_the_simplex_elects():
+    """One topic leading each axis means all three take rank 1 somewhere — the
+    case the view exists to make visible."""
+    rows = _score_rows([(0.9, 0.1, 0.1), (0.1, 0.9, 0.1), (0.1, 0.1, 0.9)])
+    out = dashboard.rank_stability(rows, _WEIGHTS, shortlist_size=1, resolution=30)
+    assert len(out["winners"]) == 3
+    for topic in out["topics"]:
+        assert topic["rank_best"] == 1
+        assert topic["rank_worst"] == 3
+
+
+def test_rank_stability_counts_the_neighbourhood_it_reports_on():
+    rows = _score_rows([(0.9, 0.2, 0.3), (0.4, 0.8, 0.5), (0.6, 0.5, 0.9)])
+    wide = dashboard.rank_stability(rows, _WEIGHTS, 2, resolution=30, neighbourhood=2.0)
+    tight = dashboard.rank_stability(rows, _WEIGHTS, 2, resolution=30, neighbourhood=0.0)
+    # An L1 radius of 2 is the whole simplex; 0 is the configured point alone,
+    # which is not on the lattice at this resolution.
+    assert wide["neighbourhood_cells"] == wide["cells"]
+    assert tight["neighbourhood_cells"] <= 1
+    # Over the whole simplex the local figure is the global one by definition.
+    for topic in wide["topics"]:
+        assert topic["rank_stability_local"] == topic["rank_stability"]
+
+
+def test_rank_stability_is_unavailable_when_there_is_no_ordering_to_perturb():
+    out = dashboard.rank_stability(_score_rows([(0.9, 0.2, 0.3)]), _WEIGHTS, 2)
+    assert out["available"] is False
+    assert out["winner"] == [] and out["topics"] == []
+
+
+def test_rank_stability_ships_one_winner_per_lattice_point():
+    rows = _score_rows([(0.9, 0.2, 0.3), (0.4, 0.8, 0.5), (0.6, 0.5, 0.9)])
+    out = dashboard.rank_stability(rows, _WEIGHTS, 2, resolution=16)
+    # The page places each cell from these arrays rather than regenerating the
+    # lattice, so they have to stay parallel and complete.
+    assert len(out["i"]) == len(out["j"]) == len(out["winner"]) == out["cells"]
+    assert out["cells"] == (16 + 1) * (16 + 2) // 2
+    assert all(0 <= w < len(rows) for w in out["winner"])
+    assert all(a + b <= 16 for a, b in zip(out["i"], out["j"]))
+
+
+def test_build_dashboard_carries_rank_stability_onto_every_topic(run_fixture):
+    config, run_id = run_fixture
+    data = dashboard.build_dashboard(config, run_id)
+
+    stability = data["stability"]
+    assert stability["available"] and stability["verified"]
+    assert [a["name"] for a in stability["axes"]] == [n for n, _c in RANK_AXES]
+    assert stability["weights"] == config["synthesis"]["rank_weights"]
+    assert len(stability["inputs"]) == len(data["topics"])
+
+    for topic in data["topics"]:
+        for key in ("rank_stability", "rank_best", "rank_worst", "rank_at_config"):
+            assert topic[key] is not None, f"{key} missing from {topic['id']}"
+        assert 0.0 <= topic["rank_stability"] <= 1.0
+        assert topic["rank_best"] <= topic["rank_at_config"] <= topic["rank_worst"]
+
+    # The re-derived rank is the stored one. If these ever disagree the view is
+    # drawing a ranking the run did not publish.
+    assert [t["rank_at_config"] for t in data["topics"]] == [t["rank"] for t in data["topics"]]
+
+
+def test_the_stability_view_is_registered_in_the_page(run_fixture):
+    """A view that is computed but never routed to is invisible. The tab, the
+    panel and the router's view list all have to name it."""
+    shell = (dashboard.ASSET_DIR / "shell.html").read_text(encoding="utf-8")
+    boot = (dashboard.ASSET_DIR / "boot.js").read_text(encoding="utf-8")
+    assert 'data-view="stability"' in shell
+    assert 'id="view-stability"' in shell and 'id="stabilityPage"' in shell
+    assert '"stability"' in boot
+    assert "stability.js" in dashboard._JS_ASSETS
+
+
+def test_rank_stability_is_a_field_the_rest_of_the_page_can_use():
+    """CLAUDE.md's rule for a new topic-level score: one entry in BT.FIELDS
+    drives the Topics column, the Scores axes and the map's colouring, so a
+    number added there cannot end up described differently in each."""
+    core = (dashboard.ASSET_DIR / "core.js").read_text(encoding="utf-8")
+    assert 'key: "rank_stability"' in core
+    assert core.count('key: "rank_stability"') == 1
 
 
 # --- self-containment -----------------------------------------------------

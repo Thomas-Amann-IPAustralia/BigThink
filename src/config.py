@@ -720,6 +720,17 @@ def _validate_dashboard(d: Any) -> None:
     if "max_points" in fidelity and int(fidelity["max_points"]) < 1:
         raise ConfigError("dashboard.fidelity.max_points must be >= 1")
 
+    # The weight sweep. A resolution below 2 gives only the three corners of
+    # the simplex, which draws a picture that says the ranking is maximally
+    # unstable whatever the data does. A neighbourhood outside [0, 2] is either
+    # empty or the whole simplex — 2 is the L1 diameter, corner to corner — and
+    # in both cases the "right here" readout stops meaning what it says.
+    stability = d.get("stability", {}) or {}
+    if "resolution" in stability and int(stability["resolution"]) < 2:
+        raise ConfigError("dashboard.stability.resolution must be >= 2")
+    if "neighbourhood" in stability and not 0.0 <= float(stability["neighbourhood"]) <= 2.0:
+        raise ConfigError("dashboard.stability.neighbourhood must be in [0, 2]")
+
 
 def _require_weight_sum(weights: Any, label: str, target: float = 1.0) -> None:
     if not isinstance(weights, dict) or not weights:
